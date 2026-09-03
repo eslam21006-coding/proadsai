@@ -68,6 +68,10 @@ import {
     decryptLegacyToken,
 } from "./legacyToken.js";
 import {
+    mapSettledWithConcurrency,
+    mapWithConcurrency,
+} from "./concurrency.js";
+import {
     evaluateVerdict,
     type AdPerformanceForVerdict,
     type FunnelSettingsForVerdict,
@@ -85,6 +89,47 @@ import {
     type HookPerformanceAggregate,
     type VisualPerformanceAggregate,
 } from "../learningAggregates.js";
+
+// ─── Constants ───────────────────────────────────────────────
+
+/**
+ * Phase 970 Batch 1 (D5) — bounded Graph concurrency.
+ *
+ * The legacy per-ad loops used bare `Promise.allSettled(ads.map(…))`,
+ * firing every `fetchAdInsights` call (3 per ad, parallel via
+ * `Promise.all` at `metaGraph.ts:407–414`) and every image download
+ * simultaneously. For a 383-ad account that produced ~1,149 Graph
+ * requests at once, which trips Meta's app-wide "Application request
+ * limit reached" (`OAuthException code 4 / subcode 1504022`,
+ * investigation report §1.3).
+ *
+ * `GRAPH_CONCURRENCY` caps the in-flight count without changing the
+ * semantics of either call site:
+ *   - insights: `Promise.allSettled`-shaped results, errors collected the
+ *     same way (the existing pattern at `shared.ts:565`).
+ *   - image match: inner try/catch already swallows per-ad errors into
+ *     the `errors[]` array, so the outer call never actually rejected
+ *     here — `mapWithConcurrency` matches that exactly.
+ *
+ * Peak in-flight arithmetic (corrected 2026-09-03 in response to
+ * review): the three insight windows per ad are PARALLEL, not
+ * sequential, so the peak per process at depth N is `3N`, not `3N+N`.
+ * The two passes (insights then image) run serially, so their peaks do
+ * not stack. At `N = 8`: per-process peak = 24 (insights pass), 8
+ * (image pass); worst-case = 24. Under Cloud Tasks fan-out
+ * (`maxConcurrentDispatches: 5`), aggregate peak = 120 simultaneous.
+ *
+ * Why 8 (and not 4, 6, 12, 16): wall-clock is not the constraint at
+ * any depth ≥ 4 for a 383-ad account — the budget is rate-limit
+ * margin. Meta's published best-practices band is 50–200 simultaneous
+ * calls per app; 24 sits a third of the way in and 120 aggregate sits
+ * inside it. A drop to 4 (peak 12, aggregate 60) is the conservative
+ * retune target if telemetry shows the limit is lower. Retune without
+ * a code change if real production telemetry justifies it.
+ * Investigation report §6. Full reasoning in
+ * `specs/970-sync-unification/reports/batch-01-report.md` §2.
+ */
+export const GRAPH_CONCURRENCY = 8;
 
 // ─── Public types ─────────────────────────────────────────────
 
@@ -555,8 +600,14 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // we only overwrite the stored code when we actually got one.
     let accountCurrency: string | null = null;
     try {
-        const insightsEntries = await Promise.allSettled(
-            ads.map(async (ad) => [ad.id, await fetchAdInsights(accessToken, ad.id)] as const),
+        // Phase 970 Batch 1 (D5) — bounded Graph concurrency. The bare
+        // `Promise.allSettled(ads.map(…))` here previously fired every
+        // fetchAdInsights call simultaneously; for a 383-ad account that
+        // was ~1,149 Graph calls at once. Capped at GRAPH_CONCURRENCY=8.
+        const insightsEntries = await mapSettledWithConcurrency(
+            ads,
+            GRAPH_CONCURRENCY,
+            async (ad) => [ad.id, await fetchAdInsights(accessToken, ad.id)] as const,
         );
         for (const result of insightsEntries) {
             if (result.status === "fulfilled") {
@@ -700,7 +751,14 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         ambiguous: boolean;
         imageHash: string | null;
     }>();
-    await Promise.allSettled(ads.map(async (ad) => {
+    // Phase 970 Batch 1 (D5) — bounded Graph concurrency. The bare
+    // `Promise.allSettled(ads.map(…))` here previously fired every image
+    // download at once; for a 383-ad account that was ~383 simultaneous
+    // outbound fetches. Capped at GRAPH_CONCURRENCY=8. Semantics are
+    // preserved — the inner try/catch already swallows per-ad failures
+    // into `errors[]`, so the outer call never rejected (we use
+    // `mapWithConcurrency`, not `mapSettledWithConcurrency`).
+    await mapWithConcurrency(ads, GRAPH_CONCURRENCY, async (ad) => {
         const result: { generationId: string | null; matchType: "auto_hash" | null; matchDistance: number | null; ambiguous: boolean; imageHash: string | null } = {
             generationId: null,
             matchType: null,
@@ -749,7 +807,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             errors.push(`imageMatch failed for ${ad.id}: ${(e as Error).message}`);
         }
         adMatchResults.set(ad.id, result);
-    }));
+    });
 
     // 9. Build per-ad docs and persist (skip ads that already have a link —
     //    either manual or auto_hash from a previous sync; FR / §4.3 lock).
