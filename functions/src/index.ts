@@ -71,6 +71,8 @@ import { getConceptDirectorKillSwitch, getConceptDirectorEnabled } from "./conce
 import { loadTopWinners, type WinningAd } from "./getTopWinners.js";
 import { resolveConnectedAdAccountId } from "./ragContext.js";
 import type { ConceptDirectorTraceEntry } from "./types.js";
+import { getDb } from "./firestoreClient.js";
+import { runFullSync } from "./metaSync/orchestrator.js";
 // Phase 14 — RAG + Meta Reporting Feedback Loop (Layer 1 callables).
 export { saveFunnelSettings, getFunnelSettings, dismissAdvisory } from "./funnelSettings.js";
 // Phase 14 — Layer 2 (Meta connection + sync).
@@ -3747,35 +3749,42 @@ export const metaDisconnect = onCall({
 
 // ─── 5. SYNC AD PERFORMANCE (Manual trigger) ────────────────────────────
 //
-// Phase 967 (FR-001, contract C9) — owner-scoped sync. The sync pulls
-// every active ad account on the connection and writes performance data
-// to the owner-scoped `adPerformance` collection (FR-009a — performance
-// data stays account-global; making it workspace-scoped is a
-// separate, deferred item per the non-goals). The caller is recorded
-// in the sync audit log via the console line below.
+// PHASE 970 (BATCH 3): this callable is now a thin wrapper over the
+// shared orchestrator (`metaSync/orchestrator.ts::runFullSync`). The
+// LEG A body that used to live here is extracted verbatim into
+// `runLegacySyncForOwner`; the LEG B hybrid (Phase 14 inline + Cloud
+// Tasks fan-out) lives in the orchestrator. Runtime raised from
+// 120s / 256MiB to 540s / 2GiB because the orchestrator now runs LEG
+// A + LEG B's inline workspace in the same call, and the LEG A write
+// loop keeps the same measured wall-clock budget (~65s for 23
+// accounts today).
+//
+// The INSUFFICIENT-role pre-check stays here — it is caller-facing and
+// must throw before any write happens. The orchestrator assumes the
+// workspace preconditions are already validated.
 export const metaSyncPerformance = onCall({
     region: "europe-west1",
     secrets: [metaAppSecret],
-    timeoutSeconds: 120,
+    timeoutSeconds: 540,
+    memory: "2GiB",
     cors: true,
 }, async (request: CallableRequest) => {
     // Universal preamble (FR-001, FR-003). All Firestore paths use
     // `scope.ownerUid` — a team member's sync writes under the
     // owner's account.
     const scope = await resolveMetaScope(request);
-    const workspaceId = request.data?.workspaceId || null;
+    const workspaceId = typeof request.data?.workspaceId === "string"
+        ? request.data.workspaceId
+        : null;
 
     // Phase 14 (workspace-account fix) — When the sync is invoked for a
     // specific workspace, surface a clear non-retryable error if the
     // linked ad account was probed at link time with role "INSUFFICIENT".
-    // Without this, the daily sync would silently retry forever against an
-    // account whose token cannot read insights, wasting the workspace's
-    // daily allowance and emitting no actionable feedback. The workspace
-    // lookup is wrapped so a transient Firestore failure propagates as
-    // HttpsError("internal", ...) rather than escaping as a raw exception.
+    // Same rationale as the pre-fix code — kept verbatim so the error
+    // surface is unchanged.
     if (workspaceId) {
         try {
-            const wsRef = admin.firestore().doc(`users/${scope.ownerUid}/workspaces/${workspaceId}`);
+            const wsRef = getDb().doc(`users/${scope.ownerUid}/workspaces/${workspaceId}`);
             const wsSnap = await wsRef.get();
             if (wsSnap.exists) {
                 const wsData = wsSnap.data();
@@ -3793,193 +3802,34 @@ export const metaSyncPerformance = onCall({
         }
     }
 
-    const connDoc = await admin.firestore().collection("metaConnections").doc(scope.ownerUid).get();
-    if (!connDoc.exists) throw new HttpsError("not-found", "No Meta connection found.");
+    // Delegate to the orchestrator (LEG A + LEG B). Pass
+    // `activeWorkspaceId` so LEG B runs that workspace inline; the
+    // dashboard being viewed refreshes synchronously.
+    const result = await runFullSync({
+        ownerUid: scope.ownerUid,
+        callerUid: scope.callerUid,
+        activeWorkspaceId: workspaceId,
+        nowMs: Date.now(),
+    });
 
-    const conn = connDoc.data()!;
-    // Determine which accounts to sync — all active accounts, not just selected
-    const activeAccounts: { id: string; name: string }[] = (conn.adAccounts || [])
-        .filter((a: any) => a.status === 1 || a.account_status === 1);
-    if (activeAccounts.length === 0 && conn.selectedAccountId) {
-        // Fallback: if adAccounts list is missing, use selectedAccountId
-        activeAccounts.push({ id: conn.selectedAccountId, name: "Selected Account" });
-    }
-    if (activeAccounts.length === 0) throw new HttpsError("failed-precondition", "No active ad accounts found.");
-
-    try {
-        const token = decryptToken(conn.encryptedToken, metaAppSecret.value());
-        let totalSyncCount = 0;
-
-        for (const account of activeAccounts) {
-            const accountId = account.id;
-
-        // Pull last 30 days of ad insights
-        const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-        const until = new Date().toISOString().split("T")[0];
-
-        const insightsResponse = await fetch(
-            `https://graph.facebook.com/v22.0/${accountId}/insights?` +
-            `fields=campaign_name,adset_name,ad_name,ad_id,impressions,clicks,spend,` +
-            `ctr,cpc,cpm,actions,cost_per_action_type,purchase_roas&` +
-            `time_range={"since":"${since}","until":"${until}"}&` +
-            `level=ad&limit=100&` +
-            `access_token=${token}`
-        );
-        const insightsData = await insightsResponse.json() as any;
-
-        if (insightsData.error) {
-            console.error(`Meta insights error for account ${accountId}:`, insightsData.error);
-            // Continue to next account instead of failing entirely
-            continue;
-        }
-
-        const ads = insightsData.data || [];
-        const batch = admin.firestore().batch();
-        let syncCount = 0;
-
-        for (const ad of ads) {
-            // Extract purchase/lead actions
-            const actions = ad.actions || [];
-            const purchases = actions.find((a: any) => a.action_type === "purchase")?.value || 0;
-            const leads = actions.find((a: any) => a.action_type === "lead")?.value || 0;
-
-            // Extract CPA
-            const costPerAction = ad.cost_per_action_type || [];
-            const cpaPurchase = costPerAction.find((c: any) => c.action_type === "purchase")?.value || null;
-            const cpaLead = costPerAction.find((c: any) => c.action_type === "lead")?.value || null;
-
-            // Extract ROAS
-            const roasData = ad.purchase_roas || [];
-            const roas = roasData.length > 0 ? parseFloat(roasData[0].value) : null;
-
-            const metricsSnapshot = {
-                impressions: parseInt(ad.impressions || "0"),
-                clicks: parseInt(ad.clicks || "0"),
-                spend: parseFloat(ad.spend || "0"),
-                ctr: parseFloat(ad.ctr || "0"),
-                cpc: parseFloat(ad.cpc || "0"),
-                cpm: parseFloat(ad.cpm || "0"),
-                purchases: parseInt(purchases),
-                leads: parseInt(leads),
-                cpa: cpaPurchase ? parseFloat(cpaPurchase) : (cpaLead ? parseFloat(cpaLead) : null),
-                roas,
-            };
-
-            const perfDoc = {
-                userId: scope.ownerUid,
-                adAccountId: accountId,
-                workspaceId,
-                adId: ad.ad_id,
-                adName: ad.ad_name || "Unknown",
-                adsetName: ad.adset_name || "Unknown",
-                campaignName: ad.campaign_name || "Unknown",
-                ...metricsSnapshot,
-                dateRange: { since, until },
-                syncedAt: admin.firestore.FieldValue.serverTimestamp(),
-            };
-
-            // Store latest performance (for dashboard display)
-            const docId = `${scope.ownerUid}_${ad.ad_id}`;
-            batch.set(admin.firestore().collection("adPerformance").doc(docId), perfDoc, { merge: true });
-
-            // Store time-aware snapshot (for historical analysis — never overwrites)
-            const snapshotId = `${scope.ownerUid}_${ad.ad_id}_${since}_${until}`;
-            batch.set(admin.firestore().collection("adPerformanceHistory").doc(snapshotId), {
-                ...perfDoc,
-                snapshotDate: new Date().toISOString().split("T")[0],
-            });
-
-            // Link to deployment records — prefer strong identifiers, scoped by adAccountId
-            try {
-                let deployDoc: FirebaseFirestore.QueryDocumentSnapshot | null = null;
-
-                // 1. Try metaAdId first (strongest — direct Meta identity)
-                if (ad.ad_id) {
-                    const byAdId = await admin.firestore().collection("creativeDeployments")
-                        .where("userId", "==", scope.ownerUid)
-                        .where("adAccountId", "==", accountId)
-                        .where("metaAdId", "==", ad.ad_id)
-                        .limit(1)
-                        .get();
-                    if (!byAdId.empty) deployDoc = byAdId.docs[0];
-                }
-
-                // 2. Try imageHash if available on the ad insights
-                if (!deployDoc && (ad as any).image_hash) {
-                    const byHash = await admin.firestore().collection("creativeDeployments")
-                        .where("userId", "==", scope.ownerUid)
-                        .where("adAccountId", "==", accountId)
-                        .where("imageHash", "==", (ad as any).image_hash)
-                        .limit(1)
-                        .get();
-                    if (!byHash.empty) deployDoc = byHash.docs[0];
-                }
-
-                // 3. Fallback to adName (weakest — may have duplicates), scoped by account
-                if (!deployDoc && ad.ad_name) {
-                    const byName = await admin.firestore().collection("creativeDeployments")
-                        .where("userId", "==", scope.ownerUid)
-                        .where("adAccountId", "==", accountId)
-                        .where("adName", "==", ad.ad_name)
-                        .limit(1)
-                        .get();
-                    if (!byName.empty) deployDoc = byName.docs[0];
-                }
-
-                if (deployDoc) {
-                    batch.update(deployDoc.ref, {
-                        metaAdId: ad.ad_id,
-                        metaAdSetId: ad.adset_name || null,
-                        metaCampaignId: ad.campaign_name || null,
-                        latestMetrics: metricsSnapshot,
-                    });
-                }
-            } catch { /* Non-blocking deployment linkage */ }
-
-            syncCount++;
-        }
-
-        if (syncCount > 0) await batch.commit();
-        totalSyncCount += syncCount;
-
-        } // end for-each account
-
-        // Update last sync time (user-level connection doc).
-        await admin.firestore().collection("metaConnections").doc(scope.ownerUid).update({
-            lastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-
-        // Phase 14 (dashboard-consistency): also stamp the workspace-private
-        // connection doc so the What's Working dashboard — which reads
-        // lastMetaSyncAt ONLY from users/{uid}/workspaces/{wid}/private/
-        // metaConnection — reflects a sidebar sync too, not just a
-        // triggerMetaSync run.
-        //
-        // Done here (Admin SDK) rather than client-side because the
-        // `private/**` subtree is server-only in firestore.rules
-        // (deny-all), so a client write would be rejected. Written as an
-        // epoch-ms NUMBER (not serverTimestamp) to match what
-        // runSyncForAccount writes and the dashboard's `typeof === "number"`
-        // read. Best-effort / non-blocking — a stamp failure must never
-        // fail the sync the user already completed.
-        if (workspaceId) {
-            try {
-                await admin.firestore()
-                    .doc(`users/${scope.ownerUid}/workspaces/${workspaceId}/private/metaConnection`)
-                    .set({ lastMetaSyncAt: Date.now() }, { merge: true });
-            } catch (err: unknown) {
-                console.warn("⚠️ Non-blocking: failed to stamp workspace lastMetaSyncAt:", err);
-            }
-        }
-
-        console.log(`📊 Synced ${totalSyncCount} ads across ${activeAccounts.length} accounts (owner=${scope.ownerUid}, caller=${scope.callerUid})`);
-        return { success: true, adsSynced: totalSyncCount };
-
-    } catch (err: any) {
-        if (err instanceof HttpsError) throw err;
-        console.error("Sync error:", err);
-        throw new HttpsError("internal", "Failed to sync ad performance.");
-    }
+    // Preserve the legacy response shape for old clients
+    // (`{ success: true, adsSynced }`). The new fields are best-effort
+    // additions that today's frontend ignores.
+    return {
+        success: result.ok,
+        adsSynced: result.legacy.adsSynced,
+        accountsSynced: result.legacy.accountsSynced,
+        rateLimited: result.legacy.rateLimited,
+        workspaceQueued: result.workspace.queued,
+        workspaceInline: result.workspace.inline
+            ? {
+                  workspaceId: result.workspace.inline.workspaceId,
+                  accountId: result.workspace.inline.accountId,
+                  counts: result.workspace.inline.counts,
+                  status: result.workspace.inline.status,
+              }
+            : null,
+    };
 });
 
 // ─── 5b. PUSH CREATIVE TO META AD ACCOUNT ─────────────────────────────

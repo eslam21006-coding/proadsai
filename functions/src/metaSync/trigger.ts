@@ -1,26 +1,28 @@
 // functions/src/metaSync/trigger.ts — Phase 14 Layer 2 manual "Sync Now"
 // ═══════════════════════════════════════════════════════════
-// Callable that runs the same sync body for the calling user's workspace.
-// Enforces a 1-hour cooldown after the last sync (contract:
-// metaSyncAndConnection.md) — the frontend greys the button accordingly
-// but the server is the authoritative gate.
+// PHASE 970 (BATCH 3): this callable is now a thin wrapper over the
+// shared orchestrator (`metaSync/orchestrator.ts::runFullSync`), same
+// pattern as `metaSyncPerformance`. LEG A + LEG B both run on every
+// press — see investigation report §8.2.
 //
-// We deliberately call `runSyncForAccount` directly (instead of enqueuing
-// a Cloud Task) for manual sync — the user is waiting for the response and
-// the volume is one account.
+// Batch 3 keeps the 1-hour cooldown; Batch 4 removes it. Both the
+// dashboard button (`triggerMetaSync`, here) and the sidebar button
+// (`metaSyncPerformance` in `index.ts`) share the same `runFullSync`
+// orchestrator, so Batch 4 can rip the cooldown out of either
+// wrapper with identical effect at the orchestrator level.
 // ═══════════════════════════════════════════════════════════
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { runSyncForAccount, type SyncResult } from "./shared.js";
-import { loadStoredConnection } from "../metaConnection.js";
 import { SYNC_DISPATCH_REGION } from "./dispatcher.js";
 import { metaAppSecret } from "../secrets.js";
 import {
-  resolveMetaScope,
-  assertWorkspaceAllowed,
+    resolveMetaScope,
+    assertWorkspaceAllowed,
 } from "../workspaces/metaCallerScope.js";
+import { getDb } from "../firestoreClient.js";
+import { runFullSync } from "./orchestrator.js";
 
-const COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+const COOLDOWN_MS = 60 * 60 * 1000; // 1 hour — REMOVED in Batch 4
 
 interface TriggerMetaSyncRequest {
     workspaceId: string;
@@ -32,10 +34,11 @@ export const triggerMetaSync = onCall(
         cors: true,
         timeoutSeconds: 540,
         memory: "2GiB",
-        // CRITICAL (Claude audit): the manual trigger decrypts the legacy
-        // AES-GCM token via `decryptLegacyToken`. The secret MUST be
-        // declared here or runtime decryption throws and the user sees a
-        // false "reconnect Meta" prompt.
+        // CRITICAL (Claude audit): the manual trigger decrypts the
+        // legacy AES-GCM token via `decryptLegacyToken` (called inside
+        // `runLegacySyncForOwner`). The secret MUST be declared here or
+        // runtime decryption throws and the user sees a false
+        // "reconnect Meta" prompt.
         secrets: [metaAppSecret],
     },
     async (request) => {
@@ -51,13 +54,8 @@ export const triggerMetaSync = onCall(
         // FR-004 / FR-021 — workspace authorisation first.
         assertWorkspaceAllowed(scope, req.workspaceId);
 
-        const conn = await loadStoredConnection(scope.ownerUid, req.workspaceId);
-        if (!conn || !conn.accountId) {
-            throw new HttpsError("failed-precondition", "No Meta account connected for this workspace.");
-        }
-
-        // 1-hour cooldown — measured against lastMetaSyncAt on the connection
-        // doc (loadStoredConnection doesn't surface it, so re-fetch below).
+        // 1-hour cooldown — same gate as the pre-fix code. REMOVED in
+        // Batch 4 alongside the dashboard's gate freeze.
         const lastSyncAt = await readLastSyncAt(scope.ownerUid, req.workspaceId);
         if (typeof lastSyncAt === "number") {
             const elapsed = Date.now() - lastSyncAt;
@@ -70,35 +68,45 @@ export const triggerMetaSync = onCall(
             }
         }
 
-        const result: SyncResult = await runSyncForAccount({
-            userId: scope.ownerUid,
-            workspaceId: req.workspaceId,
-            accountId: conn.accountId,
-            trigger: "manual",
+        // PHASE 970 (BATCH 3) — orchestrator. LEG A runs inline
+        // (account-global, pre-existing legacy writes to root
+        // /adPerformance + /adPerformanceHistory). LEG B runs the
+        // active workspace inline and the other live workspaces via
+        // Cloud Tasks fan-out, de-duplicated by accountId.
+        const result = await runFullSync({
+            ownerUid: scope.ownerUid,
+            callerUid: scope.callerUid,
+            activeWorkspaceId: req.workspaceId,
             nowMs: Date.now(),
         });
 
-        if (!result.ok && result.status === "failed" && result.needsReauth) {
-            throw new HttpsError(
-                "failed-precondition",
-                "اتصالك بميتا انتهى — وصّل تاني",
-            );
-        }
+        console.log(
+            `🔄 Manual sync (owner=${scope.ownerUid}, caller=${scope.callerUid}, ` +
+            `workspace=${req.workspaceId}, legacyAds=${result.legacy.adsSynced}, ` +
+            `queued=${result.workspace.queued}, rateLimitedLegacy=[${result.legacy.rateLimited.join(",")}], ` +
+            `rateLimitedQueued=[${result.workspace.rateLimited.join(",")}])`,
+        );
 
-        console.log(`🔄 Manual sync (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId})`);
         return {
             ok: result.ok,
-            status: result.status,
             lastMetaSyncAt: result.lastMetaSyncAt,
-            counts: result.counts,
-            errors: result.errors.slice(0, 10),
+            legacy: {
+                adsSynced: result.legacy.adsSynced,
+                accountsSynced: result.legacy.accountsSynced,
+                rateLimited: result.legacy.rateLimited,
+                errors: result.legacy.errors,
+            },
+            workspace: {
+                inline: result.workspace.inline,
+                queued: result.workspace.queued,
+                rateLimited: result.workspace.rateLimited,
+            },
             needsReauth: result.needsReauth,
         };
     },
 );
 
 async function readLastSyncAt(uid: string, workspaceId: string): Promise<number | null> {
-    const { getDb } = await import("../firestoreClient.js");
     const snap = await getDb()
         .collection("users").doc(uid)
         .collection("workspaces").doc(workspaceId)
