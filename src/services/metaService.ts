@@ -194,14 +194,13 @@ class MetaService {
     // method (above) routes through `metaSyncPerformance`, the Batch 01
     // user-level callable that reads from `metaConnections/{uid}` and
     // syncs every active account on the connection — it does NOT
-    // exercise the workspace-scoped sync pipeline or respect the
-    // dashboard's 1-hour cooldown. The dashboard's Sync Status bar greys
-    // the button based on `canSyncNow` (computed from the
-    // workspace-private `private/metaConnection.metaConnected` doc), so
-    // the only correct server-side counterpart is the workspace-scoped
-    // `triggerMetaSync` (Batch 02). The sidebar's "Sync Now" continues
-    // to use `syncPerformance` / `metaSyncPerformance` — that path feeds
-    // the legacy PerformanceDashboard and is intentionally untouched.
+    // exercise the workspace-scoped sync pipeline. PHASE 970 (BATCH 4)
+    // — the dashboard's Sync Status bar no longer greys the button
+    // based on `canSyncNow`; the cooldown gate is gone, and the
+    // second-press suppression lives in the in-flight lease at the
+    // orchestrator layer. The sidebar's "Sync Now" continues to use
+    // `syncPerformance` / `metaSyncPerformance` — that path feeds the
+    // legacy PerformanceDashboard and is intentionally untouched.
     async triggerWorkspaceSync(workspaceId: string): Promise<{
         ok: boolean;
         lastMetaSyncAt: number | null;
@@ -233,14 +232,16 @@ class MetaService {
             };
         } catch (err: any) {
             console.warn('triggerMetaSync failed:', err);
-            // Cooldown is a `resource-exhausted` HttpsError. Surface it
-            // as a soft failure so the caller can show a friendly toast
-            // (the dashboard's button is already greyed, but the user
-            // may click anyway). Other errors propagate so the caller
-            // can show the generic "Sync failed" toast.
-            if (err?.code === 'functions/resource-exhausted' || err?.code === 'resource-exhausted') {
-                return { ok: false, lastMetaSyncAt: null };
-            }
+            // PHASE 970 (BATCH 4) — the cooldown swallow is removed.
+            // The server no longer emits `resource-exhausted`; the
+            // 1-hour cooldown was deleted (investigation §6 / §8.4).
+            // The new in-flight guard raises
+            // `failed-precondition` if a second press races the
+            // first; we let that propagate to the caller's catch
+            // block (App.tsx), which now renders the generic
+            // "Sync failed" path. A localised collision toast is
+            // queued for Batch 5 alongside the new i18n keys
+            // (`sync.result.partial` etc.).
             throw err;
         }
     }

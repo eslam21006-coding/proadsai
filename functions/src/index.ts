@@ -72,7 +72,8 @@ import { loadTopWinners, type WinningAd } from "./getTopWinners.js";
 import { resolveConnectedAdAccountId } from "./ragContext.js";
 import type { ConceptDirectorTraceEntry } from "./types.js";
 import { getDb } from "./firestoreClient.js";
-import { runFullSync } from "./metaSync/orchestrator.js";
+import { runFullSyncWithLease } from "./metaSync/orchestrator.js";
+import { AlreadyRunningError } from "./metaSync/lease.js";
 // Phase 14 — RAG + Meta Reporting Feedback Loop (Layer 1 callables).
 export { saveFunnelSettings, getFunnelSettings, dismissAdvisory } from "./funnelSettings.js";
 // Phase 14 — Layer 2 (Meta connection + sync).
@@ -3802,34 +3803,49 @@ export const metaSyncPerformance = onCall({
         }
     }
 
-    // Delegate to the orchestrator (LEG A + LEG B). Pass
-    // `activeWorkspaceId` so LEG B runs that workspace inline; the
-    // dashboard being viewed refreshes synchronously.
-    const result = await runFullSync({
-        ownerUid: scope.ownerUid,
-        callerUid: scope.callerUid,
-        activeWorkspaceId: workspaceId,
-        nowMs: Date.now(),
-    });
+    // Delegate to the orchestrator (LEG A + LEG B), wrapped in the
+    // Batch-4 in-flight lease. Pass `activeWorkspaceId` so LEG B
+    // runs that workspace inline; the dashboard being viewed
+    // refreshes synchronously.
+    try {
+        const result = await runFullSyncWithLease({
+            ownerUid: scope.ownerUid,
+            callerUid: scope.callerUid,
+            activeWorkspaceId: workspaceId,
+            nowMs: Date.now(),
+        });
 
-    // Preserve the legacy response shape for old clients
-    // (`{ success: true, adsSynced }`). The new fields are best-effort
-    // additions that today's frontend ignores.
-    return {
-        success: result.ok,
-        adsSynced: result.legacy.adsSynced,
-        accountsSynced: result.legacy.accountsSynced,
-        rateLimited: result.legacy.rateLimited,
-        workspaceQueued: result.workspace.queued,
-        workspaceInline: result.workspace.inline
-            ? {
-                  workspaceId: result.workspace.inline.workspaceId,
-                  accountId: result.workspace.inline.accountId,
-                  counts: result.workspace.inline.counts,
-                  status: result.workspace.inline.status,
-              }
-            : null,
-    };
+        // Preserve the legacy response shape for old clients
+        // (`{ success: true, adsSynced }`). The new fields are
+        // best-effort additions that today's frontend ignores.
+        return {
+            success: result.ok,
+            adsSynced: result.legacy.adsSynced,
+            accountsSynced: result.legacy.accountsSynced,
+            rateLimited: result.legacy.rateLimited,
+            workspaceQueued: result.workspace.queued,
+            workspaceInline: result.workspace.inline
+                ? {
+                      workspaceId: result.workspace.inline.workspaceId,
+                      accountId: result.workspace.inline.accountId,
+                      counts: result.workspace.inline.counts,
+                      status: result.workspace.inline.status,
+                  }
+                : null,
+        };
+    } catch (e: unknown) {
+        if (e instanceof AlreadyRunningError) {
+            // Manual press path (sidebar button) — fail fast and
+            // tell the owner with a plain message. They are present
+            // and can retry; a hanging call is worse than a clear
+            // answer.
+            throw new HttpsError(
+                "failed-precondition",
+                "A Meta sync is already running for this account. Please wait a moment and try again.",
+            );
+        }
+        throw e;
+    }
 });
 
 // ─── 5b. PUSH CREATIVE TO META AD ACCOUNT ─────────────────────────────

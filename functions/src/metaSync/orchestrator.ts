@@ -47,6 +47,12 @@ import {
 } from "./dispatcher.js";
 import { getTasksClient, type TasksClientFacade } from "./tasksClient.js";
 import { runSyncForAccount, type SyncResult } from "./shared.js";
+import {
+    acquireLease,
+    releaseLease,
+    AlreadyRunningError,
+    type AcquireResult,
+} from "./lease.js";
 
 // ─── Public types ─────────────────────────────────────────────
 
@@ -91,6 +97,23 @@ export interface FullSyncOptions {
      * omits and falls back to `decryptLegacyToken` from `legacyToken.ts`.
      */
     decryptLegacyTokenOverride?: (encryptedData: string) => Promise<string>;
+    /**
+     * Test seam for the lease helpers. Production omits and the in-file
+     * `runWithLease` wrapper calls `acquireLease` / `releaseLease` from
+     * `lease.js` directly against `getDb()`. Tests inject stubs to drive
+     * the acquire/release/holder-identity/contended-lease paths without
+     * standing up Firestore.
+     */
+    acquireLeaseOverride?: (
+        ownerUid: string,
+        holderUid: string,
+        nowMs: number,
+        ttlMs: number,
+    ) => Promise<AcquireResult>;
+    releaseLeaseOverride?: (
+        ownerUid: string,
+        holderUid: string,
+    ) => Promise<{ released: boolean }>;
 }
 
 export interface InlineSyncResult {
@@ -669,6 +692,75 @@ export async function runFullSync(opts: FullSyncOptions): Promise<FullSyncResult
         needsReauth: inline ? inline.errors.some((e) => /needsReauth/i.test(e)) : false,
         lastMetaSyncAt: nowMs,
     };
+}
+
+// ─── Lease wrapper ───────────────────────────────────────────
+
+/**
+ * Run `runFullSync` inside the Batch-4 in-flight guard. Wraps the
+ * orchestrator call in `acquireLease` → `runFullSync` →
+ * `releaseLease` with `try/finally` so the lease is cleared on every
+ * exit path: success, throw, reject. The wrapper throws
+ * `AlreadyRunningError` (from `lease.js`) when another caller
+ * currently holds the lease; each wrapper translates that error to
+ * its own transport:
+ *
+ *   - `metaSyncPerformance` (manual sidebar) — `HttpsError("failed-precondition", ...)`.
+ *   - `triggerMetaSync` (manual dashboard) — `HttpsError("failed-precondition", ...)`.
+ *   - `metaDailySync` (scheduled 03:00) — let it throw, Cloud Tasks
+ *     `runTransaction`-aware retry config re-queues with backoff.
+ *   - `metaSyncAccountWorker` (task-dispatched LEG B fan-out) — let it
+ *     throw, Cloud Tasks retry handles the reschedule.
+ *
+ * Stale leases (TTL expired) are silently overwritten by
+ * `acquireLease`. The wrapper makes this an idempotent pattern — the
+ * press that recovers from a crashed run takes over without
+ * prompting the user.
+ */
+export async function runFullSyncWithLease(
+    opts: FullSyncOptions,
+): Promise<FullSyncResult> {
+    const db = getDb();
+    const acquireImpl = opts.acquireLeaseOverride
+        ? (ownerUid: string, holderUid: string, nowMs: number, ttlMs: number) =>
+              opts.acquireLeaseOverride!(ownerUid, holderUid, nowMs, ttlMs)
+        : (ownerUid: string, holderUid: string, nowMs: number, ttlMs: number) =>
+              acquireLease(db, ownerUid, holderUid, nowMs, ttlMs);
+    const releaseImpl = opts.releaseLeaseOverride
+        ? (ownerUid: string, holderUid: string) =>
+              opts.releaseLeaseOverride!(ownerUid, holderUid)
+        : (ownerUid: string, holderUid: string) =>
+              releaseLease(db, ownerUid, holderUid);
+    const { ownerUid, callerUid } = opts;
+    const nowMs = opts.nowMs ?? Date.now();
+
+    const acquire = await acquireImpl(ownerUid, callerUid, nowMs, 10 * 60 * 1000);
+    if (!acquire.ok) {
+        // Translate the domain-class refusal into the typed error
+        // the wrappers catch. The wrappers MUST NOT translate this
+        // silently; they decide whether to render as HttpsError
+        // (manual) or let it throw (scheduled, Cloud Tasks retry).
+        throw new AlreadyRunningError({
+            holderUid: acquire.holderUid,
+            expiresAtMs: acquire.expiresAtMs,
+        });
+    }
+    try {
+        return await runFullSync(opts);
+    } finally {
+        try {
+            await releaseImpl(ownerUid, callerUid);
+        } catch (e: unknown) {
+            // Release failures are diagnostic, not fatal. A leaked
+            // lease will be overwritten by the next press or by the
+            // TTL safety net, neither of which needs this press to
+            // succeed. Log and continue.
+            console.warn(
+                "⚠️ metaSync lease release failed (lease will expire on TTL safety net):",
+                (e as Error).message,
+            );
+        }
+    }
 }
 
 // ─── Caller-scope helper (preserved) ─────────────────────────────

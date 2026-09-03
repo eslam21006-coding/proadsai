@@ -740,4 +740,181 @@ test("runFullSync — structural guard: full export surface preserved (Batch 3 c
     assert.equal(typeof orch.runFullSync, "function");
     assert.equal(typeof orch.runLegacySyncForOwner, "function");
     assert.equal(typeof orch.isMetaRateLimit, "function");
+    assert.equal(typeof orch.runFullSyncWithLease, "function", "runFullSyncWithLease is the press-side wrapper added in Batch 4");
+});
+
+// ─── Batch 4 — runFullSyncWithLease integration ────────────────────────────
+
+test("runFullSyncWithLease — acquires the lease, runs, releases in finally", async () => {
+    resetStub();
+    seedConn({
+        ownerUid: OWNER,
+        adAccounts: [{ id: ACCT_A, name: "Alpha", status: 1 }],
+    });
+    seedWorkspace({
+        ownerUid: OWNER,
+        workspaceId: WS_A,
+        accountId: ACCT_A,
+        metaConnected: true,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runFullSyncWithLease } = require("../metaSync/orchestrator.js");
+
+    const acquireCalls: Array<{ ownerUid: string; holderUid: string; nowMs: number; ttlMs: number }> = [];
+    const releaseCalls: Array<{ ownerUid: string; holderUid: string }> = [];
+
+    const result = await runFullSyncWithLease({
+        ownerUid: OWNER,
+        callerUid: CALLER,
+        activeWorkspaceId: WS_A,
+        nowMs: FIXED_NOW,
+        fetchImpl: stubFetchInsights(),
+        decryptLegacyTokenOverride: async () => "PLAIN_TOKEN",
+        runPhase14InlineOverride: fakeInline({ status: "ok" }),
+        tasksClient: { queuePath: () => "", enqueueTask: async () => [{}, {}, {}], serviceAccountEmail: () => "test@example.com" },
+        acquireLeaseOverride: async (o: string, h: string, n: number, ttl: number) => {
+            acquireCalls.push({ ownerUid: o, holderUid: h, nowMs: n, ttlMs: ttl });
+            return { ok: true };
+        },
+        releaseLeaseOverride: async (o: string, h: string) => {
+            releaseCalls.push({ ownerUid: o, holderUid: h });
+            return { released: true };
+        },
+    });
+
+    // Lease was acquired ONCE with the right identity.
+    assert.equal(acquireCalls.length, 1);
+    assert.equal(acquireCalls[0].ownerUid, OWNER);
+    assert.equal(acquireCalls[0].holderUid, CALLER);
+    assert.equal(acquireCalls[0].nowMs, FIXED_NOW);
+    assert.equal(acquireCalls[0].ttlMs, 600_000, "TTL must be 10 minutes per investigation §6");
+    // Lease was released ONCE in finally.
+    assert.equal(releaseCalls.length, 1);
+    assert.equal(releaseCalls[0].ownerUid, OWNER);
+    assert.equal(releaseCalls[0].holderUid, CALLER);
+    // Press returned the orchestrator's normal result.
+    assert.equal(result.ok, true);
+});
+
+test("runFullSyncWithLease — throws AlreadyRunningError when acquire reports the lease is held", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runFullSyncWithLease, isMetaRateLimit } = require("../metaSync/orchestrator.js");
+    const { AlreadyRunningError } = require("../metaSync/lease.js");
+
+    let releaseCalls = 0;
+    await assert.rejects(
+        () => runFullSyncWithLease({
+            ownerUid: OWNER,
+            callerUid: CALLER,
+            nowMs: FIXED_NOW,
+            fetchImpl: stubFetchInsights(),
+            decryptLegacyTokenOverride: async () => "PLAIN_TOKEN",
+            acquireLeaseOverride: async () => ({
+                ok: false,
+                holderUid: "another_caller",
+                expiresAtMs: FIXED_NOW + 600_000,
+            }),
+            releaseLeaseOverride: async (_o: string, _h: string) => {
+                releaseCalls++;
+                return { released: false };
+            },
+        }),
+        (err: any) => {
+            // The wrapper throws the typed error; the callables'
+            // catch blocks translate it to HttpsError or let it
+            // propagate. The wrapper itself does not swallow it
+            // — that's the contract that lets the scheduled path
+            // (metaDailySync) bubble a real failure to Cloud Tasks
+            // for retry.
+            assert.ok(err instanceof AlreadyRunningError);
+            assert.equal(err.holderUid, "another_caller");
+            return true;
+        },
+    );
+    // release MUST NOT be called when acquire refused — we never
+    // took the lease, so we don't release one.
+    assert.equal(releaseCalls, 0);
+});
+
+test("runFullSyncWithLease — release runs in finally even when runFullSync throws", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runFullSyncWithLease } = require("../metaSync/orchestrator.js");
+
+    // Seed so that LEG B's inline path actually runs and the
+    // override is invoked. With no activeWorkspaceId provided the
+    // orchestrator skips the inline call entirely.
+    resetStub();
+    seedConn({
+        ownerUid: OWNER,
+        adAccounts: [{ id: ACCT_A, name: "Alpha", status: 1 }],
+    });
+    seedWorkspace({
+        ownerUid: OWNER,
+        workspaceId: WS_A,
+        accountId: ACCT_A,
+        metaConnected: true,
+    });
+
+    const releaseCalls: Array<{ ownerUid: string; holderUid: string }> = [];
+
+    await assert.rejects(
+        () => runFullSyncWithLease({
+            ownerUid: OWNER,
+            callerUid: CALLER,
+            activeWorkspaceId: WS_A,
+            nowMs: FIXED_NOW,
+            fetchImpl: stubFetchInsights(),
+            decryptLegacyTokenOverride: async () => "PLAIN_TOKEN",
+            runPhase14InlineOverride: async () => {
+                throw new Error("LEG B inline blew up mid-run");
+            },
+            tasksClient: { queuePath: () => "", enqueueTask: async () => [{}, {}, {}], serviceAccountEmail: () => "test@example.com" },
+            acquireLeaseOverride: async () => ({ ok: true }),
+            releaseLeaseOverride: async (o: string, h: string) => {
+                releaseCalls.push({ ownerUid: o, holderUid: h });
+                return { released: true };
+            },
+        }),
+        (err: any) => /LEG B inline blew up/.test(err.message),
+    );
+
+    assert.equal(releaseCalls.length, 1, "release must run in finally even when runFullSync throws");
+    assert.equal(releaseCalls[0].ownerUid, OWNER);
+    assert.equal(releaseCalls[0].holderUid, CALLER);
+});
+
+test("runFullSyncWithLease — release failures are swallowed (logged, not fatal)", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runFullSyncWithLease } = require("../metaSync/orchestrator.js");
+
+    const warn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+    };
+    try {
+        const result = await runFullSyncWithLease({
+            ownerUid: OWNER,
+            callerUid: CALLER,
+            nowMs: FIXED_NOW,
+            fetchImpl: stubFetchInsights(),
+            decryptLegacyTokenOverride: async () => "PLAIN_TOKEN",
+            runPhase14InlineOverride: fakeInline({ status: "ok" }),
+            tasksClient: { queuePath: () => "", enqueueTask: async () => [{}, {}, {}], serviceAccountEmail: () => "test@example.com" },
+            acquireLeaseOverride: async () => ({ ok: true }),
+            releaseLeaseOverride: async () => {
+                throw new Error("Firestore blew up");
+            },
+        });
+        // The press succeeded despite the release failing.
+        assert.equal(result.ok, true);
+        // And the warning was logged.
+        assert.ok(
+            warnings.some((w) => /lease release failed/i.test(w)),
+            "release failure must be logged, not fatal",
+        );
+    } finally {
+        console.warn = warn;
+    }
 });

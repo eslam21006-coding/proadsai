@@ -12973,11 +12973,18 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
                       }
                     } catch (err: any) {
-                      if (err?.code === 'functions/resource-exhausted' || err?.code === 'resource-exhausted') {
-                        showToast(lang === 'ar' ? 'المزامنة في فترة انتظار — حاول لاحقاً' : 'Sync on cooldown — try again later', 'info');
-                      } else {
-                        showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
-                      }
+                      // PHASE 970 (BATCH 4) — the cooldown path is gone.
+                      // The `resource-exhausted` block that used to
+                      // live here is removed; the server no longer
+                      // emits that error. A second-press collision now
+                      // arrives as `failed-precondition` (in-flight
+                      // lease at the orchestrator layer) and renders
+                      // the generic "Sync failed" path. The
+                      // lease-collision message lives in
+                      // `triggerMetaSync` itself; it will be wired to
+                      // a localised toast in Batch 5 when the
+                      // dashboard renders the new i18n keys.
+                      showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
                     } finally {
                       setMetaSyncing(false);
                     }

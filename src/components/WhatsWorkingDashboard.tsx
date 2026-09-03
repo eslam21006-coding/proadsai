@@ -13,11 +13,29 @@ import { useT } from "../i18n";
 
 // ─── Backend response types (mirror getWhatsWorkingDashboard) ───
 
+/**
+ * @deprecated `canSyncNow` and `cooldownEndsAt` are FROZEN constants
+ * on this release (server emits `true` / `null` regardless of input).
+ * The cooldown gate was removed in Phase 970 Batch 4 — see
+ * investigation report §8.4 + §9 decision 2. The interface still
+ * carries the fields so cached JS clients that read them keep
+ * compiling. Removal in Batch 5+.
+ */
 interface SyncStatus {
     lastMetaSyncAt: number | null;
     nextScheduledSyncAt: number | null;
     connection: "connected" | "disconnected" | "needs_reauth";
+    /**
+     * @deprecated Always `true`. Server-side cooldown gate deleted in
+     * Phase 970 Batch 4; the in-flight guard at the orchestrator
+     * layer (`metaSync/lease.ts`) handles concurrent-press
+     * suppression. The frontend ignores this field.
+     */
     canSyncNow: boolean;
+    /**
+     * @deprecated Always `null`. The `lastMetaSyncAt + SYNC_COOLDOWN_MS`
+     * formula is gone. The frontend ignores this field.
+     */
     cooldownEndsAt: number | null;
 }
 
@@ -169,17 +187,19 @@ function SyncStatusBar(props: {
                 </div>
             </div>
             <button
+                // PHASE 970 (BATCH 4) — the cooldown gate that used to live
+                // here is gone. The button is always enabled. A second
+                // concurrent press is suppressed server-side by the
+                // in-flight lease (`metaSync/lease.ts`); the press path
+                // throws `AlreadyRunningError`, the wrapper translates
+                // it to `HttpsError("failed-precondition", …)`, and the
+                // catch in `WhatsWorkingDashboard`'s caller renders a
+                // localised message. The `lastMetaSyncAt` display to
+                // the left of this button is unchanged.
                 onClick={props.onSync}
-                disabled={!status.canSyncNow}
-                className={`text-[11px] font-bold uppercase tracking-wider px-4 py-2 rounded-lg transition-colors ${
-                    status.canSyncNow
-                        ? "bg-blue-600 hover:bg-blue-500 text-white"
-                        : "bg-slate-800 text-slate-500 cursor-not-allowed"
-                }`}
+                className="text-[11px] font-bold uppercase tracking-wider px-4 py-2 rounded-lg transition-colors bg-blue-600 hover:bg-blue-500 text-white"
             >
-                {status.canSyncNow
-                    ? t("whats_working.sync.cta")
-                    : t("whats_working.sync.cooldown")}
+                {t("whats_working.sync.cta")}
             </button>
         </div>
     );

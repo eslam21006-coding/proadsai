@@ -149,6 +149,16 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_meta_connected': 'Meta Ads Connected',
         'topbar.menu_meta_disconnect': 'Disconnect',
         'topbar.menu_meta_sync': 'Sync Now',
+        // PHASE 970 (BATCH 4) — new result-toast strings for the
+        // removal-of-cooldown change. The dashboard reads these to
+        // render the result of a press (so the user knows which
+        // accounts succeeded and which throttled). No technical
+        // terms ("rate limit", "queue", "API"). Drafted alongside
+        // the freeze of `canSyncNow` / `cooldownEndsAt`.
+        'sync.result.done': 'Ads updated',
+        'sync.result.partial': 'Some accounts were busy — they will update shortly',
+        'sync.result.more_coming': 'The rest of your workspaces are updating now',
+        'sync.result.failed': 'Could not update the ads',
         'topbar.menu_meta_change_account': 'Change Account',
         'topbar.menu_meta_change_page': 'Change Page',
         'topbar.menu_meta_select_for_workspace': 'Select ad account for this workspace',
@@ -493,9 +503,11 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'whats_working.sync.last_hours_ago': 'Synced {n} hours ago',
         'whats_working.sync.last_days_ago': 'Synced {n} days ago',
         'whats_working.sync.never': 'No sync yet',
-        'whats_working.sync.next_run': 'Next sync in {n} hours',
         'whats_working.sync.cta': 'Sync Now',
-        'whats_working.sync.cooldown': 'Synced just now — try again later',
+        // PHASE 970 (BATCH 4) — removed `whats_working.sync.cooldown`
+        // (cooldown gate deleted in Batch 4) and
+        // `whats_working.sync.next_run` (not rendered, wait-state
+        // string per investigation §4 decision 4).
         'whats_working.sync.needs_reauth': 'Meta connection expired — please reconnect',
         'whats_working.sync.reconnect_cta': 'Reconnect Meta',
         'whats_working.sync.never_connected': 'Meta account not connected yet',
@@ -1108,7 +1120,16 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_meta_connect': 'ربط حساب ميتا',
         'topbar.menu_meta_connected': 'حساب ميتا متصل',
         'topbar.menu_meta_disconnect': 'فك الربط',
-        'topbar.menu_meta_sync': 'قم بالمزامنة',
+        'topbar.menu_meta_sync': 'مزامنة الآن',
+        // PHASE 970 (BATCH 4) — Arabic standardised to `مزامنة الآن`
+        // (matches the dashboard button and `AR_S_RESYNC_CONNECTED_BTN`).
+        // The previous `قم بالمزامنة` was an imperative form; the new
+        // form matches the dashboard's CTA exactly so both buttons read
+        // identically in Arabic (investigation report §7).
+        'sync.result.done': 'تم تحديث الإعلانات',
+        'sync.result.partial': 'بعض الحسابات كانت مشغولة — سيتم تحديثها قريباً',
+        'sync.result.more_coming': 'باقي مساحات العمل يتم تحديثها الآن',
+        'sync.result.failed': 'تعذّر تحديث الإعلانات',
         'topbar.menu_meta_change_account': 'تغيير الحساب',
         'topbar.menu_meta_change_page': 'تغيير الصفحة',
         'topbar.menu_meta_select_for_workspace': 'اختر حساب إعلاني لهذه المساحة',
@@ -1430,9 +1451,11 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'whats_working.sync.last_hours_ago': 'تمت المزامنة منذ {n} ساعة',
         'whats_working.sync.last_days_ago': 'تمت المزامنة منذ {n} يوم',
         'whats_working.sync.never': 'لم تتم مزامنة بعد',
-        'whats_working.sync.next_run': 'المزامنة التالية بعد {n} ساعة',
         'whats_working.sync.cta': 'مزامنة الآن',
-        'whats_working.sync.cooldown': 'تمت المزامنة للتو — حاول لاحقاً',
+        // PHASE 970 (BATCH 4) — removed `whats_working.sync.cooldown`
+        // (cooldown gate deleted in Batch 4) and
+        // `whats_working.sync.next_run` (not rendered, wait-state
+        // string per investigation §4 decision 4).
         'whats_working.sync.needs_reauth': 'انتهت صلاحية الاتصال بميتا — يرجى إعادة الربط',
         'whats_working.sync.reconnect_cta': 'إعادة ربط ميتا',
         'whats_working.sync.never_connected': 'لم يتم ربط حساب ميتا بعد',
