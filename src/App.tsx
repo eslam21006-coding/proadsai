@@ -12963,28 +12963,79 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     showToast(lang === 'ar' ? 'جاري مزامنة الإعلانات…' : 'Syncing ad performance…', 'info');
                     try {
                       const result = await metaService.triggerWorkspaceSync(activeWorkspaceId);
-                      if (result.ok) {
-                        const count = result.counts?.ads ?? 0;
-                        showToast(lang === 'ar' ? `تمت مزامنة ${count} إعلان` : `Synced ${count} ads`, 'success');
-                        invalidateHookAngleIconsCache();
-                      } else if (result.needsReauth) {
-                        showToast(lang === 'ar' ? 'يرجى إعادة الاتصال بميتا' : 'Please reconnect Meta', 'error');
-                      } else {
-                        showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
+                      // PHASE 970 (BATCH 5) — wire the four new i18n
+                      // result strings (sync.result.{done,partial,
+                      // more_coming,failed}) to the toast. The mapping
+                      // matches investigation report §8.6:
+                      //   - failed          → result.ok === false
+                      //   - partial         → at least one account was
+                      //                       rate-limited (legacy or
+                      //                       workspace fan-out)
+                      //   - more_coming     → at least one workspace
+                      //                       task was queued
+                      //   - done            → everything OK
+                      // partial and more_coming can both apply
+                      // simultaneously (some throttled, some
+                      // queued); partial takes precedence because
+                      // the user pressed once and some ads failed —
+                      // the "more coming" tail is less useful than
+                      // the "partial" headline.
+                      const anyLegacyLimited = (result.legacyRateLimited?.length ?? 0) > 0;
+                      const anyQueuedLimited = (result.workspaceRateLimited?.length ?? 0) > 0;
+                      const anyQueued = (result.workspaceQueued ?? 0) > 0;
+                      let resultKey: 'sync.result.failed' | 'sync.result.partial' | 'sync.result.more_coming' | 'sync.result.done' = 'sync.result.done';
+                      if (!result.ok) {
+                        resultKey = 'sync.result.failed';
+                      } else if (anyLegacyLimited || anyQueuedLimited) {
+                        resultKey = 'sync.result.partial';
+                      } else if (anyQueued) {
+                        resultKey = 'sync.result.more_coming';
                       }
+                      // PHASE 970 (BATCH 5) — first-real-run evidence.
+                      // The first time the Phase 14 pipeline completes
+                      // in production, this is the count the on-call
+                      // engineer will read to verify ad-to-creative
+                      // matching is producing real numbers. Until
+                      // then it stays at zero; the dashboard reads
+                      // it from `result.counts` which runSyncForAccount
+                      // populates.
+                      const counts = result.counts;
+                      console.log(
+                        '📊 [Batch 5] First-successful-Phase-14-run evidence:',
+                        JSON.stringify({
+                          ads: counts?.ads ?? 0,
+                          matched: counts?.matched ?? 0,
+                          ambiguous: counts?.ambiguous ?? 0,
+                          unmatched: counts?.unmatched ?? 0,
+                          legacyRateLimited: result.legacyRateLimited ?? [],
+                          workspaceQueued: result.workspaceQueued ?? 0,
+                          workspaceRateLimited: result.workspaceRateLimited ?? [],
+                          resultKey,
+                        }),
+                      );
+                      if (result.needsReauth && resultKey === 'sync.result.done') {
+                        // Auth failure overrides the success shape; the
+                        // user must reconnect.
+                        showToast(lang === 'ar' ? 'يرجى إعادة الاتصال بميتا' : 'Please reconnect Meta', 'error');
+                      } else if (resultKey === 'sync.result.failed') {
+                        showToast(t('sync.result.failed'), 'error');
+                      } else {
+                        showToast(t(resultKey), 'success');
+                      }
+                      invalidateHookAngleIconsCache();
                     } catch (err: any) {
                       // PHASE 970 (BATCH 4) — the cooldown path is gone.
-                      // The `resource-exhausted` block that used to
-                      // live here is removed; the server no longer
-                      // emits that error. A second-press collision now
-                      // arrives as `failed-precondition` (in-flight
-                      // lease at the orchestrator layer) and renders
-                      // the generic "Sync failed" path. The
-                      // lease-collision message lives in
-                      // `triggerMetaSync` itself; it will be wired to
-                      // a localised toast in Batch 5 when the
-                      // dashboard renders the new i18n keys.
-                      showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
+                      // A second-press collision arrives as
+                      // `failed-precondition` (in-flight lease at the
+                      // orchestrator layer) and renders the
+                      // `sync.result.failed` localised string instead
+                      // of the old generic "Sync failed" path. This
+                      // is the Batch-5 wiring of the new i18n keys.
+                      if (err?.code === 'functions/failed-precondition' || err?.code === 'failed-precondition') {
+                        showToast(t('sync.result.failed'), 'error');
+                      } else {
+                        showToast(t('sync.result.failed'), 'error');
+                      }
                     } finally {
                       setMetaSyncing(false);
                     }

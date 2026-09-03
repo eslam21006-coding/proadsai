@@ -212,6 +212,17 @@ class MetaService {
             unmatched?: number;
             ambiguous?: number;
         };
+        // PHASE 970 (BATCH 5) — surface the rate-limit + fan-out
+        // counts that drive the result-toast selection in App.tsx.
+        // `legacyRateLimited` is a list of accountIds that LEG A
+        // (the legacy /adPerformance + /adPerformanceHistory path)
+        // could not write because Meta returned code 4 / 17.
+        // `workspaceQueued` is the number of LEG B tasks the
+        // orchestrator fanned out via Cloud Tasks. The first
+        // successful Phase 14 run will report nonzero numbers here.
+        legacyRateLimited?: string[];
+        workspaceQueued?: number;
+        workspaceRateLimited?: string[];
         needsReauth?: boolean;
     }> {
         try {
@@ -228,6 +239,9 @@ class MetaService {
                     unmatched?: number;
                     ambiguous?: number;
                 };
+                legacyRateLimited?: string[];
+                workspaceQueued?: number;
+                workspaceRateLimited?: string[];
                 needsReauth?: boolean;
             };
         } catch (err: any) {
