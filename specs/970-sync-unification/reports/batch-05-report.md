@@ -23,9 +23,11 @@ out-of-scope per investigation §10 and stay documented there.
 | File | Change |
 |---|---|
 | `functions/src/__tests__/metaSyncRateLimit.test.ts` (new) | 10 tests per investigation §8.7. 4 end-to-end rate-limit classification tests (LEG A + LEG B enqueue, each at `code 4/subcode 1504022` and `code 17/subcode 2446079`) plus a both-legs-rate-limited test plus a LEG B inline `errors[]` string-path test, plus 4 `isMetaRateLimit` direct classifier tests including the load-bearing `code: 4, subcode: 999` and `code: 99, subcode: 1504022` negative cases (different code OR different subcode does NOT classify). The "run still ok" assertion is the load-bearing contract. |
+| `functions/src/metaSync/orchestrator.ts` | Adds the **server-side** first-real-run evidence log inside `runFullSync` (after the result is assembled, before the return). Emits inline-workspace matching counts + LEG A overall summary + fan-out dispatch summary, indexed by the deployed `function_name` (`metaSyncPerformance` or `triggerMetaSync`). Cloud Logging tags logs with the deployed function's name, not the internal helper's — see §4 below. |
+| `functions/src/metaSync/worker.ts` | Adds the **server-side** first-real-run evidence log inside `metaSyncAccountWorker` after `runSyncForAccount` returns. Emits per-task matching counts, indexed by `function_name="metaSyncAccountWorker"`. Every fanned-out workspace emits one log line; the fan-out workspaces never touch the browser, so this is the only place their counts land. |
 | `src/services/metaService.ts` | `triggerWorkspaceSync` return type adds `legacyRateLimited?: string[]`, `workspaceQueued?: number`, `workspaceRateLimited?: string[]`. The result-type assertion also updated. No behaviour change; only the surface exposed to the toast handler. |
-| `src/App.tsx:12960-13010` | `onSyncNow` toast handler rewritten. Maps `result.legacy.rateLimited.length > 0` OR `result.workspace.rateLimited.length > 0` → `sync.result.partial`; `result.workspace.queued > 0` → `sync.result.more_coming`; `result.ok === false` → `sync.result.failed`; otherwise `sync.result.done`. Emits a `console.log("📊 [Batch 5] First-successful-Phase-14-run evidence:", { ads, matched, ambiguous, unmatched, legacyRateLimited, workspaceQueued, workspaceRateLimited, resultKey })` on every press — this is the **first-real-run evidence** the user called out. The `failed-precondition` (second-press collision) catch now renders the `sync.result.failed` localised string instead of the old generic "Sync failed" path. |
-| `specs/970-sync-unification/POST_DEPLOY_RUNBOOK.md` (new) | Operational follow-up. Eight sections: (1) the 120 figure to watch; (2) the one-line GRAPH_CONCURRENCY retune trade; (3) the four rate-limit codes; (4) the matching-counts evidence line; (5) the `canSyncNow` / `cooldownEndsAt` freeze (next-phase deletion); (6) the four out-of-scope known limits; (7) the per-callable dispatch table; (8) the source-of-truth map. The on-call engineer's first stop after a deploy. |
+| `src/App.tsx:12960-13010` | `onSyncNow` toast handler rewritten. Maps `result.legacy.rateLimited.length > 0` OR `result.workspace.rateLimited.length > 0` → `sync.result.partial`; `result.workspace.queued > 0` → `sync.result.more_coming`; `result.ok === false` → `sync.result.failed`; otherwise `sync.result.done`. The `failed-precondition` (second-press collision) catch now renders the `sync.result.failed` localised string instead of the old generic "Sync failed" path. The browser-side `console.log` for first-real-run evidence is kept (immediate feedback for whoever has DevTools open) but is NOT the source of truth for the runbook — the server-side logs in `runFullSync` and `worker.ts` are. |
+| `specs/970-sync-unification/POST_DEPLOY_RUNBOOK.md` (new) | Operational follow-up. Eight sections: (1) the 120 figure to watch; (2) the one-line GRAPH_CONCURRENCY retune trade; (3) the four rate-limit codes; (4) the matching-counts evidence line with **corrected** Cloud Logging queries (deployed `function_name`, NOT `runFullSyncWithLease`); (5) the `canSyncNow` / `cooldownEndsAt` freeze (next-phase deletion); (6) the four out-of-scope known limits; (7) the per-callable dispatch table with corrected lease-collision query; (8) the source-of-truth map. The on-call engineer's first stop after a deploy. |
 | `functions/package.json` | New `test:phase970:rateLimit` script and entry in the aggregate `test` script. |
 
 ### Files unchanged in Batch 5 (verified post-batch)
@@ -137,35 +139,145 @@ The `failed-precondition` catch (in-flight lease collision from Batch 4) now ren
 
 ---
 
-## 4. The first-real-run evidence line
+## 4. The first-real-run evidence line — server-side
 
-`src/App.tsx:12980-12995` emits a structured `console.log` on every press, with the field names the on-call engineer needs to read after the deploy:
+> **CORRECTION (post-push review):** the original Batch 5 commit
+> emitted the `console.log` from `App.tsx:12980-12995` only — a browser
+> `console.log` that **never reaches Cloud Logging**. The Cloud Tasks
+> fan-out workspaces also never touch the browser, so their
+> matching counts were invisible. The two follow-ups here move the
+> load-bearing logging server-side and update the runbook query to
+> target the deployed `function_name` (not the internal helper).
+
+The first-real-run evidence is logged in **two server-side sites**,
+each tagged by the deployed Cloud Function's `function_name` so
+Cloud Logging queries match it directly.
+
+### 4.1 Inline leg (active workspace) — emitted from `runFullSync` in `orchestrator.ts:725-758`
 
 ```ts
 console.log(
-  '📊 [Batch 5] First-successful-Phase-14-run evidence:',
+  "📊 [Batch 5] First-successful-Phase-14-run evidence (inline + LEG A summary):",
   JSON.stringify({
-    ads: counts?.ads ?? 0,
-    matched: counts?.matched ?? 0,
-    ambiguous: counts?.ambiguous ?? 0,
-    unmatched: counts?.unmatched ?? 0,
-    legacyRateLimited: result.legacyRateLimited ?? [],
-    workspaceQueued: result.workspaceQueued ?? 0,
-    workspaceRateLimited: result.workspaceRateLimited ?? [],
+    ownerUid: opts.ownerUid,
+    activeWorkspaceId: opts.activeWorkspaceId ?? null,
+    ok: result.ok,
     resultKey,
+    legacy: {
+      accountsSynced: result.legacy.accountsSynced,
+      adsSynced: result.legacy.adsSynced,
+      rateLimited: result.legacy.rateLimited,
+      errorCount: result.legacy.errors.length,
+    },
+    inline: result.workspace.inline
+      ? {
+          workspaceId: result.workspace.inline.workspaceId,
+          accountId: result.workspace.inline.accountId,
+          status: result.workspace.inline.status,
+          counts: {
+            ads: result.workspace.inline.counts.ads,
+            matched: result.workspace.inline.counts.matched,
+            ambiguous: result.workspace.inline.counts.ambiguous,
+            unmatched: result.workspace.inline.counts.unmatched,
+          },
+        }
+      : null,
+    fanOut: {
+      queued: result.workspace.queued,
+      rateLimited: result.workspace.rateLimited,
+    },
   }),
 );
 ```
 
-Cloud Logging query (per the runbook):
+This fires for **both** the sidebar (`metaSyncPerformance`) and the
+dashboard (`triggerMetaSync`) presses, because both call
+`runFullSyncWithLease → runFullSync`. Cloud Logging indexes
+the log by whichever deployed function was the entry point.
+
+### 4.2 Fanned-out leg (every other live workspace) — emitted from `worker.ts:71-95`
+
+```ts
+console.log(
+  "📊 [Batch 5] First-successful-Phase-14-run evidence (fanned-out worker):",
+  JSON.stringify({
+    ownerUid: payload.userId,
+    workspaceId: payload.workspaceId,
+    accountId: payload.accountId,
+    trigger: payload.trigger || "scheduled",
+    ok: result.ok,
+    status: result.status,
+    counts: {
+      ads: result.counts.ads,
+      matched: result.counts.matched,
+      ambiguous: result.counts.ambiguous,
+      unmatched: result.counts.unmatched,
+    },
+    errorCount: result.errors.length,
+  }),
+);
+```
+
+This fires **once per fanned-out workspace-account pair** that
+runs in production. The fan-out workspaces never touch the
+browser, so this server-side log is the only place their counts
+land.
+
+### 4.3 Cloud Logging queries (corrected — `function_name` is the deployed name, not the internal helper)
+
+**Inline leg** (queries by deployed function name — the helper
+`runFullSyncWithLease` is a module, not a Cloud Function, so a
+query against its name returns nothing):
 
 ```
 resource.type="cloud_function"
-resource.labels.function_name="runFullSyncWithLease"
+resource.labels.function_name:"metaSyncPerformance"
+textPayload=~"First-successful-Phase-14-run evidence \\(inline"
+```
+
+```
+resource.type="cloud_function"
+resource.labels.function_name:"triggerMetaSync"
+textPayload=~"First-successful-Phase-14-run evidence \\(inline"
+```
+
+Either query surfaces the inline leg. The `\(inline` marker
+distinguishes this line from the fan-out variant (next).
+
+**Fanned-out leg** (every workspace, one log line each):
+
+```
+resource.type="cloud_function"
+resource.labels.function_name:"metaSyncAccountWorker"
+textPayload=~"First-successful-Phase-14-run evidence \\(fanned-out"
+```
+
+A successful first deploy with N fan-out tasks shows N log
+lines, one per workspace. The `\(fanned-out` marker
+distinguishes this line from the inline variant.
+
+**Both legs together** (matches all Batch-5 evidence):
+
+```
+resource.type="cloud_function"
 textPayload=~"First-successful-Phase-14-run evidence"
 ```
 
-The first successful Phase 14 run will surface:
+The `\(inline` / `\(fanned-out` markers in the textPayload
+distinguish the two sources if the on-call engineer needs to split
+them later.
+
+### 4.4 Browser-side `console.log` (kept for immediate feedback)
+
+`src/App.tsx:12980-12995` retains a `console.log` with the same
+JSON shape for whoever has DevTools open during a press. It is
+**not** the source of truth for the runbook — DevTools is per-user
+and per-session, and the counts do not persist. The server-side
+logs (§4.1, §4.2) are what the runbook depends on.
+
+### 4.5 What the on-call engineer reads in Cloud Logging
+
+The first successful Phase 14 run surfaces:
 - `ads > 0` (Meta returned ad rows for the account).
 - `matched > 0` proportional to the workspace's generation count (the matching predicate is working).
 - `unmatched` carrying the ads whose hashes had no viable generation candidate.
@@ -184,7 +296,7 @@ Three follow-ups carried into this batch's report (and into the runbook) per the
 - **Per-process peak simultaneous Graph calls = 24** at `GRAPH_CONCURRENCY = 8` (insights pass dominates: 8 outer ads × 3 parallel insight windows per ad).
 - **Aggregate under 5-task Cloud Tasks fan-out = 120** simultaneous.
 
-Cloud Logging watch: `resource.labels.function_name=~"runFullSyncWithLease" AND textPayload=~"OAuthException"`. If `OAuthException code 4 / subcode 1504022` (or `code 17 / subcode 2446079`) recurs post-deploy, the cause is rate-limit pressure, not a regression.
+Cloud Logging watch: `resource.labels.function_name:"metaSyncPerformance" AND textPayload=~"Meta insights error for account" AND textPayload=~"OAuthException"`. The helper `runFullSyncWithLease` is a module, NOT a Cloud Function — a query against its name returns nothing. The match must be on the deployed `function_name` that wraps the orchestrator. If `OAuthException code 4 / subcode 1504022` (or `code 17 / subcode 2446079`) recurs post-deploy, the cause is rate-limit pressure, not a regression.
 
 **One-line retune** if the limit keeps firing: drop `GRAPH_CONCURRENCY` from `8` to `4` in `functions/src/metaSync/shared.ts:120`. The structural-guard test in `metaSyncConcurrency.test.js` (test 10) will fail and force a deliberate update of the expected value.
 
@@ -250,7 +362,7 @@ After this batch lands, Phase 970 closes. The work tree (Batches 1–5) is:
 | 2 | D3 field override, D4 task body envelope, discovery filter (soft-delete + dedup). | `f4dfb97` |
 | 3 | Orchestrator `runFullSync` unifying LEG A and LEG B. `isMetaRateLimit`. | `08d59d1` |
 | 4 | Cooldown removed everywhere (8 backend + 6 frontend + 1 i18n key pair). In-flight lease (`lease.ts`, 10-min TTL, holder-verified release). `runFullSyncWithLease` wrapper. | `1f90441` |
-| 5 | `metaSyncRateLimit.test.ts` contract. `sync.result.*` strings wired. First-real-run evidence line. `POST_DEPLOY_RUNBOOK.md`. | (this commit) |
+| 5 | `metaSyncRateLimit.test.ts` contract. `sync.result.*` strings wired. Server-side first-real-run evidence (orchestrator + worker). `POST_DEPLOY_RUNBOOK.md` with corrected Cloud Logging queries (deployed function_name, not internal helper). | (this commit) |
 
 The deploy steps that remain are operational, not code:
 

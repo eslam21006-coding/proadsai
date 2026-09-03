@@ -743,6 +743,78 @@ test("runFullSync — structural guard: full export surface preserved (Batch 3 c
     assert.equal(typeof orch.runFullSyncWithLease, "function", "runFullSyncWithLease is the press-side wrapper added in Batch 4");
 });
 
+// ─── Batch 5 — server-side first-real-run evidence log line ─────────────
+
+test("runFullSync — emits the server-side first-real-run evidence line with the deployed-function-compatible shape", async () => {
+    // The Cloud Logging query in POST_DEPLOY_RUNBOOK.md §4 matches
+    // against `function_name:"metaSyncPerformance" OR
+    // function_name:"triggerMetaSync" AND
+    // textPayload=~"First-successful-Phase-14-run evidence \\(inline"`.
+    // That requires:
+    //   1. `console.log` fires from inside the orchestrator, NOT
+    //      from the browser.
+    //   2. The log line carries the marker substring
+    //      `\\(inline + LEG A summary)`.
+    //   3. The shape includes the four matching counts.
+    // We capture stdout in-process; the deployed-function name
+    // aspect is implicit (Cloud Functions tags logs with the
+    // function_name of the entry-point Cloud Function that called
+    // into the module).
+    resetStub();
+    seedConn({
+        ownerUid: OWNER,
+        adAccounts: [{ id: ACCT_A, name: "Alpha", status: 1 }],
+    });
+    seedWorkspace({
+        ownerUid: OWNER,
+        workspaceId: WS_A,
+        accountId: ACCT_A,
+        metaConnected: true,
+    });
+
+    const captured: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => {
+        captured.push(args.map(String).join(" "));
+    };
+    try {
+        await runFullSync({
+            ownerUid: OWNER,
+            callerUid: CALLER,
+            activeWorkspaceId: WS_A,
+            nowMs: FIXED_NOW,
+            fetchImpl: stubFetchInsights(),
+            decryptLegacyTokenOverride: async () => "PLAIN_TOKEN",
+            runPhase14InlineOverride: fakeInline({
+                status: "ok",
+                ads: 50,
+                matched: 30,
+                ambiguous: 5,
+                unmatched: 15,
+            }),
+            tasksClient: tasksClientRecorder().facade,
+        });
+    } finally {
+        console.log = origLog;
+    }
+
+    const evidenceLine = captured.find((s) => /First-successful-Phase-14-run evidence \(inline/.test(s));
+    assert.ok(
+        evidenceLine,
+        `expected server-side first-real-run evidence line. Captured ${captured.length} log lines: ${captured.slice(0, 3).join(" | ")}`,
+    );
+    // Shape: the four matching counts from the inline stub.
+    assert.match(evidenceLine, /"ads":50/);
+    assert.match(evidenceLine, /"matched":30/);
+    assert.match(evidenceLine, /"ambiguous":5/);
+    assert.match(evidenceLine, /"unmatched":15/);
+    // The marker substring that the runbook query targets.
+    assert.match(evidenceLine, /First-successful-Phase-14-run evidence \(inline \+ LEG A summary\)/);
+    // Identifies the deploy unit (`function_name` will be the
+    // calling Cloud Function's name, e.g. `metaSyncPerformance`).
+    assert.match(evidenceLine, /"ownerUid":"owner_uid_AAAA"/);
+});
+
 // ─── Batch 4 — runFullSyncWithLease integration ────────────────────────────
 
 test("runFullSyncWithLease — acquires the lease, runs, releases in finally", async () => {

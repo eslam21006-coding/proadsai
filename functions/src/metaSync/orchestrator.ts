@@ -668,7 +668,7 @@ export async function runFullSync(opts: FullSyncOptions): Promise<FullSyncResult
             : []
         : [];
 
-    return {
+    const result: FullSyncResult = {
         ok: legacy.ok && (inline ? inline.status !== "failed" : true),
         legacy: {
             accountsSynced: legacy.accountsSynced,
@@ -692,6 +692,67 @@ export async function runFullSync(opts: FullSyncOptions): Promise<FullSyncResult
         needsReauth: inline ? inline.errors.some((e) => /needsReauth/i.test(e)) : false,
         lastMetaSyncAt: nowMs,
     };
+
+    // PHASE 970 (BATCH 5) — first-successful-Phase-14-run evidence.
+    // Server-side `console.log` so the matching counts land in Cloud
+    // Logging, indexed under the deployed callable's
+    // `function_name` (`metaSyncPerformance` or `triggerMetaSync`).
+    // The browser-side `console.log` in `App.tsx` mirrors the same
+    // shape for immediate user feedback but is not the source of
+    // truth for the on-call engineer's runbook query.
+    //
+    // The inline workspace is the active workspace when there is
+    // one; without an active workspace the inline log is null.
+    // The Cloud Tasks fan-out (queued > 0) runs server-side in
+    // `metaSyncAccountWorker` and emits its own log line there with
+    // the per-task counts.
+    const resultKey: "done" | "partial" | "more_coming" | "failed" = result.ok
+        ? (result.legacy.rateLimited.length > 0 || result.workspace.rateLimited.length > 0
+            ? "partial"
+            : result.workspace.queued > 0
+                ? "more_coming"
+                : "done")
+        : "failed";
+    console.log(
+        "📊 [Batch 5] First-successful-Phase-14-run evidence (inline + LEG A summary):",
+        JSON.stringify({
+            ownerUid: opts.ownerUid,
+            activeWorkspaceId: opts.activeWorkspaceId ?? null,
+            ok: result.ok,
+            resultKey,
+            // LEG A overall.
+            legacy: {
+                accountsSynced: result.legacy.accountsSynced,
+                adsSynced: result.legacy.adsSynced,
+                rateLimited: result.legacy.rateLimited,
+                errorCount: result.legacy.errors.length,
+            },
+            // LEG B inline workspace — the first place a Phase-14
+            // matched/unmatched count can appear in production.
+            inline: result.workspace.inline
+                ? {
+                      workspaceId: result.workspace.inline.workspaceId,
+                      accountId: result.workspace.inline.accountId,
+                      status: result.workspace.inline.status,
+                      counts: {
+                          ads: result.workspace.inline.counts.ads,
+                          matched: result.workspace.inline.counts.matched,
+                          ambiguous: result.workspace.inline.counts.ambiguous,
+                          unmatched: result.workspace.inline.counts.unmatched,
+                      },
+                  }
+                : null,
+            // LEG B Cloud Tasks fan-out — counts themselves arrive
+            // in `metaSyncAccountWorker`'s own log line; here we
+            // record the dispatch summary.
+            fanOut: {
+                queued: result.workspace.queued,
+                rateLimited: result.workspace.rateLimited,
+            },
+        }),
+    );
+
+    return result;
 }
 
 // ─── Lease wrapper ───────────────────────────────────────────

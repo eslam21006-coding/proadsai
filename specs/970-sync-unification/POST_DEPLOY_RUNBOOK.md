@@ -28,13 +28,26 @@ It is derived in `batch-01-report.md` §2 HEADLINE and re-stated in
 - Pre-fix peak was 1,149 simultaneous (insights lockstep). 24 is a
   **48× reduction**.
 
-The Cloud Logging query to find rate-limit errors:
+The Cloud Logging query to find rate-limit errors (the `code 4 /
+subcode 1504022` envelope is logged at the LEG A error site inside
+`runLegacySyncForAccount`, which is called from the deployed
+`metaSyncPerformance` callable):
 
 ```
 resource.type="cloud_function"
-resource.labels.function_name=~"metaSync|runFullSync"
-jsonPayload.message=~"OAuthException"
+resource.labels.function_name=~"metaSyncPerformance"
+textPayload=~"Meta insights error for account"
+textPayload=~"OAuthException"
 ```
+
+The deployed `triggerMetaSync` callable can also surface a rate-limit
+error in the LEG B inline path; the same pattern but with that
+function name. The match is regex (`=~`), not exact match, so any
+deployed Meta-touching callable that emits a `console.error` with
+"OAuthException" surfaces in the result. Note: `runFullSyncWithLease`
+is an internal helper, NOT a Cloud Function, so a query against
+its name returns nothing. Always query the deployed
+`function_name`.
 
 If that query returns anything post-deploy, the cause is rate-limit
 pressure and Batch 5's retune (below) applies. The `120` figure is
@@ -156,13 +169,63 @@ but `matched === 0`, the matching predicate is broken — escalate.
 If `ads === 0` after several presses, the legacy fetch is broken
 (out of Batch 5 scope; see investigation §10 "out of scope").
 
-Cloud Logging query to find this line:
+The log line is emitted from inside the **deployed** Cloud Function
+handlers (`metaSyncPerformance`, `triggerMetaSync`,
+`metaSyncAccountWorker`), not the internal helper. Cloud Logging
+indexes logs by the deployed `function_name` of the entry point —
+the `runFullSyncWithLease` / `runSyncForAccount` helpers are
+modules, not Cloud Functions, so a query against either name
+returns nothing. The queries below use the deployed names.
+
+**Inline leg** (active workspace — `metaSyncPerformance` and
+`triggerMetaSync` both call into `runFullSync` which logs the
+inline + LEG A summary):
 
 ```
 resource.type="cloud_function"
-resource.labels.function_name="runFullSyncWithLease"
+resource.labels.function_name:"metaSyncPerformance"
+textPayload=~"First-successful-Phase-14-run evidence \\(inline"
+```
+
+```
+resource.type="cloud_function"
+resource.labels.function_name:"triggerMetaSync"
+textPayload=~"First-successful-Phase-14-run evidence \\(inline"
+```
+
+Either query will surface the inline leg. The trigger is server-side
+`console.log`, indexed by the deployed function's name, so this
+query works regardless of whether the press came from the sidebar
+or the dashboard.
+
+**Fanned-out leg** (every other live workspace — one log line
+per task, server-side in `metaSyncAccountWorker`):
+
+```
+resource.type="cloud_function"
+resource.labels.function_name:"metaSyncAccountWorker"
+textPayload=~"First-successful-Phase-14-run evidence \\(fanned-out"
+```
+
+Every Cloud Tasks task that runs in production emits one of these.
+A successful first deploy with N fan-out tasks shows N log lines,
+one per workspace. The fanned-out workspaces never touch the
+browser, so this server-side log is the ONLY place their counts
+land — the browser log in `App.tsx` only covers the inline
+workspace.
+
+**Both legs together** (matches the Batch-5 report's overall
+shape; the `\\(inline` / `\\(fanned-out` markers disambiguate):
+
+```
+resource.type="cloud_function"
 textPayload=~"First-successful-Phase-14-run evidence"
 ```
+
+The marker also matters because future batches may add more
+evidence log lines for the matching pipeline, and the marker
+distinguishes "this is the Batch-5 first-real-run count" from
+later diagnostics.
 
 ---
 
@@ -229,11 +292,14 @@ From investigation §10 + Batch 1–4 reports:
 
 If a user complains "I press Sync Now and nothing happens" or "the
 dashboard is stuck on a previous sync", the lease is the first place
-to look:
+to look. The `AlreadyRunningError` is thrown from inside
+`runFullSyncWithLease` (an internal helper, not a Cloud Function);
+the deployed callable wraps and translates it, so the log is
+indexed under the deployed `function_name`:
 
 ```
 resource.type="cloud_function"
-resource.labels.function_name="runFullSyncWithLease"
+resource.labels.function_name=~"metaSyncPerformance|triggerMetaSync"
 textPayload=~"AlreadyRunningError"
 ```
 
