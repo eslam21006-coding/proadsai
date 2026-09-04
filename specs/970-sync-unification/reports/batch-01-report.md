@@ -1,3 +1,4 @@
+<!-- specs/970-sync-unification/reports/batch-01-report.md — Records the bounded Meta Graph concurrency change (Batch 1 / D5) and validation results. -->
 # Batch 01 Report — Bounded Graph concurrency in `runSyncForAccount` (D5)
 
 **Worktree:** `D:\proads-worktrees\cumulative-learning`

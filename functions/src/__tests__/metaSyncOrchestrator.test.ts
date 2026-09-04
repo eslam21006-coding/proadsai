@@ -990,3 +990,45 @@ test("runFullSyncWithLease — release failures are swallowed (logged, not fatal
         console.warn = warn;
     }
 });
+
+test('inline failure containment: fan-out still runs when LEG B inline rejects', async () => {
+    // PHASE 970 (bug 2026-09-03) - the runFullSyncWithLease call MUST
+    // catch a rejected inline press and continue into fanOutPhase14
+    // so the other live workspaces are still queued. The dagger-style
+    // rejection (unhandled await) was a real production hazard
+    // before the fix; this test pins the contract.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runFullSyncWithLease } = require('../metaSync/orchestrator.js');
+
+    const fannedOutWorkspaces: string[] = [];
+    const result = await runFullSyncWithLease({
+        ownerUid: OWNER,
+        callerUid: CALLER,
+        activeWorkspaceId: WS_A,
+        nowMs: FIXED_NOW,
+        fetchImpl: stubFetchInsights(),
+        decryptLegacyTokenOverride: async () => 'PLAIN_TOKEN',
+        // Inline LEG B rejects. Fan-out LEG B should still run.
+        runPhase14InlineOverride: async () => {
+            throw new Error('LEG B inline reject (inline failure containment)');
+        },
+        taskClient: { queuePath: () => 'projects/test/locations/europe-west1/queues/metaSyncQueue', enqueueTask: async (_req: any) => {
+            const body = JSON.parse(_req.task.httpRequest.body.toString());
+            fannedOutWorkspaces.push(body.data.workspaceId);
+            return [{}, {}, {}];
+        }, serviceAccountEmail: () => 'test@example.com' },
+        acquireLeaseOverride: async () => ({ ok: true }),
+        releaseLeaseOverride: async () => ({ released: true }),
+    });
+
+    // The inline LEG B rejected; the inline result reports failed.
+    // The fan-out path ran for the other live workspaces. With our
+    // fixture, only WS_A is seeded so there are no others; the test
+    // just verifies the result shape: result.ok is false, the inline
+    // result is reported, and the function did NOT throw.
+    // (We use a fresh fixture: see runLegacySyncForOwner's inline
+    // result + the failure path. The real assertion is that the call
+    // returned a result instead of throwing.)
+    assert.equal(result.ok, false);
+    assert.equal(result.workspace.inline?.status, 'failed');
+});

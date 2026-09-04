@@ -666,13 +666,31 @@ export async function runFullSync(opts: FullSyncOptions): Promise<FullSyncResult
         const idx = owned.findIndex((w) => w.workspaceId === opts.activeWorkspaceId);
         if (idx !== -1) {
             const [picked] = owned.splice(idx, 1);
-            inline = await phase14Inline({
-                ownerUid: opts.ownerUid,
-                workspaceId: picked.workspaceId,
-                accountId: picked.accountId,
-                trigger: "manual",
-                nowMs,
-            });
+            try {
+                inline = await phase14Inline({
+                    ownerUid: opts.ownerUid,
+                    workspaceId: picked.workspaceId,
+                    accountId: picked.accountId,
+                    trigger: "manual",
+                    nowMs,
+                });
+            } catch (inlineErr: unknown) {
+                // PHASE 970 (bug 2026-09-03) inline failure containment:
+                // record a failed inline result and continue into fan-out
+                // so independent workspaces are still queued.
+                const inlineErrMsg = (inlineErr as Error)?.message ?? String(inlineErr);
+                console.warn(
+                    `⚠️ metaSync inline LEG B failed: workspace=${picked.workspaceId} ` +
+                    `account=${picked.accountId} error=${inlineErrMsg}`,
+                );
+                inline = {
+                    workspaceId: picked.workspaceId,
+                    accountId: picked.accountId,
+                    counts: { campaigns: 0, adSets: 0, ads: 0, matched: 0, ambiguous: 0, unmatched: 0 },
+                    status: "failed" as const,
+                    errors: [inlineErrMsg],
+                };
+            }
         }
     }
 

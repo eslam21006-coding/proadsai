@@ -1,3 +1,4 @@
+<!-- specs/970-sync-unification/reports/batch-03-report.md — Documents the runFullSync orchestrator unifying LEG A and LEG B (Batch 3). -->
 # Batch 03 Report — Orchestrator + runFullSync
 
 **Worktree:** `D:\proads-worktrees\cumulative-learning`
@@ -127,10 +128,10 @@ The non-rate-limit error path is **exactly identical** (same `console.error` lin
 Working line by line (wall-clock, not peak):
 
 - LEG A: 23 accounts × ~ 3s per account (one fetch + ~1s insights round-trip + ~1s image round-trip per ad, amortised by the limiter) ≈ 65–70s. Pre-fix measured at 62–68s.
-- LEG B inline: one workspace × runSyncForAccount at the bounded `GRAPH_CONCURRENCY = 8`. For a 383-ad account: serial round-trips per ad = **2** (one parallel-insights call = 1 round-trip wall, one image download = 1 round-trip wall; the three insight windows are PARALLEL via `metaGraph.ts:407–414` so they collapse to a single round-trip wall). Total serial round-trips for 383 ads = `383 × 2 = 766`. At depth 8: `766 / 8 ≈ 96 rounds × 2 round-trips per round ≈ 48–96s` depending on RTT (the `× 2 round-trips per round` is the *per-ad* count; the rounds are workers' pace). The peak during this run is bounded at `8 × 3 = 24` simultaneous Graph calls per worker (insights pass peak) — see `batch-01-report.md` §2 for the full peak derivation.
+- LEG B inline: one workspace × runSyncForAccount at the bounded `GRAPH_CONCURRENCY = 8`. For a 383-ad account: serial round-trips per ad = **2** (one parallel-insights call = 1 round-trip wall, one image download = 1 round-trip wall; the three insight windows are PARALLEL via `metaGraph.ts:407–414` so they collapse to a single round-trip wall). Total serial round-trips for 383 ads = `383 × 2 = 766`. Across the `GRAPH_CONCURRENCY = 8` outer workers, that is `766 ÷ 8 ≈ 96 workerspace-pass-batches` (one pass-batch is the 2 round-trips for one ad's fan-in). At 200–500 ms per round-trip, that is roughly `19–48 s` for the inline leg, depending on RTT. The peak during this run is bounded at `8 × 3 = 24` simultaneous Graph calls per worker (insights pass peak) — see `batch-01-report.md` §2 for the full peak derivation.
 - LEG B fan-out: enqueue is sub-second per workspace.
 
-The orchestrator does LEG A first, then LEG B inline, sequentially. Worst-case 70 + 96 ≈ 170 s. With realistic RTT (200–500 ms) it's closer to 50–90 s. **The 120s ceiling is no longer safe.** 540s aligns with `triggerMetaSync`'s runtime and the platform ceiling. Memory bumps to 2GiB because the LEG B inline workspace, when fed 383 ads and ~500 image downloads, holds a non-trivial in-memory working set.
+The orchestrator does LEG A first, then LEG B inline, sequentially. Worst-case 70 + 48 ≈ 118 s (48 s is the upper end of the corrected LEG B inline estimate). With realistic RTT (200–500 ms) it’s closer to 50–90 s. **The 120s ceiling is no longer safe.** 540s aligns with `triggerMetaSync`'s runtime and the platform ceiling. Memory bumps to 2GiB because the LEG B inline workspace, when fed 383 ads and ~500 image downloads, holds a non-trivial in-memory working set.
 
 For the rate-limit engineer reading this section: the peak you must hold in your head is **24 per process, 120 under fan-out** — see `batch-01-report.md` §2. The 766 figure here is wall-clock arithmetic and not a peak.
 

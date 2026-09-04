@@ -1,3 +1,4 @@
+<!-- specs/970-sync-unification/reports/batch-02-report.md — Records the dispatch field-override, task-body envelope, and discovery-filter changes (Batch 2 / D3+D4). -->
 # Batch 02 Report — D3, D4, and the discovery filter
 
 **Worktree:** `D:\proads-worktrees\cumulative-learning`

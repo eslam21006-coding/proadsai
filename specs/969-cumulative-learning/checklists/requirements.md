@@ -1,3 +1,4 @@
+<!-- specs/969-cumulative-learning/checklists/requirements.md — Checklist for the cumulative-learning feature specification (Phase 969). -->
 # Specification Quality Checklist: Cumulative Learning for Ad Performance
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
