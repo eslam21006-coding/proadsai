@@ -106,8 +106,15 @@ creativeDeployments total: 58 | with non-null metaAdId: 0
 sync already makes returns a lifetime or since-inception conversion total, and
 no *field* can be added to an existing call to produce one, because the window
 is set by a **query parameter** (`time_range` / `date_preset`), not by a field.
-Obtaining a lifetime total requires an **additional call per ad** with a
-different window parameter.
+Obtaining a lifetime total **in a single request** requires an **additional call
+per ad** with a different window parameter.
+
+> **Partly superseded by the Batch 0 Addendum (§A1).** This answer is about what a
+> single request returns, and it stands. It does **not** settle whether a
+> since-inception total can be *accumulated* across syncs from data already
+> arriving. §A1 finds that it can: `last7DaysDaily` is a per-day row series that
+> already carries `actions` and a per-row date, and is currently discarded. Read
+> §A1 before acting on the "additional call per ad" sentence above.
 
 ### Every conversion-count field, with its exact window
 
@@ -215,6 +222,9 @@ three in `fetchAdInsights` (`metaGraph.ts:407-414`), returning the same
 `actions` array over the whole life of the ad. That is a per-ad Graph request
 multiplied across the account on every sync, and its cost and rate-limit
 consequences have not been assessed here.
+
+**That call is not the only route.** Addendum §A1 finds a per-day accumulation
+route in data the sync already receives, which needs no new call at all.
 
 > **Consequence for Amendment 2, condition (a).** "5 combined conversions across
 > all placements" cannot be evaluated stably against any figure the system holds
@@ -613,7 +623,13 @@ header as still binding.
 
 ## Summary
 
-| Question | Answer | Consequence |
+> **The "Consequence" column below is superseded by the Batch 0 Addendum.**
+> Neither Amendment 2 condition is blocked. Condition (a) is available by
+> accumulating the per-day rows the sync already receives (§A1); condition (b) is
+> available by persisting a field already fetched (owner ruling, §A3 status
+> table). The "Answer" column stands as written.
+
+| Question | Answer | Consequence (superseded — see Addendum) |
 |---|---|---|
 | Q1 — lifetime conversion count available? | **No.** Every count is a rolling window (3-day for learning, 30-day for the user-level store). Lifetime-ness is a request parameter, not a field, so no field can be added to an existing call — it needs a new per-ad call. Stored history overlaps and has gaps, so it cannot be summed. | Amendment 2 condition (a) is **not implementable against current data**. |
 | Q2 — positive "stopped running" signal? | **No.** `status` is already requested (`metaGraph.ts:83`) and typed (`:145`) but never read and never persisted; `AdDoc` has no status member. `effective_status`, `configured_status`, and stop/end timestamps appear nowhere in the codebase. Absence-from-sync and zero spend are ruled out by `spec.md:139`. | Amendment 2 condition (b) is **not implementable against current data** — blocked at the write site, not by the API. |
@@ -622,3 +638,290 @@ header as still binding.
 **Fan-out, restated from the data:** 1008 rows → 146 creatives (6.90:1) across
 both accounts; 383 rows → 52 creatives (7.37:1) for `act_995888422231015`
 alone, largest creative 55 rows.
+
+---
+---
+
+# Batch 0 Addendum — daily-row accumulation and denominator reconciliation
+
+**Date**: 2026-09-05
+**Trigger**: owner review of Batch 0. Two read-only questions remained open, plus
+three corrections to record for the Batch 1 spec text.
+**Still read-only.** No file under `functions/src/` or `src/` modified.
+
+---
+
+## A1 — Can a lifetime conversion total be *accumulated* from data already arriving?
+
+### Answer
+
+**Yes.** The owner's hypothesis is correct in substance but lands on a different
+window than the one it named. `threeDayRolling` is **not** a per-day series — it
+is a single aggregated row. But `last7DaysDaily` **is** a per-day series, it
+already carries an `actions` array and a per-row date, and the sync already
+receives it on every ad, every sync, and currently discards all but three derived
+numbers.
+
+So a per-creative running conversion counter can be built **with no new Graph
+call**.
+
+### Is `threeDayRolling` per-day rows or one aggregated row? — One aggregated row.
+
+`fetchAdInsights3d` (`functions/src/metaGraph.ts:353-366`) sends exactly three
+parameters:
+
+```
+fields:     INSIGHTS_FIELDS.join(",")
+time_range: {"since": "<today-2>", "until": "<today>"}
+level:      "ad"
+```
+
+**No `time_increment`.** With `time_increment` omitted, Meta collapses the whole
+range into one row. The repository states this itself, at
+`functions/src/metaSync/shared.ts:249-251`:
+
+```
+// CTR rates — average across the 3-day rows (Meta returns one row per ad
+// when time_range is supplied without time_increment, so this is just
+// the single row).
+```
+
+The `.reduce()` calls in `sumSpend3d` (`shared.ts:178-181`) and
+`aggregateAdMetrics` (`shared.ts:235-247`) are therefore degenerate — they
+iterate a one-element array. They read as evidence of a per-day series but are
+not. `countConversionActions(threeDayRows)` (`shared.ts:247`) is summing the
+actions of a single three-day-wide row, which is exactly why `conversions3d` is a
+rolling figure that rises and falls.
+
+**The owner's inference from the `.reduce()` calls does not hold for
+`threeDayRolling`.** It holds for a different window.
+
+### Is a single complete-day conversion figure extractable, with no new call? — Yes, from `last7DaysDaily`.
+
+`fetchAdInsights7dDaily` (`metaGraph.ts:389-396`):
+
+```
+fields:         INSIGHTS_FIELDS.join(",")
+date_preset:    "last_7d"
+time_increment: 1          <-- one row per day
+level:          "ad"
+```
+
+`time_increment: 1` is explicit, and the header comment at `metaGraph.ts:387-388`
+says so: *"`time_increment=1` makes Meta return one row per day."*
+
+Three independent confirmations in-repo that this really is a multi-row per-day
+series:
+
+1. `peak1dCtr` (`shared.ts:262-267`) takes `Math.max` across
+   `windows.last7DaysDaily.map(...)` — a maximum over rows is meaningless unless
+   the rows are separate days.
+2. `computeAgeDays` (`shared.ts:1195-1202`) reads
+   `_windows.last7DaysDaily[_windows.last7DaysDaily.length - 1]` and calls it
+   *"the latest row"*, then parses that row's own `date_stop`. Per-row dates.
+3. `spend7d` (`shared.ts:239`) sums `spend` across those rows and its comment
+   (`shared.ts:236-238`) describes the result as *"7 complete days"*.
+
+**Every field needed is already on those rows.** `INSIGHTS_FIELDS`
+(`metaGraph.ts:52-68`) is the *same* list for all three calls — passed at
+`metaGraph.ts:362`, `:376`, and `:393` — so each daily row carries `actions`
+(`metaGraph.ts:105`) and `date_start` / `date_stop` (`metaGraph.ts:93-94`).
+
+And `countConversionActions` (`shared.ts:310-325`) already takes an **array of
+rows** and sums matching action types over `RESULT_ACTION_TYPES`
+(`metaGraph.ts:499-506`). Applied to a single daily row it yields that day's
+conversion count, unmodified.
+
+**Today all of this is thrown away.** The only consumers of `last7DaysDaily` are
+`spend7d` (`shared.ts:239`), `peak1dCtr` (`shared.ts:262`), and `computeAgeDays`
+(`shared.ts:1198`). The per-day `actions` arrays are received on every sync and
+never read — the same shape as the `status` finding in Q2: a value already in
+flight and discarded.
+
+### Do the daily rows cover complete days?
+
+The repository asserts twice that `last_7d` excludes today's partial day:
+
+- `shared.ts:138-141` — *"7 complete days of spend (Meta `last_7d` preset —
+  excludes today's partial day)"*
+- `shared.ts:236-238` — *"Meta excludes today from that preset, so this is
+  already 'last 7 days, complete days only'"*
+
+Recorded as **the repository's own stated assumption**, asserted at two
+independent sites. It was not re-verified against Meta here, and it is
+load-bearing: if `last_7d` in fact included a partial today, the newest row would
+be incomplete and adding it would undercount that day permanently.
+
+### Undercount exposure
+
+The scheduled dispatcher runs `schedule: "0 3 * * *"` — daily
+(`functions/src/metaSync/dispatcher.ts:68-70`).
+
+Each sync observes days D-7 ... D-1. Two consecutive syncs k days apart overlap
+whenever k <= 7. So:
+
+- **Up to 6 consecutive missed daily syncs leave no gap** — the 7-day window
+  still reaches back past the last day already recorded.
+- **The 7th consecutive missed sync begins losing days permanently.** Those days
+  are never re-offered by any call the sync makes.
+
+**Missed days undercount; they never double-count** — provided each day is
+recorded once under a key derived from its own `date_start`. Re-seeing a day
+already recorded is then a no-op, which is precisely the add / no-op /
+withdraw-then-add comparison `FR-017` already specifies and `FR-018` already
+guarantees. Overlap is harmless by construction; only absence hurts. This is the
+structural difference from `adPerformanceHistory`, whose snapshots are keyed by
+*sync* rather than by *day*, which is why summing those double-counts ~30x while
+summing these does not.
+
+Three further exposures, all in the undercount direction:
+
+1. **Per-ad fetch failure.** `fetchAdInsights` is called per ad through
+   `Promise.allSettled` (`shared.ts:557-567`) and a rejection is pushed to
+   `errors` and skipped — so one ad can miss days while the rest of the account
+   is fine.
+2. **Late attribution.** Meta may revise a day's conversion count upward after
+   the fact. A day captured at D+1 and never revisited loses the revision.
+   Re-reading a day still inside the 7-day window and taking the newer value is
+   an update-in-place keyed by date — still never a double count.
+3. **An ad that stops being returned stops accruing days.** Same absence problem
+   as Q2. The resulting total is therefore *"conversions across the days we
+   observed"*, not a true since-inception lifetime figure. It is stable — it only
+   ever grows — which is the property Amendment 2 actually needs, but it should
+   not be described in the spec as "lifetime".
+
+### Consequence for condition (a)
+
+It is **not blocked, and it does not need the fourth per-ad call.** The cost
+figures the owner supplied for that call (aggregate Graph peak 120 -> 160;
+`OAuthException` code 4 subcode 1504022) are therefore **not incurred** by this
+route, and are recorded here only to note that they do not apply.
+
+For the record, what *is* verifiable in this worktree is
+`maxConcurrentDispatches: 5` (`functions/src/metaSync/worker.ts:39`) and the 3
+parallel insight windows (`metaGraph.ts:407-414`). **No per-ad concurrency
+limiter of 8 exists on this branch** — `shared.ts:557-558` maps over all ads
+unbounded, and a search for `pLimit` / `p-limit` / any concurrency constant
+returns nothing. So the Phase 970 concurrency fix is not present in this
+worktree, and the "8" factor in the 120 figure could not be confirmed here.
+
+**Reported, not chosen.** No design proposed.
+
+---
+
+## A2 — Denominator reconciliation: 624 fetched vs 383 stored
+
+### Answer
+
+**There is no fetched-versus-stored gap. The two figures belong to two different
+accounts.** 383 is both the fetched count and the stored count for
+`act_995888422231015`, and is the correct denominator. `7.37:1` and `6.90:1`
+stand unchanged.
+
+### Raw output — `q4-snapshots.cjs`
+
+```
+collectionGroup(syncSnapshots) total docs: 14
+
+ACCOUNT: users/ywpCgWsXqVP4tlNwfhSoTqMjRw52/workspaces/ZVASEGdrF5qbizl4Bbug/adAccounts/act_1180773537404268 | snapshots: 7
+syncedAt(iso)              trigger    status   rawAds  matched unmatched ambiguous
+2026-09-03T16:06:35.679Z   manual     partial       0        0         0         0
+2026-09-03T16:06:36.293Z   manual     partial       0        0         0         0
+2026-09-03T16:06:36.455Z   manual     partial       0        0         0         0
+2026-09-03T16:06:36.634Z   manual     partial       0        0         0         0
+2026-09-03T18:42:33.978Z   manual     ok          625        5       620         0
+2026-09-03T18:43:55.265Z   manual     partial       0        0         0         0
+2026-09-03T18:43:55.295Z   manual     partial       0        0         0         0
+
+ACCOUNT: users/ywpCgWsXqVP4tlNwfhSoTqMjRw52/workspaces/dueXIiFdEJKuAjSuYlUX/adAccounts/act_995888422231015 | snapshots: 7
+syncedAt(iso)              trigger    status   rawAds  matched unmatched ambiguous
+2026-07-24T18:28:59.522Z   manual     partial       0        0         0         0
+2026-07-24T18:29:12.336Z   manual     partial       0        0         0         0
+2026-07-24T19:33:49.220Z   manual     ok          381        0       381         0
+2026-07-24T19:33:57.526Z   manual     partial       0        0         0         0
+2026-07-24T19:33:57.830Z   manual     partial       0        0         0         0
+2026-07-25T06:25:07.527Z   manual     ok          382        0       382         0
+2026-07-25T09:46:40.710Z   manual     ok          383        0       383         0
+
+STORED adPerformance docs per account:
+   users/ywpCgWsXqVP4tlNwfhSoTqMjRw52/workspaces/ZVASEGdrF5qbizl4Bbug/adAccounts/act_1180773537404268 = 625
+   users/ywpCgWsXqVP4tlNwfhSoTqMjRw52/workspaces/dueXIiFdEJKuAjSuYlUX/adAccounts/act_995888422231015 = 383
+```
+
+(`rawAds` is `raw.ads`, the count of ads returned by the Graph hierarchy walk;
+`matched` / `unmatched` / `ambiguous` are `counts.*`. Written together at
+`shared.ts:1100-1120`.)
+
+### Reading
+
+| Account | Last `ok` sync: ads fetched | matched | unmatched | Stored `adPerformance` docs |
+|---|---|---|---|---|
+| `act_995888422231015` | **383** | **0** | 383 | **383** |
+| `act_1180773537404268` | **625** | **5** | 620 | **625** |
+
+**Fetched equals stored, exactly, on both accounts.** The hypothesis that ads are
+returned by Meta but not stored — video creatives were the suggested example — is
+**not supported**. `creativeType` (`shared.ts:145`, derived at
+`shared.ts:205-215`) is a *stored display field* used by the dashboard to filter
+the linking list; it is not a store-time filter. The only path that skips an ad
+before writing is `if (!windows) continue` (`shared.ts:789-790`) — an ad whose
+insights fetch failed — and on both `ok` syncs that path fired zero times.
+
+### Where "5 matched of 624" actually comes from
+
+`matched: 5` appears on **`act_1180773537404268`**, whose fetched count was
+**625** — not 624, and not the 383-row account. That also matches Q3's grouping
+output exactly: the single fully-linked 5-row `imageHash` group
+(`f5e9a98dadad8d9d`) is in the 625-row account, and `act_995888422231015` has
+**zero** linked rows.
+
+So the brief conflated two accounts: **383 / 52 / 55 from
+`act_995888422231015`**, and **"5 matched of 624" from
+`act_1180773537404268`** (true figure 625, off by one). This is the same
+conflation already flagged in Batch 0 under "Unexpected results", now traced to
+its source.
+
+### Denominators confirmed — no recomputation needed
+
+- `act_995888422231015`: 383 / 52 = **7.365 -> 7.37:1**, largest creative 55 rows.
+- `act_1180773537404268`: 625 / 94 = **6.649 -> 6.65:1**.
+- Both accounts: 1008 / 146 = **6.904 -> 6.90:1**.
+- 10 creatives x 7.37 = **73.7 ~ 74 ad rows**, tied to `act_995888422231015`.
+
+One caveat worth stating in the spec: the equality of fetched and stored is a
+property of *these* syncs, in which `if (!windows) continue` never fired. It is
+not an invariant. A sync with per-ad insights failures would store fewer rows
+than it fetched, and the two counts would diverge.
+
+---
+
+## A3 — Corrections to record in the spec text
+
+1. **`metaAdId` is absent, not null.** 0 of **1008** workspace-scoped ad rows
+   carry the field at all — `AdDoc` (`shared.ts:125-166`) has no such member, so
+   it is never written. 0 of **58** `creativeDeployments` carry a non-null value.
+   The brief said 34 deployment records; the collection has grown to 58 and the
+   populated count is still zero. The conclusion — `metaAdId` cannot be the
+   grouping key — is unchanged and independently secured by
+   `functions/src/index.ts:3931`, where it is assigned from `ad.ad_id`.
+
+2. **Fan-out: cite both figures.** 7.4:1 for `act_995888422231015` (the account
+   383 / 52 / 55 and "10 creatives ~ 74 rows" all derive from), 6.9:1 for the
+   two-account dataset (1008 / 146).
+
+3. **`threeDayRolling` is one aggregated row, not a per-day series.** Worth
+   stating in the spec because the `.reduce()` calls at `shared.ts:178-181` and
+   `shared.ts:235-247` read as though it were, and that misreading is what makes
+   `conversions3d` look accumulable when it is not. The per-day series is
+   `last7DaysDaily` (`metaGraph.ts:389-396`).
+
+---
+
+## Status of the four Batch 1 decisions after this addendum
+
+| Decision | Status |
+|---|---|
+| Fan-out figure | Cite both — 7.4:1 (`act_995888422231015`) and 6.9:1 (dataset). Denominators verified. |
+| Condition (a) — 5 conversions | **AVAILABLE — accumulate per-day rows from `last7DaysDaily`, no new Graph call.** Not blocked. Record that the total is "days observed", not since-inception. |
+| Condition (b) — stopped running | **AVAILABLE — requires persisting `status`, a field already fetched** (`metaGraph.ts:83`, typed `:145`). Records the parent-pause gap as under-detection, closable by adding `effective_status` to the fields string plus one `AdDoc` member. |
+| Fallback split | Close it, per owner direction: group by `imageHash`; any linked row in a hash group resolves the whole group to that `generationId`; manual beats automatic on disagreement (`shared.ts:806-810`). New FR + new SC. |
