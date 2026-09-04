@@ -1003,6 +1003,16 @@ test('inline failure containment: fan-out still runs when LEG B inline rejects',
     const { runFullSyncWithLease } = require('../metaSync/orchestrator.js');
 
     const fannedOutWorkspaces: string[] = [];
+    // Seed a second connected workspace so the fan-out path has a
+    // non-empty queue after WS_A is consumed for the inline run. The
+    // inline leg fails; the fan-out leg should still enqueue WS_B,
+    // proving the inline-failure containment fix works.
+    seedWorkspace({
+        ownerUid: OWNER,
+        workspaceId: WS_B,
+        accountId: ACCT_B,
+        metaConnected: true,
+    });
     const result = await runFullSyncWithLease({
         ownerUid: OWNER,
         callerUid: CALLER,
@@ -1014,23 +1024,26 @@ test('inline failure containment: fan-out still runs when LEG B inline rejects',
         runPhase14InlineOverride: async () => {
             throw new Error('LEG B inline reject (inline failure containment)');
         },
-        taskClient: { queuePath: () => 'projects/test/locations/europe-west1/queues/metaSyncQueue', enqueueTask: async (_req: any) => {
-            const body = JSON.parse(_req.task.httpRequest.body.toString());
-            fannedOutWorkspaces.push(body.data.workspaceId);
-            return [{}, {}, {}];
-        }, serviceAccountEmail: () => 'test@example.com' },
+        tasksClient: {
+            queuePath: () => 'projects/test/locations/europe-west1/queues/metaSyncQueue',
+            enqueueTask: async (_req: any) => {
+                const body = JSON.parse(_req.task.httpRequest.body.toString());
+                fannedOutWorkspaces.push(body.data.workspaceId);
+                return [{}, {}, {}];
+            },
+            serviceAccountEmail: () => 'test@example.com',
+        },
         acquireLeaseOverride: async () => ({ ok: true }),
         releaseLeaseOverride: async () => ({ released: true }),
     });
 
     // The inline LEG B rejected; the inline result reports failed.
-    // The fan-out path ran for the other live workspaces. With our
-    // fixture, only WS_A is seeded so there are no others; the test
-    // just verifies the result shape: result.ok is false, the inline
-    // result is reported, and the function did NOT throw.
-    // (We use a fresh fixture: see runLegacySyncForOwner's inline
-    // result + the failure path. The real assertion is that the call
-    // returned a result instead of throwing.)
+    // The fan-out path ran for the other live workspaces. WS_B is
+    // the second connected workspace so the fan-out enqueues it.
     assert.equal(result.ok, false);
     assert.equal(result.workspace.inline?.status, 'failed');
+    assert.ok(
+        fannedOutWorkspaces.includes(WS_B),
+        `fan-out must enqueue WS_B after the inline failure; got ${JSON.stringify(fannedOutWorkspaces)}`,
+    );
 });
