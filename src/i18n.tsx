@@ -149,6 +149,23 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_meta_connected': 'Meta Ads Connected',
         'topbar.menu_meta_disconnect': 'Disconnect',
         'topbar.menu_meta_sync': 'Sync Now',
+        // PHASE 970 (BATCH 4) — new result-toast strings for the
+        // removal-of-cooldown change. The dashboard reads these to
+        // render the result of a press (so the user knows which
+        // accounts succeeded and which throttled). No technical
+        // terms ("rate limit", "queue", "API"). Drafted alongside
+        // the freeze of `canSyncNow` / `cooldownEndsAt`.
+        'sync.result.done': 'Ads updated',
+        'sync.result.partial': 'Some accounts were busy — they will update shortly',
+        'sync.result.more_coming': 'The rest of your workspaces are updating now',
+        'sync.result.failed': 'Could not update the ads',
+        // PHASE 970 (bug 2026-09-03) — distinct from `failed`. A
+        // second concurrent press hits the in-flight lease and is
+        // reported as a state (not a wait and not a failure). Without
+        // this key, runbook Cloud Logging queries would flag a busy
+        // press as `resultKey: 'sync.result.failed'`, producing a
+        // false alarm in the rate-limit watch.
+        'sync.result.busy': 'A sync is already running. Please wait a moment and try again.',
         'topbar.menu_meta_change_account': 'Change Account',
         'topbar.menu_meta_change_page': 'Change Page',
         'topbar.menu_meta_select_for_workspace': 'Select ad account for this workspace',
@@ -493,9 +510,18 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'whats_working.sync.last_hours_ago': 'Synced {n} hours ago',
         'whats_working.sync.last_days_ago': 'Synced {n} days ago',
         'whats_working.sync.never': 'No sync yet',
-        'whats_working.sync.next_run': 'Next sync in {n} hours',
         'whats_working.sync.cta': 'Sync Now',
-        'whats_working.sync.cooldown': 'Synced just now — try again later',
+        // PHASE 970 (bug 2026-09-03) — pending-state label for the
+        // dashboard's SYNC NOW button while a press is in flight.
+        'whats_working.sync.syncing': 'Syncing...',
+        // Lease-collision message — state, not a wait. Used inside
+        // the modal so the user sees feedback even if the toast is
+        // occluded. Mirrors the in-modal banner.
+        'whats_working.sync.busy': 'A sync is already running. Please wait a moment and try again.',
+        // PHASE 970 (BATCH 4) — removed `whats_working.sync.cooldown`
+        // (cooldown gate deleted in Batch 4) and
+        // `whats_working.sync.next_run` (not rendered, wait-state
+        // string per investigation §4 decision 4).
         'whats_working.sync.needs_reauth': 'Meta connection expired — please reconnect',
         'whats_working.sync.reconnect_cta': 'Reconnect Meta',
         'whats_working.sync.never_connected': 'Meta account not connected yet',
@@ -527,7 +553,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'whats_working.recent.relative_hours': '{n} hours ago',
         'whats_working.recent.relative_days': '{n} days ago',
         'whats_loading.loading': 'Loading your dashboard...',
-        'whats_loading.error': 'Could not load the dashboard.',
+        'whats_loading.error': 'Something went wrong while loading your dashboard. Please try again.',
+        'whats_loading.empty': 'No results yet. Results appear here after your ads run and you sync.',
 
         // ── Hook-angle performance icons (Step 1 / Step 2) ──
         'hook_icon.tooltip.strongest': 'Your strongest angle',
@@ -1107,7 +1134,18 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_meta_connect': 'ربط حساب ميتا',
         'topbar.menu_meta_connected': 'حساب ميتا متصل',
         'topbar.menu_meta_disconnect': 'فك الربط',
-        'topbar.menu_meta_sync': 'قم بالمزامنة',
+        'topbar.menu_meta_sync': 'مزامنة الآن',
+        // PHASE 970 (BATCH 4) — Arabic standardised to `مزامنة الآن`
+        // (matches the dashboard button and `AR_S_RESYNC_CONNECTED_BTN`).
+        // The previous `قم بالمزامنة` was an imperative form; the new
+        // form matches the dashboard's CTA exactly so both buttons read
+        // identically in Arabic (investigation report §7).
+        'sync.result.done': 'تم تحديث الإعلانات',
+        'sync.result.partial': 'بعض الحسابات كانت مشغولة — سيتم تحديثها قريباً',
+        'sync.result.more_coming': 'باقي مساحات العمل يتم تحديثها الآن',
+        'sync.result.failed': 'تعذّر تحديث الإعلانات',
+        // PHASE 970 (bug 2026-09-03) — distinct from `failed`.
+        'sync.result.busy': 'المزامنة قيد التشغيل بالفعل. يرجى الانتظار لحظة والمحاولة مرة أخرى.',
         'topbar.menu_meta_change_account': 'تغيير الحساب',
         'topbar.menu_meta_change_page': 'تغيير الصفحة',
         'topbar.menu_meta_select_for_workspace': 'اختر حساب إعلاني لهذه المساحة',
@@ -1429,9 +1467,15 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'whats_working.sync.last_hours_ago': 'تمت المزامنة منذ {n} ساعة',
         'whats_working.sync.last_days_ago': 'تمت المزامنة منذ {n} يوم',
         'whats_working.sync.never': 'لم تتم مزامنة بعد',
-        'whats_working.sync.next_run': 'المزامنة التالية بعد {n} ساعة',
         'whats_working.sync.cta': 'مزامنة الآن',
-        'whats_working.sync.cooldown': 'تمت المزامنة للتو — حاول لاحقاً',
+        // PHASE 970 (bug 2026-09-03) — pending-state label.
+        'whats_working.sync.syncing': 'جاري المزامنة...',
+        // Lease-collision message.
+        'whats_working.sync.busy': 'المزامنة قيد التشغيل بالفعل. يرجى الانتظار لحظة والمحاولة مرة أخرى.',
+        // PHASE 970 (BATCH 4) — removed `whats_working.sync.cooldown`
+        // (cooldown gate deleted in Batch 4) and
+        // `whats_working.sync.next_run` (not rendered, wait-state
+        // string per investigation §4 decision 4).
         'whats_working.sync.needs_reauth': 'انتهت صلاحية الاتصال بميتا — يرجى إعادة الربط',
         'whats_working.sync.reconnect_cta': 'إعادة ربط ميتا',
         'whats_working.sync.never_connected': 'لم يتم ربط حساب ميتا بعد',
@@ -1463,7 +1507,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'whats_working.recent.relative_hours': 'منذ {n} ساعة',
         'whats_working.recent.relative_days': 'منذ {n} يوم',
         'whats_loading.loading': 'جاري تحميل لوحة الأداء...',
-        'whats_loading.error': 'تعذر تحميل لوحة الأداء.',
+        'whats_loading.error': 'حدث خطأ أثناء تحميل لوحة الأداء. حاول مرة أخرى.',
+        'whats_loading.empty': 'لا توجد نتائج بعد. ستظهر النتائج هنا بعد تشغيل إعلاناتك والمزامنة.',
 
         // ── Hook-angle performance icons (Step 1 / Step 2) ──
         'hook_icon.tooltip.strongest': 'أقوى زاوية في حسابك',

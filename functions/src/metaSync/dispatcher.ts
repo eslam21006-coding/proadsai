@@ -9,6 +9,20 @@
 //
 // The dispatcher's ONLY job is to discover connected accounts and enqueue.
 // It does NOT fetch data itself (research §B).
+//
+// PHASE 970 (BATCH 2) — D3 / D4 / discovery fix:
+//   - D3: depends on the COLLECTION_GROUP_ASC field-override for
+//     `private.metaConnected` in firestore.indexes.json. Without that
+//     override, this query throws FAILED_PRECONDITION nightly (the
+//     3 documented nightly failures in investigation §1.1).
+//   - D4: the task body is wrapped in `{ data: { … } }` so the worker's
+//     `req.data` reads it. Pre-fix the body was sent bare and the
+//     worker threw "missing required fields in payload" on every task.
+//   - Discovery filter: `listConnectedAccounts` now skips soft-deleted
+//     workspaces (`deletedAt != null` on the parent workspace doc) and
+//     de-duplicates by `accountId` so the same Meta ad account linked
+//     to two workspaces (today's `act_781389063661831` is linked to
+//     "Eslam Salah" and "Manar") does not produce two duplicate syncs.
 // ═══════════════════════════════════════════════════════════
 
 import { onSchedule } from "firebase-functions/v2/scheduler";
@@ -21,7 +35,7 @@ export const WORKER_PATH = "metaSyncAccountWorker";
 export const SYNC_DISPATCH_REGION = "europe-west1";
 export const MAX_DISPATCH_PER_RUN = 500;
 
-interface DispatchedAccount {
+export interface DispatchedAccount {
     userId: string;
     workspaceId: string;
     accountId: string;
@@ -33,13 +47,29 @@ interface DispatchedAccount {
  * `users/{uid}/workspaces/{wid}/private/` subcollection. The doc ID inside
  * it is `metaConnection`. We use a `collectionGroup('private')` query.
  *
+ * PHASE 970 (BATCH 2):
+ *   - Skips soft-deleted workspaces (parent workspace doc has
+ *     `deletedAt != null`). Today's `dueXIiFdEJKuAjSuYlUX` is
+ *     soft-deleted (investigation report §1.4) and was being picked up
+ *     despite having no live UI access.
+ *   - De-duplicates by `accountId` — one account linked to two
+ *     workspaces (today's `act_781389063661831` is on both "Eslam
+ *     Salah" and "Manar", investigation report §3) was producing two
+ *     duplicate syncs per night. The first workspace encountered wins;
+ *     the second is silently dropped.
+ *
  * Pagination: if the result hits `MAX_DISPATCH_PER_RUN`, we log a warning.
  * At the scale we expect for v1 this is well under the cap; the cap is a
  * safety net rather than a hard limit. A future iteration can persist a
  * cursor between invocations if the cap is ever approached.
+ *
+ * Exported so the contract test (`metaSyncDispatch.test.ts`) can drive
+ * discovery directly with an in-memory Firestore stub, mirroring the
+ * pattern used by `metaSyncOrchestrator.test.ts` (Batch 3).
  */
-async function listConnectedAccounts(): Promise<DispatchedAccount[]> {
+export async function listConnectedAccounts(): Promise<DispatchedAccount[]> {
     const out: DispatchedAccount[] = [];
+    const seenAccounts = new Set<string>();
     const snap = await getDb()
         .collectionGroup("private")
         .where("metaConnected", "==", true)
@@ -54,6 +84,23 @@ async function listConnectedAccounts(): Promise<DispatchedAccount[]> {
         if (segments.length < 5) continue;
         const uid = segments[1];
         const workspaceId = segments[3];
+        // PHASE 970 (BATCH 2): join the parent workspace doc, skip
+        // soft-deleted workspaces. Firestore doesn't filter across the
+        // collectionGroup boundary for free, so this join is the price
+        // of the deletedAt filter. Reads are O(1) cache-friendly and
+        // the typical dispatch count is bounded by MAX_DISPATCH_PER_RUN
+        // which today is well under 500.
+        const workspaceSnap = await getDb()
+            .collection("users").doc(uid)
+            .collection("workspaces").doc(workspaceId)
+            .get();
+        const wsData = workspaceSnap.data() as Record<string, unknown> | undefined;
+        if (!wsData || wsData.deletedAt != null) continue;
+        // PHASE 970 (BATCH 2): de-dup by accountId. The first workspace
+        // found (sorted by `__name__` ascending) wins; subsequent
+        // workspaces linking the same account are silently dropped.
+        if (seenAccounts.has(data.accountId)) continue;
+        seenAccounts.add(data.accountId);
         out.push({ userId: uid, workspaceId, accountId: data.accountId });
     }
     if (out.length >= MAX_DISPATCH_PER_RUN) {
@@ -63,6 +110,26 @@ async function listConnectedAccounts(): Promise<DispatchedAccount[]> {
         );
     }
     return out;
+}
+
+/**
+ * Build the JSON body the worker expects. PHASE 970 (BATCH 2) D4 fix:
+ * the worker reads `req.data` (the documented `onTaskDispatched` envelope
+ * shape — `firebase-functions/lib/common/providers/tasks.js:42`), so the
+ * body MUST be `{ data: { userId, workspaceId, … } }`, not the bare
+ * payload the pre-fix code was sending. Without this envelope the worker
+ * throws "missing required fields in payload" on every task.
+ */
+export function buildSyncTaskBody(acct: DispatchedAccount, nowMs: number): string {
+    return JSON.stringify({
+        data: {
+            userId: acct.userId,
+            workspaceId: acct.workspaceId,
+            accountId: acct.accountId,
+            trigger: "scheduled",
+            nowMs,
+        },
+    });
 }
 
 export const metaDailySync = onSchedule(
@@ -89,6 +156,7 @@ export const metaDailySync = onSchedule(
         const queuePath = tasks.queuePath(SYNC_DISPATCH_REGION, "proadsai-saas", META_SYNC_QUEUE);
 
         let dispatched = 0;
+        const nowMs = Date.now();
         for (const acct of accounts) {
             try {
                 await tasks.enqueueTask({
@@ -98,13 +166,11 @@ export const metaDailySync = onSchedule(
                             httpMethod: "POST",
                             url: workerUrl(),
                             headers: { "Content-Type": "application/json" },
-                            body: Buffer.from(JSON.stringify({
-                                userId: acct.userId,
-                                workspaceId: acct.workspaceId,
-                                accountId: acct.accountId,
-                                trigger: "scheduled",
-                                nowMs: Date.now(),
-                            })),
+                            // PHASE 970 (BATCH 2) D4 — wrap in
+                            // `{ data: … }` so the worker's
+                            // `req.data` reads it. See buildSyncTaskBody
+                            // and worker.ts:53.
+                            body: Buffer.from(buildSyncTaskBody(acct, nowMs)),
                             oidcToken: {
                                 serviceAccountEmail: tasks.serviceAccountEmail(),
                             },
