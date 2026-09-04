@@ -909,13 +909,15 @@ test("runFullSyncWithLease — throws AlreadyRunningError when acquire reports t
     assert.equal(releaseCalls, 0);
 });
 
-test("runFullSyncWithLease — release runs in finally even when runFullSync throws", async () => {
+test("runFullSyncWithLease — release runs in finally even when runFullSync inline fails", async () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { runFullSyncWithLease } = require("../metaSync/orchestrator.js");
 
     // Seed so that LEG B's inline path actually runs and the
-    // override is invoked. With no activeWorkspaceId provided the
-    // orchestrator skips the inline call entirely.
+    // override is invoked. PHASE 970 (bug 2026-09-03) inline
+    // failure containment: the inline error is caught and turned
+    // into a failed inline result. The call returns a result
+    // (not a rejection), and release MUST still run.
     resetStub();
     seedConn({
         ownerUid: OWNER,
@@ -929,29 +931,29 @@ test("runFullSyncWithLease — release runs in finally even when runFullSync thr
     });
 
     const releaseCalls: Array<{ ownerUid: string; holderUid: string }> = [];
+    const result = await runFullSyncWithLease({
+        ownerUid: OWNER,
+        callerUid: CALLER,
+        activeWorkspaceId: WS_A,
+        nowMs: FIXED_NOW,
+        fetchImpl: stubFetchInsights(),
+        decryptLegacyTokenOverride: async () => "PLAIN_TOKEN",
+        runPhase14InlineOverride: async () => {
+            throw new Error("LEG B inline blew up mid-run");
+        },
+        tasksClient: { queuePath: () => "", enqueueTask: async () => [{}, {}, {}], serviceAccountEmail: () => "test@example.com" },
+        acquireLeaseOverride: async () => ({ ok: true }),
+        releaseLeaseOverride: async (o: string, h: string) => {
+            releaseCalls.push({ ownerUid: o, holderUid: h });
+            return { released: true };
+        },
+    });
 
-    await assert.rejects(
-        () => runFullSyncWithLease({
-            ownerUid: OWNER,
-            callerUid: CALLER,
-            activeWorkspaceId: WS_A,
-            nowMs: FIXED_NOW,
-            fetchImpl: stubFetchInsights(),
-            decryptLegacyTokenOverride: async () => "PLAIN_TOKEN",
-            runPhase14InlineOverride: async () => {
-                throw new Error("LEG B inline blew up mid-run");
-            },
-            tasksClient: { queuePath: () => "", enqueueTask: async () => [{}, {}, {}], serviceAccountEmail: () => "test@example.com" },
-            acquireLeaseOverride: async () => ({ ok: true }),
-            releaseLeaseOverride: async (o: string, h: string) => {
-                releaseCalls.push({ ownerUid: o, holderUid: h });
-                return { released: true };
-            },
-        }),
-        (err: any) => /LEG B inline blew up/.test(err.message),
-    );
-
-    assert.equal(releaseCalls.length, 1, "release must run in finally even when runFullSync throws");
+    // The call returns a result, not a rejection. The inline
+    // result reports failed; release still ran.
+    assert.equal(result.ok, false);
+    assert.equal(result.workspace.inline?.status, "failed");
+    assert.equal(releaseCalls.length, 1, "release must run in finally even when runFullSync inline fails");
     assert.equal(releaseCalls[0].ownerUid, OWNER);
     assert.equal(releaseCalls[0].holderUid, CALLER);
 });
