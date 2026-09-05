@@ -157,7 +157,9 @@ function rankHooks(
       avgLinkCtr: a.byObjective.conversion.avgLinkCtr,
       winCount: a.byObjective.conversion.bestVerdictCount,
       loseCount: a.byObjective.conversion.worstVerdictCount,
-      sampleSize: a.byObjective.conversion.count,
+      // FR-034 / FR-034a / FR-037 — gate by distinct creatives. Sum fields
+      // (avgLinkCtr) keep using the row-level `count`.
+      sampleSize: a.creativeCount ?? a.byObjective.conversion.count,
     }));
 }
 

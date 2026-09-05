@@ -470,6 +470,12 @@ export async function getWhatsWorkingDashboardImpl(
         type HookAggShape = {
             angleKey: string;
             sampleSize: number;
+            /**
+             * FR-034 / FR-034a / FR-037 — distinct creatives (when the
+             * upstream producer populates it). Falls back to
+             * sampleSize (row count) until the producer is wired.
+             */
+            creativeCount?: number;
             byObjective: {
                 conversion: { avgLinkCtr: number; count: number; bestVerdictCount: number; worstVerdictCount: number };
                 other: { avgLinkCtr: number; count: number };
@@ -482,7 +488,9 @@ export async function getWhatsWorkingDashboardImpl(
                 .map((r) => ({
                     angleKey: r.angleKey,
                     avgLinkCtr: r.byObjective.conversion.avgLinkCtr,
-                    sampleSize: r.byObjective.conversion.count,
+                    // FR-034 / FR-034a / FR-037 — gate by distinct creatives
+                    // when available; row-level count is the fallback.
+                    sampleSize: r.creativeCount ?? r.byObjective.conversion.count,
                 })),
         );
         const strongestAngles: StrongestAngle[] = hookAggs
@@ -537,6 +545,12 @@ export async function getWhatsWorkingDashboardImpl(
         type VisualAggShape = {
             patternKey: string;
             sampleSize: number;
+            /**
+             * FR-034 / FR-034a / FR-037 — distinct creatives (when the
+             * upstream producer populates it). Falls back to
+             * sampleSize (row count) until the producer is wired.
+             */
+            creativeCount?: number;
             byObjective: {
                 conversion: { avgCpm: number; avgLinkCtr: number; count: number; bestVerdictCount: number; worstVerdictCount: number };
                 other: { count: number };
@@ -655,7 +669,8 @@ export async function getWhatsWorkingDashboardImpl(
             .map((v) => ({
                 angleKey: v.patternKey,
                 avgLinkCtr: v.byObjective.conversion.avgLinkCtr,
-                sampleSize: v.byObjective.conversion.count,
+                // FR-034 / FR-034a / FR-037 — gate by distinct creatives.
+                sampleSize: v.creativeCount ?? v.byObjective.conversion.count,
             }));
         const visualHotKey = pickHotAngle(visualEligibleRows);
         // Pair the public output with the raw sort keys (bestVerdictCount
@@ -842,6 +857,12 @@ export async function getHookAnglePerformanceImpl(
         type HookAggShape = {
             angleKey: string;
             sampleSize: number;
+            /**
+             * FR-034 / FR-034a / FR-037 — distinct creatives (when the
+             * upstream producer populates it). Falls back to
+             * sampleSize (row count) until the producer is wired.
+             */
+            creativeCount?: number;
             byObjective: {
                 conversion: { avgLinkCtr: number; count: number; bestVerdictCount: number; worstVerdictCount: number };
                 other: { avgLinkCtr: number; count: number };
@@ -852,11 +873,12 @@ export async function getHookAnglePerformanceImpl(
         // Pre-compute eligible rows + pick the top 2 (for the ⚠️
         // tooltip "جرّب [best] أو [second best]").
         const eligibleRows = hookAggs
-            .filter((r) => r.byObjective?.conversion?.count >= HOOK_ICON_DATA_GATE)
+            .filter((r) => (r.creativeCount ?? r.byObjective?.conversion?.count ?? 0) >= HOOK_ICON_DATA_GATE)
             .map((r) => ({
                 angleKey: r.angleKey,
                 avgLinkCtr: r.byObjective.conversion.avgLinkCtr,
-                sampleSize: r.byObjective.conversion.count,
+                // FR-034 / FR-034a / FR-037 — gate by distinct creatives.
+                sampleSize: r.creativeCount ?? r.byObjective.conversion.count,
             }));
         const bestTwo = pickBestTwoAngles(eligibleRows);
         const hotAngle = pickHotAngle(eligibleRows);
@@ -871,7 +893,11 @@ export async function getHookAnglePerformanceImpl(
                 continue;
             }
             const c = agg.byObjective.conversion;
-            const sampleSize = c?.count || 0;
+            // FR-034 / FR-034a / FR-037 — gate by distinct creatives.
+            // `sampleSize` here drives the tier-icon logic (the
+            // HOOK_ICON_DATA_GATE threshold); per the locked decision,
+            // it must read the creative count, not the row count.
+            const sampleSize = agg.creativeCount ?? c?.count ?? 0;
             const avg = c?.avgLinkCtr || 0;
             const icon = computeIconFromAvgs(sampleSize, avg, accountAvgLinkCtr, HOOK_ICON_DATA_GATE);
             // 🔥 reserved for the single top angle (avgLinkCtr maximum).

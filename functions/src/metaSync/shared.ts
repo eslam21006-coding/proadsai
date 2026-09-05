@@ -101,8 +101,11 @@ import {
     readExistingAdDocs,
 } from "../learning/boundedLedgerRead.js";
 import {
-    decideAdWrite,
-} from "../learning/fieldLevelDiscrimination.js";
+    decideAdWriteActions,
+} from "../learning/decideAdWriteActions.js";
+import {
+    groupIntoCreatives,
+} from "../learning/creativeGrouping.js";
 
 // ─── Constants ───────────────────────────────────────────────
 
@@ -899,6 +902,39 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // it doesn't grow between syncs.
     const learnedAds: AdForLearning[] = [];
 
+    // T021a (Batch 08): compute the per-creative grouping and resolve
+    // each ad's `creativeKey` from the CreativeGroup it belongs to.
+    // Until this lands, the per-ad loop used `ad.id` as a per-row
+    // fallback; this is the FR-073 unit of evidence wire-up.
+    const creativeKeyByAdId = new Map<string, string>();
+    try {
+        const creativeGroups = groupIntoCreatives(
+            ads.map((ad) => ({
+                adId: ad.id,
+                imageHash: (() => {
+                    const m = adMatchResults.get(ad.id);
+                    return m?.imageHash ?? null;
+                })(),
+                generationId: adMatchResults.get(ad.id)?.generationId ?? null,
+                matchType: (() => {
+                    const m = adMatchResults.get(ad.id);
+                    if (!m) return null;
+                    return m.matchType;
+                })(),
+                linkProvenance: null,
+            })),
+        );
+        for (const group of creativeGroups) {
+            for (const row of group.rows) {
+                creativeKeyByAdId.set(row.adId, group.creativeKey);
+            }
+        }
+    } catch {
+        // Per-row fallback if grouping fails for any reason. The
+        // aggregator falls back to adId when creativeKey is absent
+        // (T021a), so this is safe.
+    }
+
     for (const ad of ads) {
         const windows = adInsightsMap.get(ad.id);
         if (!windows) continue;
@@ -1003,144 +1039,91 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             };
         }
 
-        // ─── FR-070 (T018b): field-level discrimination ───────────
-        // The decision about whether to contribute and what to write
-        // is in `decideAdWrite` so it can be tested directly. We pass
-        // the resolved inputs; the function returns the membership
-        // and the adDoc shape.
-        const decision = decideAdWrite({
-            adId: ad.id,
-            adName: ad.name,
-            existingData,
-            ledgerReadFailed,
-            match: match ? {
-                generationId: match.generationId,
-                matchType: match.matchType,
-                matchDistance: match.matchDistance,
-                imageHash: match.imageHash,
-            } : null,
-            metrics: {
-                spend3d: metrics.spend3d,
-                spend7d: metrics.spend7d,
-                spendToday: metrics.spendToday,
-                impressions3d: metrics.impressions3d,
-                cpa3d: metrics.cpa3d,
-                ctrLink: metrics.ctrLink,
-                ctrAll: metrics.ctrAll,
-                conversions3d: metrics.conversions3d,
-                frequency3d: metrics.frequency3d,
-                cpm3d: metrics.cpm3d,
-                peak1dCtr: metrics.peak1dCtr,
+        // ─── T028: extract of the per-ad learning section ───────────
+        // The decision is now in `decideAdWriteActions` (Batch 07), which
+        // is tested directly. `shared.ts` calls the function and queues
+        // its outputs. There is exactly ONE implementation of the per-ad
+        // learning logic — here, calling into the helper — and one copy
+        // of its tests. A regression to the per-row fallback or to a
+        // silent-`null` ledger would fail `perAdActions.test.ts`, which
+        // is the discriminator that the owner required.
+        const decision = decideAdWriteActions(
+            {
+                adId: ad.id,
+                // T021a (Batch 08): the per-creative grouping was computed
+                // before this loop. Per-row fallback (ad.id) is in place
+                // for the case where groupIntoCreatives did not produce
+                // a key for this ad.
+                creativeKey: creativeKeyByAdId.get(ad.id) ?? ad.id,
+                resolvedHookAngle: null,
+                resolvedPatternKey: null,
+                ledgerReadFailed,
+                matchAmbiguous: match?.ambiguous ?? false,
+                existingData,
+                keepMetadataUnavailable,
             },
-            ctx,
-            objective,
-            ageDays,
-            creativeId: typeof ad.creative === "object" && ad.creative ? ad.creative.id || null : null,
-            creativeType: deriveCreativeType(ad.creative),
-            spendSharePct: computeSpendSharePct(ad.id, ad.adset_id || "", perAdSetSpend),
-            thumbnailUrl: (ad.creative && typeof ad.creative === "object")
-                ? (ad.creative.image_url || ad.creative.thumbnail_url || undefined)
-                : undefined,
-            verdict: {
-                verdict: verdictResult.verdict,
-                ruleCode: verdictResult.ruleCode,
-                reasonAr: verdictResult.reasonAr,
-                diagnosisAr: verdictResult.diagnosisAr,
-                evaluatedAt: verdictResult.evaluatedAt,
-            },
-            keepMetadataUnavailable,
-        });
-
-        // T025: if this ad is contributing (inLearnedAds), attach the
-        // contribution ledger entry to the adDoc so the write carries
-        // it. Failed-read ads (inLearnedAds=false) and ads that
-        // withdrew-only get no entry — the merge write preserves any
-        // prior entry on disk if present.
-        //
-        // The hookAngle and patternKey fields on the entry are filled
-        // after the post-pass below resolves them. Until then we write
-        // nulls — the entry is structurally valid and the fields get
-        // overwritten on the next sync.
-        const ledger = decision.inLearnedAds && decision.adDoc.generationId && (decision.adDoc.matchType === "auto_hash" || decision.adDoc.matchType === "manual")
-            ? {
-                creativeKey: ad.id, // T021 deferred: ad.id fallback for now
-                angleKey: null,
-                patternKey: null,
-                bucket: objective.bucket,
-                geoTier: ctx.geoTier,
-                audienceType: ctx.audienceType,
-                contributedValues: {
-                    ctrLink: metrics.ctrLink,
-                    cpm: metrics.cpm3d,
-                    verdictMark: verdictResult.verdict,
-                },
-                measurementInputs: {
+            {
+                metrics: {
                     spend3d: metrics.spend3d,
+                    spend7d: metrics.spend7d,
+                    spendToday: metrics.spendToday,
+                    impressions3d: metrics.impressions3d,
+                    cpa3d: metrics.cpa3d,
+                    ctrLink: metrics.ctrLink,
+                    ctrAll: metrics.ctrAll,
                     conversions3d: metrics.conversions3d,
+                    frequency3d: metrics.frequency3d,
+                    cpm3d: metrics.cpm3d,
+                    peak1dCtr: metrics.peak1dCtr,
                 },
-                efficiencyContributed: false,
-                efficiencyValue: null,
-                schemaVersion: 1,
-            }
-            : undefined;
-        if (ledger) {
-            decision.adDoc.ledger = ledger;
-        }
+                ctx,
+                objective,
+                ageDays,
+                creativeId: typeof ad.creative === "object" && ad.creative ? ad.creative.id || null : null,
+                creativeType: deriveCreativeType(ad.creative),
+                spendSharePct: computeSpendSharePct(ad.id, ad.adset_id || "", perAdSetSpend),
+                thumbnailUrl: (ad.creative && typeof ad.creative === "object")
+                    ? (ad.creative.image_url || ad.creative.thumbnail_url || undefined)
+                    : undefined,
+                verdict: {
+                    verdict: verdictResult.verdict,
+                    ruleCode: verdictResult.ruleCode,
+                    reasonAr: verdictResult.reasonAr,
+                    diagnosisAr: verdictResult.diagnosisAr,
+                    evaluatedAt: verdictResult.evaluatedAt,
+                },
+                match: match ? {
+                    generationId: match.generationId,
+                    matchType: match.matchType,
+                    matchDistance: match.matchDistance,
+                    imageHash: match.imageHash,
+                } : null,
+            },
+        );
 
         writes.push({
             ref: adAccountRef.collection("adPerformance").doc(ad.id),
             data: decision.adDoc as unknown as Record<string, unknown>,
         });
 
-        // The matched/ambiguous/unmatched tally uses the RESOLVED
-        // linking values, which `decideAdWrite` has already settled
-        // for the success-read case. For failed-read ads the linking
-        // is null in the doc — the tally correctly reflects "we
-        // didn't read prior state this sync" rather than "the ad has
-        // no link" (the latter would be wrong for a re-sync of a
-        // previously-linked ad; the merge preserves the prior value).
-        if (decision.adDoc.generationId && (decision.adDoc.matchType === "auto_hash" || decision.adDoc.matchType === "manual")) {
+        // Tally: the function decided matched/ambiguous/unmatched based
+        // on the resolved linking + the match-ambiguous flag. FR-070's
+        // discriminator (failed-read → null link → unmatched) is
+        // subsumed by the function's per-ad logic.
+        if (decision.tally === "matched") {
             matchedCount++;
-            matchedGenIds.add(decision.adDoc.generationId);
-        } else if (match?.ambiguous) {
+            if (decision.generationId) matchedGenIds.add(decision.generationId);
+        } else if (decision.tally === "ambiguous") {
             ambiguousCount++;
         } else {
             unmatchedCount++;
         }
 
-        if (decision.inLearnedAds) {
-            // Phase 14 — Layer 4b (T044): snapshot the ad for the
-            // learning aggregator. The matched-generation fields
-            // (hookAngle, layout, modes, art direction, universe) are
-            // filled in below by the batch generation read; we emit a
-            // placeholder for now and patch the entries once we have
-            // the data. This keeps the loop single-pass for
-            // performance.
-            learnedAds.push({
-                adId: ad.id,
-                // T021: creativeKey — the unit of evidence for learning
-                // (FR-073). Until the worker integrates
-                // `groupIntoCreatives` end-to-end, we use adId as the
-                // creative identity, which collapses to per-row
-                // semantics. The aggregator falls back to adId when
-                // creativeKey is absent, so this is safe.
-                creativeKey: ad.id,
-                generationId: decision.adDoc.generationId ?? null,
-                matchType: decision.adDoc.matchType ?? null,
-                metadataAvailable: decision.adDoc.metadataAvailable ?? false,
-                campaignObjective: objective.bucket,
-                geoTier: ctx.geoTier,
-                audienceType: ctx.audienceType,
-                ctrLink: metrics.ctrLink,
-                cpm3d: metrics.cpm3d,
-                conversions3d: metrics.conversions3d,
-                verdict: verdictResult.verdict,
-                hookAngle: null,
-                layoutTemplate: null,
-                creativeModes: [],
-                artDirection: null,
-                universe: null,
-            });
+        // FR-070 + T021's per-creative aggregation: contribute to
+        // learnedAds only if the function says so. The function built
+        // the full AdForLearning (including creativeKey per FR-073).
+        if (decision.inLearnedAds && decision.learnedAd) {
+            learnedAds.push(decision.learnedAd);
         }
     }
 

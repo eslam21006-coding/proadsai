@@ -214,8 +214,13 @@ async function querySummaries(
         for (const doc of snap.docs) {
             const s = doc.data() as PatternSummary;
             if (candidateKeys && candidateKeys.length > 0 && !candidateKeys.includes(s.key)) continue;
-            // Fix #2: OR gate — skip if EITHER is below threshold
-            if (s.confidence < MIN_CONFIDENCE || s.sampleSize < MIN_SAMPLE_SIZE) continue;
+            // Fix #2: OR gate — skip if EITHER is below threshold.
+            // FR-034 / FR-034a / FR-037 — gate by distinct creatives
+            // (sampleSize here is the row-level count, which the
+            // Summary producer will eventually replace with a
+            // creative-level count). Fall back to sampleSize until the
+            // upstream producer populates creativeCount.
+            if (s.confidence < MIN_CONFIDENCE || (((s as any).creativeCount ?? s.sampleSize) < MIN_SAMPLE_SIZE)) continue;
             results.push(s);
         }
     }
@@ -364,7 +369,8 @@ async function getWarnings(
     const summaries = await querySummaries('failure_pattern', scopes);
     const warnings: Warning[] = [];
     for (const s of summaries) {
-        if (s.sampleSize >= 3 && s.negativeCount >= 2) {
+        // FR-034 / FR-034a / FR-037 — gate by distinct creatives.
+        if (((s as any).creativeCount ?? s.sampleSize) >= 3 && s.negativeCount >= 2) {
             warnings.push({
                 family: 'failure_pattern', key: s.key, pattern: s.key,
                 frequency: s.negativeCount, scope: s.scope,
