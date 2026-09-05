@@ -92,6 +92,7 @@ import {
 import {
     acquireLearningLease,
     releaseLearningLease,
+    stillHeld,
     LEARNING_LEASE_TTL_MS,
 } from "../learning/learningLease.js";
 import {
@@ -889,19 +890,42 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         const objective = classifyCampaignObjective(campaign?.objective);
         const match = adMatchResults.get(ad.id);
 
-        // Precedence: a manual or prior auto link locks this ad (FR §4.3).
-        const existingData = existingByAdId.get(ad.id);
+        // FR-070 (T018b): a failed bounded-read chunk means we cannot
+        // trust any prior contribution data. We do NOT re-derive the
+        // matching fields from fresh Meta data — the prior link, if
+        // any, must be preserved. We also do NOT push this ad into the
+        // learning aggregator below — failed-read ads contribute
+        // nothing to aggregates this sync. We DO still write the
+        // operational fields to its adPerformance doc (spend, verdict,
+        // conversions, etc.) because the merge semantics on the write
+        // mean the linking fields not present in the new data are
+        // preserved as-is, and the operational fields are always
+        // fresh from Meta.
+        const ledgerReadFailed = failedLedgerReads.has(ad.id);
+
+        // Precedence: a manual or prior auto link locks this ad (FR / §4.3).
+        const existingData = ledgerReadFailed ? undefined : existingByAdId.get(ad.id);
         const existingMatchType = existingData?.matchType;
 
         let generationId: string | null = match?.generationId ?? null;
         let matchType: "auto_hash" | "manual" | null = match?.matchType ?? null;
         let matchDistance: number | null = match?.matchDistance ?? null;
 
-        if (existingMatchType === "manual" || existingMatchType === "auto_hash") {
+        if (!ledgerReadFailed && (existingMatchType === "manual" || existingMatchType === "auto_hash")) {
             // Lock — keep the prior link (FR / §4.3).
             generationId = (existingData?.generationId as string | null) ?? generationId;
             matchType = existingMatchType;
             matchDistance = (existingData?.matchDistance as number | null) ?? matchDistance;
+        }
+
+        // For failed-read ads, suppress the linking fields entirely.
+        // The merge:true write at the bottom of this loop will preserve
+        // whatever the prior doc held (or leave the fields absent for
+        // first-ever syncs). The operational fields are unaffected.
+        if (ledgerReadFailed) {
+            generationId = null;
+            matchType = null;
+            matchDistance = null;
         }
 
         // FIX 5A: if the existing record was already cascade-marked
@@ -1014,49 +1038,89 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             };
         }
 
-        const adDoc: AdDoc = {
-            adId: ad.id,
-            adName: ad.name,
-            thumbnailUrl: (ad.creative && typeof ad.creative === "object")
-                ? (ad.creative.image_url || ad.creative.thumbnail_url || undefined)
-                : undefined,
-            generationId,
-            matchType,
-            matchDistance,
-            // FIX 5A: don't recompute to true if the delete cascade already
-            // set it false. Otherwise the sync would silently undo the
-            // cascade and the dashboard would show stale metadata.
-            metadataAvailable: keepMetadataUnavailable
-                ? false
-                : generationId !== null,
-            geoTier: ctx.geoTier,
-            audienceType: ctx.audienceType,
-            campaignObjective: objective.bucket,
-            campaignObjectiveRaw: objective.raw,
-            spend3d: metrics.spend3d,
-            spend7d: metrics.spend7d,
-            creativeType: deriveCreativeType(ad.creative),
-            spendToday: metrics.spendToday,
-            impressions3d: metrics.impressions3d,
-            cpa3d: metrics.cpa3d,
-            ctrLink: metrics.ctrLink,
-            ctrAll: metrics.ctrAll,
-            conversions3d: metrics.conversions3d,
-            frequency3d: metrics.frequency3d,
-            spendSharePct: computeSpendSharePct(ad.id, ad.adset_id || "", perAdSetSpend),
-            ageDays,
-            cpm3d: metrics.cpm3d,
-            peak1dCtr: metrics.peak1dCtr,
-            creativeId: typeof ad.creative === "object" && ad.creative ? ad.creative.id || null : null,
-            imageHash: match?.imageHash ?? null,
-            // Phase 14 — Layer 4 (Qarar verdict)
-            verdict: verdictResult.verdict,
-            ruleCode: verdictResult.ruleCode,
-            reasonAr: verdictResult.reasonAr,
-            diagnosisAr: verdictResult.diagnosisAr,
-            evaluatedAt: verdictResult.evaluatedAt,
-            schemaVersion: 1,
-        };
+        // FR-070 (T018b): for failed-read ads, omit the linking
+        // fields from this doc. The merge:true write below will then
+        // preserve whatever the prior doc held for them. With merge
+        // semantics, INCLUDING a field with value `null` would
+        // OVERWRITE the prior value — that is exactly the FR-070 bug.
+        // The discrimination is field-level.
+        const adDoc: AdDoc = ledgerReadFailed
+            ? ({
+                adId: ad.id,
+                adName: ad.name,
+                thumbnailUrl: (ad.creative && typeof ad.creative === "object")
+                    ? (ad.creative.image_url || ad.creative.thumbnail_url || undefined)
+                    : undefined,
+                // Linking fields OMITTED for failed-read ads.
+                geoTier: ctx.geoTier,
+                audienceType: ctx.audienceType,
+                campaignObjective: objective.bucket,
+                campaignObjectiveRaw: objective.raw,
+                spend3d: metrics.spend3d,
+                spend7d: metrics.spend7d,
+                creativeType: deriveCreativeType(ad.creative),
+                spendToday: metrics.spendToday,
+                impressions3d: metrics.impressions3d,
+                cpa3d: metrics.cpa3d,
+                ctrLink: metrics.ctrLink,
+                ctrAll: metrics.ctrAll,
+                conversions3d: metrics.conversions3d,
+                frequency3d: metrics.frequency3d,
+                spendSharePct: computeSpendSharePct(ad.id, ad.adset_id || "", perAdSetSpend),
+                ageDays,
+                cpm3d: metrics.cpm3d,
+                peak1dCtr: metrics.peak1dCtr,
+                creativeId: typeof ad.creative === "object" && ad.creative ? ad.creative.id || null : null,
+                imageHash: match?.imageHash ?? null,
+                verdict: verdictResult.verdict,
+                ruleCode: verdictResult.ruleCode,
+                reasonAr: verdictResult.reasonAr,
+                diagnosisAr: verdictResult.diagnosisAr,
+                evaluatedAt: verdictResult.evaluatedAt,
+                schemaVersion: 1,
+            } as AdDoc)
+            : ({
+                adId: ad.id,
+                adName: ad.name,
+                thumbnailUrl: (ad.creative && typeof ad.creative === "object")
+                    ? (ad.creative.image_url || ad.creative.thumbnail_url || undefined)
+                    : undefined,
+                generationId,
+                matchType,
+                matchDistance,
+                // FIX 5A: don't recompute to true if the delete cascade already
+                // set it false. Otherwise the sync would silently undo the
+                // cascade and the dashboard would show stale metadata.
+                metadataAvailable: keepMetadataUnavailable
+                    ? false
+                    : generationId !== null,
+                geoTier: ctx.geoTier,
+                audienceType: ctx.audienceType,
+                campaignObjective: objective.bucket,
+                campaignObjectiveRaw: objective.raw,
+                spend3d: metrics.spend3d,
+                spend7d: metrics.spend7d,
+                creativeType: deriveCreativeType(ad.creative),
+                spendToday: metrics.spendToday,
+                impressions3d: metrics.impressions3d,
+                cpa3d: metrics.cpa3d,
+                ctrLink: metrics.ctrLink,
+                ctrAll: metrics.ctrAll,
+                conversions3d: metrics.conversions3d,
+                frequency3d: metrics.frequency3d,
+                spendSharePct: computeSpendSharePct(ad.id, ad.adset_id || "", perAdSetSpend),
+                ageDays,
+                cpm3d: metrics.cpm3d,
+                peak1dCtr: metrics.peak1dCtr,
+                creativeId: typeof ad.creative === "object" && ad.creative ? ad.creative.id || null : null,
+                imageHash: match?.imageHash ?? null,
+                verdict: verdictResult.verdict,
+                ruleCode: verdictResult.ruleCode,
+                reasonAr: verdictResult.reasonAr,
+                diagnosisAr: verdictResult.diagnosisAr,
+                evaluatedAt: verdictResult.evaluatedAt,
+                schemaVersion: 1,
+            } as AdDoc);
         writes.push({
             ref: adAccountRef.collection("adPerformance").doc(ad.id),
             data: adDoc as unknown as Record<string, unknown>,
@@ -1074,24 +1138,32 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             const adIsAvailable = keepMetadataUnavailable
                 ? false
                 : generationId !== null;
-            learnedAds.push({
-                adId: ad.id,
-                generationId,
-                matchType,
-                metadataAvailable: adIsAvailable,
-                campaignObjective: objective.bucket,
-                geoTier: ctx.geoTier,
-                audienceType: ctx.audienceType,
-                ctrLink: metrics.ctrLink,
-                cpm3d: metrics.cpm3d,
-                conversions3d: metrics.conversions3d,
-                verdict: verdictResult.verdict,
-                hookAngle: null,           // patched below
-                layoutTemplate: null,      // patched below
-                creativeModes: [],         // patched below
-                artDirection: null,        // patched below
-                universe: null,             // patched below
-            });
+            // FR-070 (T018b): failed-read ads contribute nothing to the
+            // learning aggregator this sync — even though their linking
+            // fields are still preserved on disk (via the merge write
+            // below), we cannot safely use their prior contribution
+            // data. Skip the push. The ad is still written below with
+            // its updated operational fields.
+            if (!ledgerReadFailed) {
+                learnedAds.push({
+                    adId: ad.id,
+                    generationId,
+                    matchType,
+                    metadataAvailable: adIsAvailable,
+                    campaignObjective: objective.bucket,
+                    geoTier: ctx.geoTier,
+                    audienceType: ctx.audienceType,
+                    ctrLink: metrics.ctrLink,
+                    cpm3d: metrics.cpm3d,
+                    conversions3d: metrics.conversions3d,
+                    verdict: verdictResult.verdict,
+                    hookAngle: null,           // patched below
+                    layoutTemplate: null,      // patched below
+                    creativeModes: [],         // patched below
+                    artDirection: null,        // patched below
+                    universe: null,             // patched below
+                });
+            }
         }
     }
 
@@ -1289,14 +1361,66 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             lastMetaSyncAt: nowMs,
         };
     }
+
+    // ─── FR-062 (T018a): pre-commit fencing re-check ──────────────────
+    //
+    // Re-verify the lease is still held immediately before any commit.
+    // FR-063 acknowledges the residual window between this check and
+    // the commit below; the check narrows it without eliminating it.
+    // FR-064: an abort here leaves existing records untouched and
+    // does NOT fail the surrounding sync. The event is recorded in
+    // errors[] for observability (T062 reads this surface).
+    const acquisitionRunId = learningRunId;
+    const stillHeldNow = await stillHeld(
+        getDb() as unknown as Parameters<typeof stillHeld>[0],
+        userId,
+        accountId,
+        acquisitionRunId,
+        nowMs,
+    );
+    if (!stillHeldNow) {
+        // Lease was lost between acquire and the fencing check. Do NOT
+        // proceed with the learning write — a successor run may be
+        // doing it. Per FR-064, leave existing records untouched.
+        errors.push(
+            "learning lease lost between acquire and pre-commit re-check " +
+            "(FR-062); learning write aborted for this sync",
+        );
+        try {
+            await releaseLearningLease(
+                getDb() as unknown as Parameters<typeof releaseLearningLease>[0],
+                userId,
+                accountId,
+                acquisitionRunId,
+            );
+        } catch {
+            // Release may itself fail if a successor has already taken
+            // over the lease document (FR-058). Best-effort: the
+            // successor's identity check prevents our release from
+            // clearing their lease, and our record already notes the
+            // stop here.
+        }
+        return {
+            ok: true, // FR-064: sync did not fail
+            status: "partial", // partial: operational done, learning skipped
+            counts: emptyCounts(),
+            errors,
+            needsReauth: false,
+            lastMetaSyncAt: nowMs,
+        };
+    }
+
     // Lease is held. Phase 3 inserts the learning-write body here
     // (FR-016, FR-021). Until then, immediately release — the lease is
     // acquired and released within the same run because there is no
     // learning write yet to protect.
     try {
-        // ─── Placeholder for the Phase 3 learning write. ───
-        // Intentionally empty in Phase 2.
-        void failedLedgerReads; // referenced for Phase 3 — see T015.
+        // ─── Placeholder for the Phase 3 learning write body. ───
+        // The delta application (T018) inserts the body that uses the
+        // existing aggregate + the new contributions. The
+        // failedLedgerReads set is consumed in the per-ad loop above
+        // (T018b) — the field-level discrimination omits the linking
+        // fields from the adDoc merge write.
     } finally {
         // FR-058: release verifies holder identity. A run that lost its
         // lease to a takeover cannot release its successor's lease.

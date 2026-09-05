@@ -14,7 +14,10 @@
 //   - Hook angle alias resolution: shocking_stat→statistics,
 //     fear_of_missing_out→urgency, future_pacing→future_based.
 //   - patternKey = hash of sorted [layoutTemplate, modes[], artDirection, universe].
-//   - Same generationId in 2 ad sets → separate records per context.
+//   - **Same generationId in 2 ad sets → one creative, one record.** (FR-073 —
+//     this rule was previously the opposite; the line was deleted in
+//     Batch 03 / T019 because the unit of evidence is the creative, not
+//     the row.)
 //   - All verdict counts (`bestVerdictCount` = 🟢, `worstVerdictCount` = 🔴) are
 //     tracked per angle / pattern.
 // ═══════════════════════════════════════════════════════════
