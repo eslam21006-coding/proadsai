@@ -15,8 +15,11 @@ export * from "./creativeGrouping.js";   // FR-073, FR-074, FR-074a-g
 export * from "./learningLease.js";      // FR-054–FR-065 (new collection)
 
 // ─── Phase 3 — contribution ledger + delta aggregation ─────────────
-// export * from "./contributionLedger.js"; // FR-016, FR-017, FR-018, FR-046
-// export * from "./aggregateDelta.js";     // FR-015, FR-019–FR-022
+export * from "./contributionLedger.js";  // FR-016, FR-017, FR-018, FR-046
+export * from "./aggregateDelta.js";      // FR-015, FR-019–FR-022
+
+// ─── Phase 3 — T018b field-level discrimination (FR-070) ──────────
+export * from "./fieldLevelDiscrimination.js";
 
 // ─── Phase 4 — conversion accrual + efficiency figure ──────────────
 // export * from "./conversionAccrual.js";  // FR-081–FR-086a

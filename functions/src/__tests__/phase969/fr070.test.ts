@@ -1,41 +1,30 @@
-// functions/src/__tests__/phase969/fr070.test.ts — FR-070 forced-failure test
+// functions/src/__tests__/phase969/fr070.test.ts — FR-070 BEHAVIOURAL test
 // ══════════════════════════════════════════════════════════════════════
-// Phase 969, T018b — the test FR-070 requires by name.
+// Phase 969, T018b — the test FR-070 names by assertion.
 //
 // FR-070 states, in its own words:
 //   "This MUST be covered by a test that forces a read failure and
 //    asserts no contribution was added."
 //
-// Batches 01 and 02 left this assertion unwritten; T016's coverage list
-// claimed FR-070 was covered by the bounded-read helper's unit tests,
-// but those tests cover the helper's reporting contract — the
-// PRODUCING half — and not the CONSUMING half. The consumer
-// (per-ad loop's use of `failedLedgerReads` to suppress the learning
-// write while preserving operational fields) was the FR-070 bug
-// masked by the absence of a learning write in Phase 2.
+// Owner correction to Batch 03: the prior version of this file was a
+// source-text test — it asserted that strings appeared in the source
+// code, not that behaviour occurred. Source order and runtime
+// behaviour are different claims. The behavioural test FR-070 names
+// observes behaviour: it drives the pure `decideAdWrite` function
+// with synthetic inputs and asserts on returned values.
 //
-// This file is the missing test. It runs the per-ad loop with a forced
-// failed bounded-read chunk and asserts BOTH halves in one test:
-//   1. no contribution was added — failed-read ads must not appear in
-//      the `learnedAds` collection that drives the learning
-//      aggregator;
-//   2. operational fields are still written — the failed-read ad's
-//      adPerformance doc must have its updated `spend3d`,
-//      `conversions3d`, and `verdict` (i.e., the owner-action list
-//      stays current, SC-049's protection).
-//
-// A test that asserted only one half would pass under either
-// interpretation: "no contribution" alone could be satisfied by
-// skipping the whole write (which would also satisfy the operational-
-// freeze path); "operational fields updated" alone could be satisfied
-// by writing them but contributing regardless. Both halves in one
-// test pin the field-level discrimination the owner spelled out in
-// Batch 02b's item 2.
+// The function under test lives at:
+//   functions/src/learning/fieldLevelDiscrimination.ts
+// `decideAdWrite` was extracted from `shared.ts` per-ad loop into a
+// pure helper for exactly this reason. The wire-up in `shared.ts`
+// passes the values it would have used inline; behaviour is identical.
 
 import assert from "node:assert/strict";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const shared = require("../../metaSync/shared.js") as { runSyncForAccount: unknown };
+const {
+    decideAdWrite,
+} = require("../../learning/fieldLevelDiscrimination.js");
 
 const PASSED = 0;
 const FAILED = 1;
@@ -54,153 +43,240 @@ function test(name: string, fn: () => void): void {
     }
 }
 
-// Note: this file's name-vs-assertion check:
-//
-//   - "no contribution was added for a forced failed-read ad"
-//       asserts that after running runSyncForAccount with a stubbed
-//       failed chunk, no `learnedAds` entry exists for the failed ad.
-//
-//   - "operational fields ARE written for the same failed-read ad"
-//       asserts that the failed-read ad's adPerformance doc still
-//       receives its updated spend/conversions/verdict fields —
-//       the merge:true write preserves linking and updates operational.
-//
-//   - "linking fields are NOT overwritten with null on the failed ad"
-//       asserts that the prior doc's `matchType`/`generationId` are
-//       preserved verbatim (the next-read sync will see them, which is
-//       what makes the discrimination field-level).
+// ─── Fixtures ─────────────────────────────────────────────────────
 
-// Importing the production function and exercising it through the
-// existing sync body is the cleanest test. That requires the full
-// sync stubbing (fetchCampaigns, fetchAdSets, fetchAds, etc.), which
-// is not built until Phase 7 (T064b). For Phase 3, the test exercises
-// the per-ad-loop-logic in isolation by importing the underlying
-// helpers.
+function baseInput(overrides: Record<string, unknown> = {}) {
+    return {
+        adId: "ad-1",
+        adName: "Test Ad",
+        existingData: undefined,
+        ledgerReadFailed: false,
+        match: {
+            generationId: "gen-1",
+            matchType: "auto_hash" as const,
+            matchDistance: 3,
+            imageHash: "hash-1",
+        },
+        metrics: {
+            spend3d: 100, spend7d: 200, spendToday: 50,
+            impressions3d: 1000, cpa3d: 10, ctrLink: 0.05, ctrAll: 0.04,
+            conversions3d: 10, frequency3d: 1.5, cpm3d: 2.5, peak1dCtr: 0.08,
+        },
+        ctx: {
+            geoTier: "tier1_gulf" as const,
+            audienceType: "broad" as const,
+        },
+        objective: { bucket: "conversion" as const, raw: "CONVERSIONS" },
+        ageDays: 7,
+        creativeId: "creative-1",
+        creativeType: "image" as const,
+        spendSharePct: 0.1,
+        thumbnailUrl: undefined,
+        verdict: {
+            verdict: "🟢" as const,
+            ruleCode: "K3",
+            reasonAr: "creative is good",
+            diagnosisAr: null,
+            evaluatedAt: 1_700_000_000_000,
+        },
+        keepMetadataUnavailable: false,
+        ...overrides,
+    };
+}
 
-// For Phase 3 we test the discriminator at the type level: the
-// `failedLedgerReads` set is consumed in the per-ad loop, the
-// precedence lock is skipped, the linking fields are OMITTED from the
-// adDoc merge write, and the operational fields are INCLUDED. The
-// end-to-end integration test in Phase 7 (T064b) drives runSyncForAccount
-// with stubbed deps.
-//
-// ─── The discriminator, restated ─────────────────────────────────
-//
-// Given a forced-read-failure for ad `X`:
-//
-//   a) the precedence lock does NOT fire (line 900-905 condition is
-//      gated by `ledgerReadFailed`).
-//   b) `learnedAds` does NOT receive an entry for `X`.
-//   c) the adDoc merge write for `X` includes:
-//        - operational fields (spend, conversions, verdict, ...);
-//        - does NOT include `generationId`, `matchType`,
-//          `matchDistance`, `metadataAvailable`.
-//      Fields not in the merge payload are preserved from the prior
-//      doc. The failed-read ad keeps its prior link unchanged.
+// ─── FR-070's named test, by assertion ─────────────────────────
 
-test("FR-070: failed-read ads do not appear in learnedAds (no contribution)", () => {
-    // The contract that T018b's per-ad loop MUST honor: failed-read
-    // ads skip the learnedAds.push. We assert this as a contract
-    // statement rather than a runtime test, because driving the full
-    // loop is Phase 7 work (T064b).
-    //
-    // Pinning the contract here means a reader can grep for
-    // `failedLedgerReads` in shared.ts and find the if-guard around
-    // learnedAds.push. The test below asserts the structural shape.
-    const sharedSrc = require("node:fs").readFileSync(
-        require("node:path").join(__dirname, "..", "..", "..", "src", "metaSync", "shared.ts"),
-        "utf8",
+test("FR-070 named assertion: forces a read failure and asserts no contribution was added", () => {
+    // Set up: prior run linked the ad manually.
+    const priorDoc = {
+        adId: "ad-1",
+        generationId: "gen-PRIOR",
+        matchType: "manual" as const,
+        matchDistance: 0,
+        metadataAvailable: true,
+    };
+    // This sync's bounded-read chunk failed for this ad.
+    const decision = decideAdWrite(
+        baseInput({
+            existingData: priorDoc,
+            ledgerReadFailed: true,
+            // The fresh-from-Meta match also points somewhere; we do
+            // not trust it under FR-070.
+            match: {
+                generationId: "gen-FRESH",
+                matchType: "auto_hash" as const,
+                matchDistance: 7,
+                imageHash: "hash-fresh",
+            },
+        }),
     );
-    // The conditional guard around learnedAds.push must reference
-    // failedLedgerReads. A test asserting this property survives a
-    // refactor as long as the guard stays in place.
-    assert.ok(
-        sharedSrc.includes("if (!ledgerReadFailed)") && sharedSrc.includes("learnedAds.push"),
-        "FR-070 contract: learnedAds.push must be gated by !ledgerReadFailed in shared.ts",
+
+    // The contribution test: failed-read ads do NOT appear in
+    // learnedAds. This is the assertion FR-070 names.
+    assert.equal(
+        decision.inLearnedAds,
+        false,
+        "FR-070: a forced failed-read ad must NOT contribute (`inLearnedAds === false`)",
     );
 });
 
-test("FR-070: failed-read adDoc does NOT include generationId/matchType/matchDistance/metadataAvailable", () => {
-    // The merge:true write must omit the linking fields when
-    // ledgerReadFailed is true. Otherwise a value of `null` would
-    // OVERWRITE the prior doc's values, which is the FR-070 bug.
-    //
-    // The discriminator is field-level: operational fields stay,
-    // linking fields are omitted so merge preserves them.
-    //
-    // The discriminator is implemented as the FIRST branch of a
-    // ternary in shared.ts. We locate it structurally using the
-    // comment marker ("Linking fields OMITTED") the implementation
-    // carries, rather than parsing the ternary, so a refactor that
-    // keeps the contract but changes the conditional form stays
-    // verifiable.
-    const sharedSrc = require("node:fs").readFileSync(
-        require("node:path").join(__dirname, "..", "..", "..", "src", "metaSync", "shared.ts"),
-        "utf8",
+test("FR-070 linking fields preserved: failed-read adDoc omits linking fields (merge preserves)", () => {
+    // The failed-read branch must omit linking fields from the adDoc,
+    // so merge:true on the write preserves whatever the prior doc held.
+    // The discriminator is field-level: the operational fields ARE
+    // present and current.
+    const decision = decideAdWrite(baseInput({ ledgerReadFailed: true }));
+
+    // Linking fields are absent (undefined) — merge will not touch them.
+    assert.equal(
+        decision.adDoc.generationId,
+        undefined,
+        "FR-070: linking field generationId must be OMITTED on failed-read (merge preserves prior)",
     );
-    assert.ok(
-        sharedSrc.includes("const adDoc: AdDoc = ledgerReadFailed"),
-        "shared.ts must contain the field-level ternary at adDoc construction",
+    assert.equal(
+        decision.adDoc.matchType,
+        undefined,
+        "FR-070: linking field matchType must be OMITTED on failed-read (merge preserves prior)",
     );
-    // The first branch (failed-read shape) MUST carry the marker
-    // "// Linking fields OMITTED" so a reader can see the
-    // discriminator from the source.
-    assert.ok(
-        /\?\s*\(\s*\{[\s\S]*?\/\/\s*Linking fields OMITTED[\s\S]*?\}\s*as AdDoc\)/.test(sharedSrc),
-        "the failed-read branch of the adDoc ternary must carry '// Linking fields OMITTED' marker",
+    assert.equal(
+        decision.adDoc.matchDistance,
+        undefined,
+        "FR-070: linking field matchDistance must be OMITTED on failed-read (merge preserves prior)",
     );
-    // Between the marker and the closing `} as AdDoc)`, the linking
-    // field NAMES must not appear as object keys.
-    const markerMatch = sharedSrc.match(/\?\s*\(\s*\{([\s\S]*?)\/\/\s*Linking fields OMITTED([\s\S]*?)\}\s*as AdDoc\)/);
-    assert.ok(markerMatch, "marker not found");
-    const afterMarker = markerMatch[2];
-    assert.ok(
-        !afterMarker.match(/\bgenerationId\s*[:?,]/) &&
-        !afterMarker.match(/\bmatchType\s*[:?,]/) &&
-        !afterMarker.match(/\bmatchDistance\s*[:?,]/) &&
-        !afterMarker.match(/\bmetadataAvailable\s*[:?,]/),
-        `failed-read branch must omit linking fields after the OMITTED marker; offending text:\n${afterMarker.slice(0, 400)}…`,
-    );
-    // And the operational fields must be present after the marker.
-    assert.ok(
-        afterMarker.includes("spend3d") &&
-        afterMarker.includes("conversions3d") &&
-        afterMarker.includes("verdict"),
-        "failed-read branch must include operational fields (spend3d, conversions3d, verdict) AFTER the OMITTED marker",
+    assert.equal(
+        decision.adDoc.metadataAvailable,
+        undefined,
+        "FR-070: linking field metadataAvailable must be OMITTED on failed-read (merge preserves prior)",
     );
 });
 
-test("FR-070: SC-049's operational freshness is preserved for the failed-read ad", () => {
-    // The discriminator is field-level. The failed-read ad still gets
-    // its operational fields written, so the owner-action list stays
-    // current for the ad. SC-049 names this property. The
-    // implementation must not collapse the operational-write side
-    // while preserving the linking-side.
-    //
-    // This is the structural counterpart of the previous test: where
-    // the previous test pins "linking fields OMITTED", this test pins
-    // "operational fields INCLUDED". Both halves in one test family
-    // cover FR-070's intent.
-    const sharedSrc = require("node:fs").readFileSync(
-        require("node:path").join(__dirname, "..", "..", "..", "src", "metaSync", "shared.ts"),
-        "utf8",
+test("FR-070 operational freshness preserved: failed-read adDoc has the current sync's operational fields", () => {
+    // SC-049's property: operational status must be current for every
+    // ad in the batch, even when the bounded read failed. The failed-
+    // read ad still receives its updated spend/conversions/verdict.
+    const decision = decideAdWrite(
+        baseInput({
+            ledgerReadFailed: true,
+            metrics: {
+                spend3d: 999, spend7d: 8888, spendToday: 123,
+                impressions3d: 5000, cpa3d: 5, ctrLink: 0.10, ctrAll: 0.09,
+                conversions3d: 200, frequency3d: 2.0, cpm3d: 1.5, peak1dCtr: 0.20,
+            },
+        }),
     );
-    const writesAreUnconditional = /writes\.push\(\s*\{[\s\S]*?adPerformance[\s\S]*?\}\)/.test(sharedSrc);
-    assert.ok(
-        writesAreUnconditional,
-        "writes.push for adPerformance must be unconditional — only the DATA shape differs between failed-read and success-read, not whether the write happens",
-    );
+
+    assert.equal(decision.adDoc.spend3d, 999, "operational: spend3d is current");
+    assert.equal(decision.adDoc.spend7d, 8888, "operational: spend7d is current");
+    assert.equal(decision.adDoc.conversions3d, 200, "operational: conversions3d is current");
+    assert.equal(decision.adDoc.ctrLink, 0.10, "operational: ctrLink is current");
+    assert.equal(decision.adDoc.verdict, "🟢", "operational: verdict is current");
 });
 
-// Suppress unused-import warning. The shared import is intentional
-// (the file documents runSyncForAccount as the function T064b will
-// drive end-to-end).
-void shared;
+test("FR-070 discrimination is field-level: a single call has both halves correct", () => {
+    // The structural discriminator test: in a single decision, BOTH
+    // halves must hold simultaneously.
+    //
+    //   inLearnedAds === false          ← no contribution (FR-070)
+    //   adDoc.generationId === undefined  ← linking field omitted (merge preserves)
+    //   adDoc.spend3d === 999            ← operational field current (SC-049)
+    //
+    // A single-half test could pass under either interpretation:
+    //   - skip the whole write → operational is stale (wrong)
+    //   - write everything as null → linking is overwritten (wrong)
+    //
+    // The field-level discriminator must produce BOTH simultaneously.
+    const decision = decideAdWrite(
+        baseInput({
+            ledgerReadFailed: true,
+            metrics: { ...baseInput().metrics, spend3d: 999 },
+        }),
+    );
+
+    assert.equal(decision.inLearnedAds, false, "inLearnedAds must be false");
+    assert.equal(decision.adDoc.generationId, undefined, "linking fields must be omitted");
+    assert.equal(decision.adDoc.spend3d, 999, "operational fields must be current");
+});
+
+// ─── Reverse direction: a non-failed read keeps existing behaviour ──
+
+test("FR-070 reverse: a successful read contributes AND includes linking fields", () => {
+    // The opposite side of the discriminator. Without this, an
+    // implementation could pass the FR-070 tests above by simply
+    // skipping every write — which would freeze everything.
+    const decision = decideAdWrite(
+        baseInput({
+            ledgerReadFailed: false,
+            match: {
+                generationId: "gen-fresh-auto",
+                matchType: "auto_hash" as const,
+                matchDistance: 2,
+                imageHash: "hash-fresh",
+            },
+        }),
+    );
+
+    assert.equal(decision.inLearnedAds, true, "successful reads DO contribute");
+    assert.equal(decision.adDoc.generationId, "gen-fresh-auto", "linking field present on success");
+    assert.equal(decision.adDoc.matchType, "auto_hash", "linking field present on success");
+    assert.equal(decision.adDoc.matchDistance, 2, "linking field present on success");
+    // metadataAvailable is computed: generationId !== null → true
+    assert.equal(decision.adDoc.metadataAvailable, true, "metadataAvailable derived from generationId");
+});
+
+test("FR-070 precedence lock: a prior manual link is preserved on a successful read", () => {
+    // FR-074a's precedence lock: when the existing doc says `manual`
+    // (or auto_hash), the fresh match cannot override it. The decision
+    // is observable as `decision.adDoc.generationId === prior.gen`.
+    const priorDoc = {
+        adId: "ad-1",
+        generationId: "gen-PRIOR-manual",
+        matchType: "manual" as const,
+        matchDistance: 0,
+        metadataAvailable: true,
+    };
+    const decision = decideAdWrite(
+        baseInput({
+            ledgerReadFailed: false,
+            existingData: priorDoc,
+            // Fresh match points somewhere else entirely.
+            match: {
+                generationId: "gen-fresh-auto",
+                matchType: "auto_hash" as const,
+                matchDistance: 5,
+                imageHash: "hash-fresh",
+            },
+        }),
+    );
+
+    assert.equal(decision.adDoc.generationId, "gen-PRIOR-manual",
+        "FR-074a precedence: prior manual link wins over fresh auto match");
+    assert.equal(decision.adDoc.matchType, "manual", "FR-074a precedence: matchType is preserved");
+});
+
+test("FR-070 first-ever sync with failed read: no linking fields, no contribution", () => {
+    // Edge case: a brand-new account, first-ever sync, the bounded
+    // read fails for an ad. existingData is undefined. The decision
+    // is the same shape as for a re-sync with a failed read, but
+    // there's no prior doc to preserve — the merge creates a doc
+    // with operational fields only and the linking fields absent.
+    const decision = decideAdWrite(
+        baseInput({
+            existingData: undefined,
+            ledgerReadFailed: true,
+            match: null,  // image match also failed this sync
+        }),
+    );
+
+    assert.equal(decision.inLearnedAds, false, "first-ever failed read: no contribution");
+    assert.equal(decision.adDoc.generationId, undefined, "first-ever failed read: linking field absent");
+    assert.equal(decision.adDoc.matchType, undefined, "first-ever failed read: linking field absent");
+    assert.equal(decision.adDoc.spend3d, 100, "first-ever failed read: operational field present");
+});
 
 // ─── Runner ─────────────────────────────────────────────────────
 
 console.log("");
-console.log("=== FR-070 (T018b) — field-level discrimination ===");
+console.log("=== FR-070 (T018b) — field-level discrimination (BEHAVIOURAL) ===");
 console.log(`Passed: ${passed}, Failed: ${failed}`);
 if (failed > 0) process.exit(FAILED);
 process.exit(PASSED);
