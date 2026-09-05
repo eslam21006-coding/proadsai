@@ -7,16 +7,21 @@
 **Commit**: `6ce6a44 feat(969): Phase 1 setup — learning/ module, types, test registration, fixtures`
 **Commit (report)**: `656cc04 docs(969): Batch 01 report — Phase 1 setup complete`
 
-> **Note on filename reuse.** The path
-> `specs/969-cumulative-learning/reports/batch-01-report.md` was specified
-> by the owner. It already carried content from an earlier batch in this
-> branch (Phase 967 caller-scope conversion, last touched in commit
-> `ffc14a8`). That previous content is preserved at
+> **Note on filename (post-batch-01 corrections).** This file was
+> originally written as `batch-01-report.md`. The owner directed that
+> from Phase 2 onward the reports for this feature use a
+> `batch-NN-969-report.md` prefix so they don't collide with the
+> `batch-NN*` files from prior phases (967, 970) sitting alongside in
+> this directory. The file was renamed in commit `1700452`.
+>
+> **Pre-rename history** (preserved for traceability): the original
+> `batch-01-report.md` overwrote Phase 967's `batch-01-report.md` (last
+> touched in commit `ffc14a8`). The original content is preserved at
 > `specs/969-cumulative-learning/reports/batch-01-phase967-pre969.md`.
-> The convention on this branch is that batch numbers are reused across
-> features — confirmed by the presence of `batch-01a-*`, `batch-01b-*`,
+> The branch convention is that batch numbers are reused across features
+> — confirmed by the presence of `batch-01a-*`, `batch-01b-*`,
 > `batch-01c-*`, `batch-01d-*`, `batch-01e-*` from the same prior phase
-> sitting alongside the new `batch-00-understanding.md`.
+> sitting alongside this file.
 
 ---
 
@@ -119,7 +124,7 @@ Nine exported builders + one constant:
 |---|---|---|
 | `buildLinkedRow` | single row, manual link | direct-auto cases |
 | `buildPropagatedRow` | single row, `matchType: null`, `linkProvenance: "propagated"` | SC-029, SC-029c, FR-074f |
-| `buildDirectAutoRow` | single row, `matchType: "auto_hash"`, `linkProvenance: "direct_auto"` | SC-029c, SC-076 |
+| `buildDirectAutoRow` | single row, `matchType: "auto_hash"`, `linkProvenance: "direct_auto"` | SC-029c, FR-076 |
 | `buildHashlessLinkedRow` | single row, `imageHash: null`, manual link | SC-029b first route |
 | `buildUnlinkedRow` | single row, both keys null | SC-046 negative case |
 | `buildFiftyFiveRowOneLinkedFixture` | 54 propagated + 1 manual, one `imageHash` | SC-008, SC-029, SC-029c, SC-014 |
