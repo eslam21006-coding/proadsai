@@ -58,8 +58,14 @@ can never be introduced.
 - [ ] T009 Implement `acquireLearningLease` / `releaseLearningLease` / `stillHeld` in `functions/src/learning/learningLease.ts` per `contracts/learningLease.md` — **a NEW collection keyed on `(ownerUid, accountId)`**, single-document transaction, 15-minute TTL, release verifies holder identity (FR-054, FR-056–FR-059)
 - [ ] T010 Wire the lease **inside `runSyncForAccount`** in `functions/src/metaSync/shared.ts`, around the learning write only (FR-054a, FR-055). **Do not modify `functions/src/metaSync/lease.ts`** and do not add a call in `functions/src/metaSync/orchestrator.ts`
 - [ ] T011 Implement the mandatory ordering in `functions/src/metaSync/shared.ts` — commit the operational status writes, **then** attempt the lease, **then** signal failure (FR-060, FR-060a). The natural order is the reverse
-- [ ] T012 Add the pre-commit fencing re-check and abort path in `functions/src/metaSync/shared.ts` — re-verify holding immediately before committing, abort the learning write without failing the sync, record the event (FR-062, FR-064, FR-052)
-- [ ] T013 [P] Write lease tests in `functions/src/__tests__/learningLease.test.ts` covering SC-017 (**two different routes** — one inline, one via the Cloud Tasks worker), SC-017a (two accounts of one owner both proceed), SC-018, SC-019, SC-020 (a scheduled run signals for retry rather than being dropped), SC-043, SC-044 (**zero** conversions counted twice under the scheduled-versus-manual pairing), SC-049; register the file in `functions/package.json`
+- [ ] T013 [P] Write lease tests in `functions/src/__tests__/learningLease.test.ts` covering SC-017 (**two different routes** — one inline, one via the Cloud Tasks worker), SC-017a (two accounts of one owner both proceed), SC-018, SC-019, SC-020 (a scheduled run signals for retry rather than being dropped), SC-043, SC-044 (**zero** conversions counted twice under the scheduled-versus-manual pairing); register the file in `functions/package.json`. **SC-049 does NOT live here** — it is an end-to-end wire-up test that runs `runSyncForAccount` with a forced lease refusal; moved to Phase 7 as T064b.
+
+> **T012 was moved from Phase 2 to Phase 3.** The pre-commit fencing
+> re-check (FR-062) is meaningful only once the learning write exists
+> inside the held window. Phase 2 establishes the wire-up path (lease
+> acquire after operational commits, release on success, signal failure
+> on refusal); the fencing check belongs with the body it fences. T012
+> now lives in Phase 3 next to T018, where the delta write site lands.
 
 ### Bounded prior-state read
 
@@ -84,6 +90,7 @@ smaller.
 
 - [ ] T017 [P] [US1] Implement `decideContribution` in `functions/src/learning/contributionLedger.ts` per `contracts/contributionLedger.md` — the add / no-op / withdraw-then-add / withdraw-only decision table (FR-016, FR-017)
 - [ ] T018 [US1] Implement per-record delta application in `functions/src/learning/aggregateDelta.ts` — atomic increments for sums, counts, win/loss totals and the per-funnel-type breakdown; a withdrawal is a **negative delta**, never a recomputation (FR-021, research.md §D3)
+- [ ] T018a [US1] **(moved from Phase 2; rationale recorded there)** Add the pre-commit fencing re-check and abort path in `functions/src/metaSync/shared.ts` — re-verify holding immediately before committing, abort the learning write without failing the sync, record the event (FR-062, FR-064, FR-052). **Must be inserted between the delta computation and the delta write**, with the abort path consuming the same `failedLedgerReads` set the bounded read produced (T015). Per FR-063 the residual window between re-verify and commit is acknowledged, not papered over
 - [ ] T019 [US1] Invert the contract of `functions/src/learningAggregates.ts` from overwrite to delta, and **delete the module-header rule at line 17** (*"Same generationId in 2 ad sets → separate records per context"*), which FR-073 overturns
 - [ ] T020 [US1] Add derived averages recomputed from sums and counts under their existing names in `functions/src/learningAggregates.ts` (FR-022) — derived output, not accumulated state
 - [ ] T021 [US1] Make counts count **distinct creatives**, not ad rows, in `functions/src/learningAggregates.ts` and `functions/src/learning/aggregateDelta.ts` (FR-036, FR-073)
@@ -195,6 +202,7 @@ with the all-time record, in both languages.
 - [ ] T063 [P] Keep log content to identifiers, state names, reason codes and counts in `functions/src/metaSync/shared.ts` — no owner-facing strings, no governed metric names, no percentages (FR-051e). **This constraint is stated but not automatically enforced; uphold it in review**
 - [ ] T064 [P] Write observability tests in `functions/src/__tests__/learningObservability.test.ts` covering SC-026, SC-027, SC-028, SC-042, SC-042a, SC-047; register the file in `functions/package.json`
 - [ ] T064a Assert the verdict engine is unmodified: `git diff --stat main -- functions/src/qararEngine.ts` returns empty (FR-026). **Do not modify `functions/src/qararEngine.ts`** — it computes correctly and the defect is at the write site, not the compute site. This prohibition previously appeared in no task and no design document
+- [ ] T064b [P] **SC-049 behavioural test (added Batch 02a).** Write an end-to-end test that drives `runSyncForAccount` with a stubbed Firestore and a stubbed Meta fetch path, pre-populates the `learningLeases/{ownerUid}_{accountId}` doc with a different `runId` so the lease acquire is refused, asserts the operational status writes for every ad in the batch were committed (the Firestore stub records them), and asserts `SyncResult.status === "failed"` is returned. Both halves are required in one test (SC-049): zero ads left with a stale operational status AND the failure signal emitted. Register in `functions/package.json`. The Phase 2 grep-based claim ("structurally satisfied") is insufficient — a refactor that moves the commit inside a conditional satisfies the grep and breaks the criterion. This test is end-to-end and naturally lives in Phase 7 alongside the observability tests, not Phase 2's unit tests. Source-level claim from Batch 02 §5.4 is **withdrawn**.
 - [ ] T065 Add the no-pruning note at the `adPerformance` write site in `functions/src/metaSync/shared.ts` (FR-066) — the ledger is authoritative for correctness, so deleting an ad document silently re-enables double-counting
 - [ ] T066 Confirm every data access added by this feature uses the lazy database-handle pattern, with no handle acquired at module load, across `functions/src/learning/*.ts` (FR-053)
 - [ ] T067 Run the full chain defined in `functions/package.json` (`cd functions && npm test`) and confirm it reaches its **final** entry, not merely that it starts (FR-050, SC-011) — a chain that stops partway is the failure mode being guarded against
@@ -227,8 +235,9 @@ mistake is invisible to any test that does not drive two routes.
 
 **Phase 1** — T002, T003, T004 in parallel after T001.
 
-**Phase 2** — T008 runs alongside T009–T012 (different files). T013 and T016 are
-parallel to each other. T005 → T006 → T007 are sequential: same file.
+**Phase 2** — T008 runs alongside T009–T011 (different files). T013 and T016 are
+parallel to each other. T005 → T006 → T007 are sequential: same file. T012 was
+moved to Phase 3 (see Batch 02a report).
 
 **Phase 3 (US1)** — T017 and T024 in parallel; T026 and T027 in parallel once
 T017–T025 land. T018–T023 touch overlapping files and are sequential.

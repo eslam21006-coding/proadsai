@@ -15,14 +15,41 @@
 //   SC-044   zero conversions counted twice under the scheduled-vs-manual
 //            pairing (full-stack: needs runSyncForAccount stubbed at the
 //            Phase 2 boundary — exercised end-to-end in Phase 7)
-//   SC-049   operational status writes committed BEFORE the lease attempt
-//            (FR-060a ordering)
 //
-// Coverage limit (carried from Batch 01 §5.3 — owner correction):
-// This test drives the lease primitives directly. It does NOT drive
-// `runFullSync` nor `worker.ts`. Both routes converge on
-// `runSyncForAccount`, and that is the function the lease is acquired
-// inside (FR-054a). Route-level behaviour is not exercised in CI.
+// Note: SC-049 used to be listed here. Per owner correction to Batch 02a,
+// SC-049 is an end-to-end wire-up test that drives `runSyncForAccount`
+// itself; it does not belong in this primitive-level test file. It now
+// lives as T064b in Phase 7, where the natural end-to-end coverage
+// sits. The Phase 2 source-level claim that SC-049 is "structurally
+// satisfied at the source level" is **withdrawn** — see Batch 02a §3
+// for the reasoning, and T064b for the actual test that replaces it.
+//
+// ─── Discrimination reasoning for the SC-017 / SC-043 placement ──────
+//
+// The test file exercises the lease primitives directly. That choice is
+// load-bearing for SC-017's discrimination, and is recorded here so a
+// later reader does not assume the test exercises more than it does.
+//
+// The test calls `runSyncForAccount`'s call site directly, bypassing
+// `runFullSyncWithLease`. If the lease is acquired inside that
+// function, exactly one of two concurrent calls acquires it. If the
+// lease is at the orchestrator level, **neither** call acquires
+// anything and both write — the test fails. If the lease is keyed per
+// owner rather than per account, SC-017a's second case fails (a
+// per-owner key cannot serialise two accounts of the same owner).
+//
+// ─── Coverage limit ─────────────────────────────────────────────────
+//
+// This test drives neither `runFullSync` nor `worker.ts`. It asserts
+// that the lease is acquired inside `runSyncForAccount`, which both
+// routes call. Route-level behaviour is not exercised in CI.
+//
+// A lease placed only at the orchestrator level would pass an end-to-end
+// test that drives `runFullSync` twice — Phase 970's per-owner guard
+// would acquire the lease for both, the second would refuse, and the
+// test would look correct while the FR-054a requirement goes
+// unverified. The two-route claim in FR-054b exists precisely to
+// prevent that shape of false confidence.
 
 import assert from "node:assert/strict";
 

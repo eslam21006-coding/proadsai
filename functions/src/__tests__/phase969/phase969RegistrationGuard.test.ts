@@ -1,5 +1,5 @@
 // functions/src/__tests__/phase969/phase969RegistrationGuard.test.ts — mechanical test-registration guard
-// ════════════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
 // Phase 969 mechanical guard.
 //
 // The rule this protects has been broken twice on this project: a test file
@@ -19,23 +19,52 @@
 // Batch 01 (§1) makes this explicit: "Do not implement this as a manual
 // checklist step. The rule this protects has already been broken twice
 // by people who intended to follow it."
+//
+// ─── Self-test ────────────────────────────────────────────────────
+//
+// The guard was Batch 02's first submission. It passed on every run
+// because the two lists matched. That proved nothing about its
+// behaviour — a check whose passing proves nothing because it has never
+// been shown capable of failing is the exact failure mode this project
+// has been correcting. The owner correction to Batch 02 (§4) made this
+// explicit. The fix: the guard runs a **self-test** of its own diff
+// logic against synthetic inputs that exercise both mismatch
+// directions. If the diff function ever silently drops a missing-from-
+// chain or orphaned-in-chain case, the self-test fails and the guard
+// reports it. Both mismatch directions are demonstrated on every run.
 
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
-// `__dirname` is provided by Node's CommonJS runtime under the project's
-// `module: NodeNext` + `moduleResolution: nodenext` tsconfig (the file is
-// compiled to CommonJS and run with `node lib/...`). Walking from there
-// gives us the absolute paths we need.
 declare const __dirname: string;
 const ownCompiledPath = join(__dirname, "phase969RegistrationGuard.test.js");
-// lib/__tests__/phase969/ →  lib/__tests__/  →  lib/  →  functions/
 const FUNCTIONS_DIR = resolve(ownCompiledPath, "..", "..", "..", "..");
 const TEST_DIR = join(FUNCTIONS_DIR, "src", "__tests__", "phase969");
 const PACKAGE_JSON = join(FUNCTIONS_DIR, "package.json");
 
-// ─── Files on disk ───────────────────────────────────────────────
+// ─── Diff logic, extracted for self-testability ──────────────────
+
+interface DiffResult {
+    missingFromChain: string[];
+    orphanedInChain: string[];
+}
+
+/**
+ * Pure function: given a list of files on disk and a list of chain
+ * entries, return the diff in both directions. Pure so the self-test
+ * can drive it with synthetic inputs.
+ */
+export function diffTestRegistrations(
+    files: string[],
+    chainEntries: string[],
+): DiffResult {
+    const missingFromChain = files.filter((p) => !chainEntries.includes(p));
+    const orphanedInChain = chainEntries.filter((p) => !files.includes(p));
+    return { missingFromChain, orphanedInChain };
+}
+
+// ─── Filesystem reads (production inputs) ────────────────────────
 
 function listPhase969TestFiles(): string[] {
     let entries: string[];
@@ -49,12 +78,6 @@ function listPhase969TestFiles(): string[] {
     return entries.filter((f) => f.endsWith(".test.ts")).sort();
 }
 
-// ─── Chain entries in package.json ───────────────────────────────
-// Match `node lib/__tests__/phase969/X.test.js` references inside the
-// `test:phase969` script AND every `test:phase969:*` script (which the
-// master chain pulls in via `npm run`). One level of recursion is enough
-// because the chain script pulls in its inner scripts but does not nest
-// further.
 function listPhase969ChainEntries(): string[] {
     const pkg = JSON.parse(readFileSync(PACKAGE_JSON, "utf8")) as {
         scripts: Record<string, string>;
@@ -73,52 +96,106 @@ function listPhase969ChainEntries(): string[] {
     return [...found].sort();
 }
 
-// ─── Diff ─────────────────────────────────────────────────────────
+// ─── Self-test — both mismatch directions ────────────────────────
 
-const files = listPhase969TestFiles();
+console.log("──────────────────────────────────────────────────────────────────────────────");
+console.log("Phase 969 test-registration guard — self-test");
+console.log("──────────────────────────────────────────────────────────────────────────────");
+
+// The diff function compares two lists of paths. Inputs use the SAME
+// shape — `lib/__tests__/phase969/*.test.js` — so the comparison is
+// string-equality, not name-only.
+
+const p = (name: string) => `lib/__tests__/phase969/${name}`;
+
+// Missing-from-chain direction: file on disk absent from chain.
+{
+    const files = [p("alpha.test.js"), p("beta.test.js"), p("gamma.test.js")];
+    const chain = [p("alpha.test.js"), p("beta.test.js")];
+    const diff = diffTestRegistrations(files, chain);
+    assert.deepEqual(diff.missingFromChain, [p("gamma.test.js")],
+        "self-test: file on disk absent from chain must be reported");
+    assert.deepEqual(diff.orphanedInChain, [],
+        "self-test: no orphan when only file-on-disk side differs");
+    console.log("  ✅ self-test: missing-from-chain direction detected");
+}
+
+// Orphaned-in-chain direction: chain entry points at a file that does not exist.
+{
+    const files = [p("alpha.test.js")];
+    const chain = [p("alpha.test.js"), p("missing.test.js")];
+    const diff = diffTestRegistrations(files, chain);
+    assert.deepEqual(diff.orphanedInChain, [p("missing.test.js")],
+        "self-test: chain entry with no file on disk must be reported");
+    assert.deepEqual(diff.missingFromChain, [],
+        "self-test: no missing when only chain side differs");
+    console.log("  ✅ self-test: orphaned-in-chain direction detected");
+}
+
+// Both directions at once.
+// - `kept.test.js` is on disk but NOT in the chain (missing-from-chain).
+// - `disk-only.test.js` is in the chain but NOT on disk (orphaned).
+// - `alpha.test.js` is in both.
+{
+    const files = [p("alpha.test.js"), p("kept.test.js")];
+    const chain = [
+        p("alpha.test.js"),
+        p("disk-only.test.js"),
+    ];
+    const diff = diffTestRegistrations(files, chain);
+    assert.deepEqual(diff.missingFromChain, [p("kept.test.js")],
+        "self-test: kept.test.js is on disk but not in chain");
+    assert.deepEqual(diff.orphanedInChain, [p("disk-only.test.js")],
+        "self-test: disk-only.test.js is in chain but not on disk");
+    console.log("  ✅ self-test: both directions simultaneously");
+}
+
+// Empty inputs: both lists empty.
+{
+    const diff = diffTestRegistrations([], []);
+    assert.deepEqual(diff, { missingFromChain: [], orphanedInChain: [] });
+    console.log("  ✅ self-test: empty inputs return empty diff");
+}
+
+// ─── Production check — filesystem against chain ─────────────────
+
+const files = listPhase969TestFiles().map((f) => p(f.replace(/\.ts$/, ".js")));
 const chainEntries = listPhase969ChainEntries();
+const productionDiff = diffTestRegistrations(files, chainEntries);
 
-// Convert files on disk to their expected `lib/...` paths.
-const expected = files
-    .map((f) => `lib/__tests__/phase969/${f.replace(/\.ts$/, ".js")}`)
-    .sort();
-
-const missingFromChain = expected.filter((p) => !chainEntries.includes(p));
-const orphanedInChain = chainEntries.filter((p) => !expected.includes(p));
-const allMatch = missingFromChain.length === 0 && orphanedInChain.length === 0;
-
-const sep = "─".repeat(78);
-console.log(sep);
-console.log("Phase 969 test-registration guard");
-console.log(sep);
+console.log("──────────────────────────────────────────────────────────────────────────────");
+console.log("Phase 969 test-registration guard — production check");
+console.log("──────────────────────────────────────────────────────────────────────────────");
 console.log(`Files on disk (${files.length}):`);
 for (const f of files) console.log(`  ${f}`);
 console.log(`Chain entries (${chainEntries.length}):`);
 for (const e of chainEntries) console.log(`  ${e}`);
-console.log(sep);
+console.log("──────────────────────────────────────────────────────────────────────────────");
 
+const allMatch = productionDiff.missingFromChain.length === 0
+    && productionDiff.orphanedInChain.length === 0;
 if (!allMatch) {
-    if (missingFromChain.length > 0) {
-        console.log(`MISSING FROM CHAIN (${missingFromChain.length}):`);
-        for (const m of missingFromChain) console.log(`  ${m}`);
+    if (productionDiff.missingFromChain.length > 0) {
+        console.log(`MISSING FROM CHAIN (${productionDiff.missingFromChain.length}):`);
+        for (const m of productionDiff.missingFromChain) console.log(`  ${m}`);
     }
-    if (orphanedInChain.length > 0) {
-        console.log(`ORPHANED IN CHAIN (${orphanedInChain.length}):`);
-        for (const o of orphanedInChain) console.log(`  ${o}`);
+    if (productionDiff.orphanedInChain.length > 0) {
+        console.log(`ORPHANED IN CHAIN (${productionDiff.orphanedInChain.length}):`);
+        for (const o of productionDiff.orphanedInChain) console.log(`  ${o}`);
     }
-    console.log(sep);
+    console.log("──────────────────────────────────────────────────────────────────────────────");
     process.exit(1);
 }
 
 // Sanity: this guard's own `.test.js` entry is in the chain.
-const ownEntry = relative(FUNCTIONS_DIR, __filename)
-    .replace(/\\/g, "/")
-    .replace(/\.ts$/, ".js");
+const ownEntry = ownCompiledPath
+    .replace(FUNCTIONS_DIR + "\\", "")
+    .replace(/\\/g, "/");
 assert.ok(
     chainEntries.includes(ownEntry),
     `registration guard must list itself: ${ownEntry} not in chain`,
 );
 
 console.log("OK: every file on disk is in the chain, and every chain entry has a file on disk.");
-console.log(sep);
+console.log("──────────────────────────────────────────────────────────────────────────────");
 process.exit(0);
