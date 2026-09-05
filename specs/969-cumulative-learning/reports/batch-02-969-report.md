@@ -272,6 +272,21 @@ caller consults `failedIds` to abort learning writes for those ads
 (FR-070). In Phase 2, the `failedLedgerReads` set is captured but
 no learning write exists yet — Phase 3 will use it.
 
+  > **CORRECTED in batch-02b-969-report.md: this entry reflects the
+  > code state at the time of Batch 02 but T015 was incomplete.** The
+  > `failedLedgerReads` set is captured, but the per-ad loop's
+  > precedence lock at `shared.ts:900-905` does not consult it. For
+  > an ad whose chunk read failed, `existingData` is undefined,
+  > `existingMatchType` is undefined, and the lock does not fire —
+  > the ad's `matchType`/`generationId` are then re-derived from the
+  > fresh Meta data, which is **exactly the FR-070 bug**: a failed
+  > read is treated as absence, not as missing information. The
+  > bug is unreachable today only because no learning write consumes
+  > the resulting incorrect matchType; that unreachability is not
+  > correctness. The full audit is in
+  > `specs/969-cumulative-learning/reports/batch-02b-969-report.md`
+  > §1. T018b in `tasks.md` is the Phase 3 task that completes T015.
+
 ### T016 — bounded-read contract tests
 
 12 tests in `boundedLedgerRead.test.ts`. All pass.

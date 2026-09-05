@@ -157,18 +157,44 @@ const p = (name: string) => `lib/__tests__/phase969/${name}`;
     console.log("  ✅ self-test: empty inputs return empty diff");
 }
 
+// Source file with no compiled counterpart — the strongest form of the
+// missing-from-chain case. The guard reads `src/` (source), not `lib/`
+// (compiled), so a `.test.ts` that fails to compile is still seen.
+// Without this guarantee, a test file with a TS error would be both
+// unregistered and uncompiled, and the guard would silently report OK.
+// This self-test pins the comparison on the *expected* chain entry
+// (the lib/ path), so even if the source fails to compile, the guard
+// sees the gap.
+{
+    // `src/__tests__/phase969/never-compiled.test.ts` exists on disk,
+    // but its compiled `lib/__tests__/phase969/never-compiled.test.js`
+    // is NOT in the chain. (The chain entry would be added when the
+    // test file is wired up.)
+    const files = [p("never-compiled.test.js")];
+    const chain: string[] = [];
+    const diff = diffTestRegistrations(files, chain);
+    assert.deepEqual(diff.missingFromChain, [p("never-compiled.test.js")],
+        "self-test: source file with no chain entry must be reported " +
+        "even if its .js has never been built");
+    console.log("  ✅ self-test: source with no compiled counterpart still detected");
+}
+
 // ─── Production check — filesystem against chain ─────────────────
 
-const files = listPhase969TestFiles().map((f) => p(f.replace(/\.ts$/, ".js")));
+const filesOnDisk = listPhase969TestFiles();
 const chainEntries = listPhase969ChainEntries();
+// Map src/*.test.ts → expected lib/*.test.js for comparison with chain.
+const files = filesOnDisk.map((f) => p(f.replace(/\.ts$/, ".js")));
 const productionDiff = diffTestRegistrations(files, chainEntries);
 
 console.log("──────────────────────────────────────────────────────────────────────────────");
 console.log("Phase 969 test-registration guard — production check");
 console.log("──────────────────────────────────────────────────────────────────────────────");
-console.log(`Files on disk (${files.length}):`);
+console.log(`Files on disk — read from src/__tests__/phase969/ (${filesOnDisk.length}):`);
+for (const f of filesOnDisk) console.log(`  src/__tests__/phase969/${f}`);
+console.log(`Expected chain entries — .ts→.js mapping, lib path (${files.length}):`);
 for (const f of files) console.log(`  ${f}`);
-console.log(`Chain entries (${chainEntries.length}):`);
+console.log(`Chain entries parsed from functions/package.json (${chainEntries.length}):`);
 for (const e of chainEntries) console.log(`  ${e}`);
 console.log("──────────────────────────────────────────────────────────────────────────────");
 
