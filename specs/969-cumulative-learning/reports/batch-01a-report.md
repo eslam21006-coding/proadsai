@@ -3,6 +3,15 @@
 **Branch**: `969-cumulative-learning`
 **Date**: 2026-09-05
 **Files touched**: `specs/969-cumulative-learning/spec.md` only.
+
+> **REVISED.** Four defects were found in this stage on review and fixed in a
+> follow-up commit; a stale Assumption was corrected at the same time. The stat
+> block and the id lists below describe the ORIGINAL 1A commit and are left as
+> written for the record. See **`batch-01a-revision-report.md`** for what changed:
+> FR-074b (cross-group merge), FR-074c (linked row with no hash), FR-011/FR-012/
+> FR-012a/FR-013/FR-014 scoping, FR-036c (creative state derivation), SC-029a,
+> SC-029b, and the removed-cooldown Assumption. The left-alone table below has
+> been corrected in place for FR-011–FR-014.
 **Not touched**: no file under `functions/src/` or `src/`, no test, no `package.json`.
 
 ```
@@ -155,7 +164,8 @@ be recognised as superseded rather than binding.
 | Id | Why unchanged |
 |---|---|
 | **FR-001–FR-007** | Sealing context is per-evaluation and rides on the ad row's ledger entry. Whether the *contribution* is counted per creative does not change what a sealed target is. Stage 1B revisits FR-005a–d and FR-006 for the separate reason of splitting sealing from efficiency contribution. |
-| **FR-008–FR-014** | Operational status is deliberately **per ad row** — it is the owner's action list, and the owner pauses individual ads, not abstract creatives. Re-basing it to the creative would break the action list. FR-011(a) is narrowed in Stage 1B for a different reason. |
+| **FR-008–FR-010** | Operational status is deliberately **per ad row** — it is the owner's action list, and the owner pauses individual ads, not abstract creatives. Re-basing it to the creative would break the action list. |
+| ~~**FR-011–FR-014**~~ | **CORRECTED IN THE 1A REVISION — this row was wrong.** These are about the **sealed learning result**, not the operational status, so the FR-008–FR-010 reasoning never applied to them. FR-013 in particular still carried the per-**ad** counting invariant that FR-073 re-bases. All four are now scoped explicitly: FR-011 (row-scoped detection, creative-scoped effect, per trigger), FR-012 + new FR-012a (one sealed target per creative), FR-013 (re-based to the creative), FR-014 (creative-scoped effect, row-scoped mechanism). FR-011(a) is still narrowed in Stage 1B for the separate efficiency reason. |
 | **FR-015, FR-017–FR-023** | Accumulation mechanics (add / no-op / withdraw-then-add, idempotency, no-shrink, raw sums). These operate on ledger entries, which stay per row. The roll-up is a counting rule layered above them, not a change to them. |
 | **FR-024, FR-025** | Preserved measures and existing partitions. Amendment 1 changes the unit counted, not the measures or the partition names. |
 | **FR-026** | Verdict engine untouched — still true. |
