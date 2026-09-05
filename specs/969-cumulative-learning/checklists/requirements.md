@@ -15,11 +15,11 @@
 ## Requirement Completeness
 
 - [x] No [NEEDS CLARIFICATION] markers remain
-- [ ] **Requirements are testable and unambiguous** — ❌ **FAILS as of Iteration 5.** Three requirements now carry **deliberate, stated limitations that are undetectable by construction**, so they are unambiguous but **not testable**: FR-074b's unlinked split (two hash groups that are one creative stay two, and *nothing in this feature detects it*), FR-074e's hashless propagated row (attribution *frozen and unverifiable* — no direct match can ever appear for it), and FR-051e's governed-metric-name constraint (*stated but not enforced*, because the automated guard does not walk the backend tree). Each is a known, accepted gap rather than an oversight, and each is recorded in the spec as such — but a passing tick here would claim test coverage that cannot exist. Marked failing so the gap is visible to planning rather than absorbed.
+- [ ] **Requirements are testable and unambiguous** — ❌ **FAILS as of Iteration 5, for a precise reason: not because any requirement lacks a criterion, but because the specification deliberately contains three STATED GAPS that are undetectable by construction.** The requirements themselves are all testable — SC-029a asserts FR-074b's merge, FR-074e's three-way precedence ordering is assertable, and SC-028 asserts FR-051e's log restriction. **What cannot be tested is the acknowledged non-guarantee in each limitation block**: that an undetected split has occurred (FR-074b's limitation — *"nothing in this feature detects it"*), that a frozen mis-attribution has occurred (FR-074e's limitation — *"frozen and unverifiable"*), or that a governed metric name has reached a backend log (FR-051e's known enforcement gap — the automated guard does not walk the backend tree, so the constraint is *"stated but not enforced"*). Each gap is deliberate, accepted, and recorded at the point it arises. The tick is withheld because a passing mark would claim coverage that cannot exist **for those three limitation blocks** — not for the requirements that carry them.
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
 - [x] All acceptance scenarios are defined
-- [x] Edge cases are identified — *note*: the edge-case list predates both amendments and does not yet enumerate the creative-level cases (a partially-linked hash group, a hashless propagated row, a split creative's divided conversions, a day revised downward). The requirements that introduce them state their own edge behaviour inline (FR-074b, FR-074e, FR-077a, FR-083), so nothing is unhandled; but the consolidated list is now incomplete relative to the requirements, and is carried into planning as a documentation gap rather than a specification one.
+- [x] Edge cases are identified — the consolidated Edge Cases section was extended in Iteration 5 with the nine creative-level and accrual-level cases the amendments introduce, each pointing at the requirement that handles it. The list is a map, not a duplicate of the handling.
 - [x] Scope is clearly bounded
 - [x] Dependencies and assumptions identified
 
@@ -108,7 +108,11 @@ Two amendments were agreed after the spec was approved, and each went through re
 
 **Success criteria.** SC-008, SC-014 and SC-016 re-based to creatives; SC-017 amended to require the two contending runs arrive by **different routes** and to fail if the lease sits at the orchestrator level; SC-017a, SC-029, SC-029a–c and SC-030 – SC-047 added, covering every requirement introduced by both amendments.
 
-**Checklist re-run.** *Requirements are testable and unambiguous* is now marked **failing**, and *Edge cases are identified* carries a note. See the top of this file.
+**Edge Cases section extended.** Nine creative-level and accrual-level cases added to the consolidated list, each pointing at the requirement that handles it: the unmergeable split (FR-074b), the hashless propagated row (FR-074e), mixed row states in the settings gap (FR-036c), a later row inheriting the sealed target (FR-012a), a fifth conversion arriving on a different row (FR-077), a lower re-observation of a still-open day (FR-083), the seventh missed sync (FR-086), a parent-paused ad (FR-085), and two runs arriving by different routes (FR-054c).
+
+**Post-implementation verification recorded** against FR-083: once per-day figures are stored, compare a day across successive syncs while it is still inside the window and report whether Meta revises downward and by how much. This quantifies the cost the upward-only rule accepts, which is currently visible but unmeasured; a material rate is grounds to revisit the decision deliberately, never to reverse it silently.
+
+**Checklist re-run.** *Requirements are testable and unambiguous* is marked **failing**, for the precise reason that three limitation blocks contain acknowledged non-guarantees that are undetectable by construction — not because any requirement lacks a criterion. *Edge cases are identified* now passes on the extended list.
 
 ### Carried into planning
 

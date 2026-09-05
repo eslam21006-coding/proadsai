@@ -139,6 +139,18 @@ The owner opens the "What's Working" view. The counts shown are all-time counts 
 - **Meta stops returning an ad.** Its existing contribution stands. Absence is not evidence of failure and must never reduce a count.
 - **An angle is seen for the very first time.** Accumulation onto a non-existent record must produce the same result as accumulation onto an empty one.
 
+*Added by Amendments 1 and 2. One line per case; the handling lives in the requirement named, not here.*
+
+- **A creative is split across two hash groups that never merge.** Neither group carries a link, so there is nothing to merge on — FR-074b's stated limitation.
+- **A hashless row carries a propagated link and its source group is later re-linked.** The row does not move with the group and its attribution is frozen — FR-074e's stated limitation.
+- **A creative's rows hold mixed PROVISIONAL and SEALED states during the settings gap.** FR-036c.
+- **A row first appears in a later sync and inherits the creative's sealed target** rather than sealing against the target current at its own first sight. FR-012a.
+- **A creative reaches its fifth conversion on a different ad row from the earlier four.** FR-077, SC-033.
+- **A still-open day is re-observed with a lower figure.** FR-083 (upward-only).
+- **The seventh consecutive missed sync**, where day loss begins. FR-086.
+- **A parent-paused ad never seals via condition (b).** FR-085.
+- **Two runs for one account arrive by different routes** — inline and Cloud Tasks worker. FR-054c.
+
 ---
 
 ## Requirements *(mandatory)*
@@ -294,6 +306,10 @@ The owner opens the "What's Working" view. The counts shown are all-time counts 
     - *What the decision buys*: FR-020's never-decreases guarantee stays **unconditional**. That is the property the whole feature exists to provide — the owner's original requirement was that learning must not reset — and an unconditional guarantee is easier to trust and to test than one carrying an exception. It also makes FR-082's monotonicity claim **secured rather than asserted**, and leaves SC-001, SC-003 and SC-013 needing no qualification.
     - *The accepted cost, stated plainly*: **a day that was over-counted stays over-counted permanently.** Downward revisions from Meta are believed rare; a broken monotonicity guarantee would be permanent. The trade is deliberate.
   - *This is the fourth known inaccuracy, and the only one in the over-count direction* — see FR-082, whose "none can overcount" sentence is corrected there because this rule makes it false.
+  - **POST-IMPLEMENTATION VERIFICATION (required, and recorded here because it cannot be done yet).** The accepted cost of upward-only is currently **visible but unmeasured**: nothing in the system stores a day's figure twice, so no evidence exists of whether Meta revises conversion counts downward, or by how much. This feature is the first thing to store per-day figures, which makes the question answerable **only after implementation**.
+    - *The check*: once per-day figures are being stored, compare a day's recorded value across successive syncs **while that day remains inside the observed window**, and report whether downward revisions occur and at what magnitude.
+    - *What it establishes*: it quantifies the cost this rule accepts. A negligible rate confirms the decision cheaply. **A material downward-revision rate is grounds to revisit the decision — deliberately, with the FR-020 trade re-argued — and never to reverse it silently**, because reversing it would reintroduce the FR-020 breach the rule exists to prevent.
+    - *Why it is written into the specification rather than left in a report*: it is exactly the kind of item that is forgotten because it cannot be done at the time it is decided.
   - *Why this rule exists, and what it removes a dependency on*: the claim that the seven-day preset excludes today's partial day is **the repository's own assertion**, stated twice (`shared.ts:183-186`, `:281-283`) and **never verified against Meta**. It is load-bearing: if it is false, the current day is captured **partial**, and a no-op-on-first-sight rule would freeze it at its partial value **permanently** — not an occasional undercount but a systematic one, every day, on every creative. Making a day revisable until it leaves the window **removes the dependency on that assertion entirely**, because a partial day is corrected on the next sync that still sees it.
   - *It also absorbs the late-attribution caveat*: revisions arriving while the day is still in the window are captured rather than lost. Only revisions arriving after the day leaves the window are missed, which is a strictly smaller exposure than FR-082(2) describes without this rule.
   - *The unverified assertion is still recorded* (FR-082, and the Assumptions), but **the design no longer depends on it**.
