@@ -158,6 +158,11 @@ The owner opens the "What's Working" view. The counts shown are all-time counts 
 - **The seventh consecutive missed sync**, where day loss begins. FR-086.
 - **A parent-paused ad never seals via condition (b).** FR-085.
 - **Two runs for one account arrive by different routes** — inline and Cloud Tasks worker. FR-054c.
+- **Two already-sealed creatives merge while carrying different sealed targets.** The earliest survives. FR-012a (as rephrased), FR-074b.
+- **A merge in which both halves had already contributed an efficiency figure.** Withdraw both, recompute over the union, add one. FR-013a, FR-087(ii).
+- **A creative that has already contributed its efficiency figure is re-attributed.** The figure moves unchanged; it is not recomputed. FR-087(i).
+- **Meta returns no daily row for a day that falls inside an observed window.** The ad did not deliver; the day is not observed, not zero, and this is **not** a gap. FR-085a, FR-086a.
+- **A run cannot acquire the learning lease partway through an otherwise successful sync.** Operational writes have already committed; the run signals failure and is retried. FR-060a.
 
 ---
 
