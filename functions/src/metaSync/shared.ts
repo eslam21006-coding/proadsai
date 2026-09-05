@@ -82,8 +82,6 @@ import {
     missingRequiredFields,
 } from "../funnelSettings.js";
 import {
-    updateHookAggregates,
-    updateVisualAggregates,
     computePatternKey,
     type AdForLearning,
     type HookPerformanceAggregate,
@@ -231,6 +229,13 @@ export interface AdDoc {
     diagnosisAr: string | null;
     evaluatedAt: number;
     schemaVersion: 1;
+    /**
+     * T025: contribution ledger entry. Embedded on the ad row per
+     * data-model.md §2. Records exactly what this row contributed in
+     * the most recent sync that contributed it (FR-016). Absent on
+     * FR-070 failed-read ads (no contribution → no entry).
+     */
+    ledger?: import("../learning/types.js").ContributionLedgerEntry;
 }
 
 const SYNC_SNAPSHOT_RETENTION = 7;
@@ -1046,6 +1051,42 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             keepMetadataUnavailable,
         });
 
+        // T025: if this ad is contributing (inLearnedAds), attach the
+        // contribution ledger entry to the adDoc so the write carries
+        // it. Failed-read ads (inLearnedAds=false) and ads that
+        // withdrew-only get no entry — the merge write preserves any
+        // prior entry on disk if present.
+        //
+        // The hookAngle and patternKey fields on the entry are filled
+        // after the post-pass below resolves them. Until then we write
+        // nulls — the entry is structurally valid and the fields get
+        // overwritten on the next sync.
+        const ledger = decision.inLearnedAds && decision.adDoc.generationId && (decision.adDoc.matchType === "auto_hash" || decision.adDoc.matchType === "manual")
+            ? {
+                creativeKey: ad.id, // T021 deferred: ad.id fallback for now
+                angleKey: null,
+                patternKey: null,
+                bucket: objective.bucket,
+                geoTier: ctx.geoTier,
+                audienceType: ctx.audienceType,
+                contributedValues: {
+                    ctrLink: metrics.ctrLink,
+                    cpm: metrics.cpm3d,
+                    verdictMark: verdictResult.verdict,
+                },
+                measurementInputs: {
+                    spend3d: metrics.spend3d,
+                    conversions3d: metrics.conversions3d,
+                },
+                efficiencyContributed: false,
+                efficiencyValue: null,
+                schemaVersion: 1,
+            }
+            : undefined;
+        if (ledger) {
+            decision.adDoc.ledger = ledger;
+        }
+
         writes.push({
             ref: adAccountRef.collection("adPerformance").doc(ad.id),
             data: decision.adDoc as unknown as Record<string, unknown>,
@@ -1077,6 +1118,13 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             // performance.
             learnedAds.push({
                 adId: ad.id,
+                // T021: creativeKey — the unit of evidence for learning
+                // (FR-073). Until the worker integrates
+                // `groupIntoCreatives` end-to-end, we use adId as the
+                // creative identity, which collapses to per-row
+                // semantics. The aggregator falls back to adId when
+                // creativeKey is absent, so this is safe.
+                creativeKey: ad.id,
                 generationId: decision.adDoc.generationId ?? null,
                 matchType: decision.adDoc.matchType ?? null,
                 metadataAvailable: decision.adDoc.metadataAvailable ?? false,

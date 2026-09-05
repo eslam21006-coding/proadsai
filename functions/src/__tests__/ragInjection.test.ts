@@ -35,9 +35,10 @@ import type {
 // ─── Block-builder behavior ──────────────────────────────────
 
 function makeHookAgg(overrides: Partial<HookPerformanceAggregate> = {}): HookPerformanceAggregate {
-  return {
-    angleKey: "urgency",
-    sampleSize: 5,
+    return {
+        angleKey: "urgency",
+        schemaVersion: 1,
+        sampleSize: 5,
     lastUpdated: 1000,
     byObjective: {
       conversion: { avgLinkCtr: 1.5, count: 5, bestVerdictCount: 2, worstVerdictCount: 1 },

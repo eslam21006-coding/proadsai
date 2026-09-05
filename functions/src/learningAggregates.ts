@@ -31,6 +31,14 @@ export type LearningVerdict = "🟢" | "🟡" | "🔴" | "🛟" | "⏳";
 /** Mirrors the data-model §5 hookPerformance aggregate. */
 export interface HookPerformanceAggregate {
     angleKey: string;
+    /**
+     * T024: schema version. Records below the current version are
+     * read as absent by the worker (FR-042/43). Workers emit the
+     * current version on every write. Optional in the type for
+     * backward compatibility with test fixtures that pre-date T024 —
+     * readers treat a missing value as version 0 (below current).
+     */
+    schemaVersion?: number;
     sampleSize: number;
     lastUpdated: number;
     byObjective: {
@@ -61,6 +69,12 @@ export interface HookPerformanceAggregate {
 
 /** Mirrors the data-model §6 visualPerformance aggregate. */
 export interface VisualPerformanceAggregate {
+    /**
+     * T024: schema version. Records below the current version are
+     * read as absent by the worker (FR-042/43). Workers emit the
+     * current version on every write. Optional for backward compatibility.
+     */
+    schemaVersion?: number;
     patternKey: string;
     sampleSize: number;
     lastUpdated: number;
@@ -93,6 +107,13 @@ export interface VisualPerformanceAggregate {
 /** Input shape — the worker builds this list from its ad loop. */
 export interface AdForLearning {
     adId: string;
+    /**
+     * T021: creative key. The unit of evidence for learning (FR-073).
+     * Set by the worker from `groupIntoCreatives`. When absent (older
+     * test fixtures), the aggregator falls back to per-row identity so
+     * the test surface stays compatible.
+     */
+    creativeKey?: string;
     /** Generation id (matched). Required for hook + pattern aggregates. */
     generationId: string | null;
     /** Match type from the worker — `null` ads are SKIPPED. */
@@ -301,6 +322,7 @@ function round2(n: number): number {
 function emptyHookAggregateFor(angleKey: string): HookPerformanceAggregate {
     return {
         angleKey,
+        schemaVersion: 1,
         sampleSize: 0,
         lastUpdated: 0,
         byObjective: {
@@ -445,6 +467,7 @@ interface VisualAccumulator {
 function emptyVisualAggregateFor(patternKey: string): VisualPerformanceAggregate {
     return {
         patternKey,
+        schemaVersion: 1,
         sampleSize: 0,
         lastUpdated: 0,
         byObjective: {

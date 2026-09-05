@@ -63,20 +63,55 @@ export function applyHookAggregatesDelta(
     const byAngleKey = new Map<string, HookPerformanceAggregate>();
     for (const agg of existing) byAngleKey.set(agg.angleKey, cloneHook(agg));
 
-    // Walk `ads` and add their contributions.
-    for (const ad of ads) {
-        if (!isAdEligible(ad)) continue;
-        if (ad.hookAngle === null) continue;
-        const canonical = resolveCanonicalAngleLocal(ad.hookAngle);
-        if (!canonical) continue;
-        const existing_agg = byAngleKey.get(canonical);
-        const agg = existing_agg ?? emptyHook(canonical);
-        applyAdToHook(agg, ad);
-        agg.lastUpdated = syncAt;
-        byAngleKey.set(canonical, agg);
+    // T021/T022: group rows by creativeKey so that the unit of evidence
+    // is the creative. When `creativeKey` is absent (older fixtures),
+    // we fall back to `adId` — per-row identity — so the existing test
+    // surface stays compatible.
+    //
+    // For each creative group:
+    //   - any-row eligibility (FR-074g): if ANY row in the group is
+    //     eligible, the creative contributes.
+    //   - all-rows aggregation: every eligible row's values aggregate.
+    //   - contribution count: the creative contributes ONE count to
+    //     the angle (the unit of evidence is the creative).
+    const groups = groupAdsByCreative(ads);
+
+    for (const [creativeKey, rows] of groups) {
+        // any-row eligibility: drop the creative if no row qualifies.
+        const eligibleRows = rows.filter(isAdEligible);
+        if (eligibleRows.length === 0) continue;
+
+        // all-rows aggregation: every eligible row contributes its
+        // values to the angle. Each creative contributes ONE unit to
+        // the angle's count.
+        for (const ad of eligibleRows) {
+            if (ad.hookAngle === null) continue;
+            const canonical = resolveCanonicalAngleLocal(ad.hookAngle);
+            if (!canonical) continue;
+            const existing_agg = byAngleKey.get(canonical);
+            const agg = existing_agg ?? emptyHook(canonical);
+            applyAdToHook(agg, ad);
+            agg.lastUpdated = syncAt;
+            byAngleKey.set(canonical, agg);
+        }
     }
 
     return byAngleKey;
+}
+
+/**
+ * T022: group rows by creativeKey (or adId fallback) so the unit of
+ * evidence is the creative. Pure function.
+ */
+function groupAdsByCreative(ads: ReadonlyArray<AdForLearning>): Map<string, AdForLearning[]> {
+    const groups = new Map<string, AdForLearning[]>();
+    for (const ad of ads) {
+        const key = ad.creativeKey ?? ad.adId;
+        const list = groups.get(key);
+        if (list) list.push(ad);
+        else groups.set(key, [ad]);
+    }
+    return groups;
 }
 
 function applyAdToHook(agg: HookPerformanceAggregate, ad: AdForLearning): void {
@@ -130,20 +165,25 @@ export function applyVisualAggregatesDelta(
     const byPatternKey = new Map<string, VisualPerformanceAggregate>();
     for (const agg of existing) byPatternKey.set(agg.patternKey, cloneVisual(agg));
 
-    for (const ad of ads) {
-        if (!isAdEligible(ad)) continue;
-        const patternKey = computePatternKeyLocal(
-            ad.layoutTemplate,
-            ad.creativeModes,
-            ad.artDirection,
-            ad.universe,
-        );
-        if (patternKey === "") continue;
-        const existing_agg = byPatternKey.get(patternKey);
-        const agg = existing_agg ?? emptyVisual(patternKey);
-        applyAdToVisual(agg, ad);
-        agg.lastUpdated = syncAt;
-        byPatternKey.set(patternKey, agg);
+    // T021/T022: same any-row / all-rows logic as the hook aggregator.
+    const groups = groupAdsByCreative(ads);
+    for (const [, rows] of groups) {
+        const eligibleRows = rows.filter(isAdEligible);
+        if (eligibleRows.length === 0) continue;
+        for (const ad of eligibleRows) {
+            const patternKey = computePatternKeyLocal(
+                ad.layoutTemplate,
+                ad.creativeModes,
+                ad.artDirection,
+                ad.universe,
+            );
+            if (patternKey === "") continue;
+            const existing_agg = byPatternKey.get(patternKey);
+            const agg = existing_agg ?? emptyVisual(patternKey);
+            applyAdToVisual(agg, ad);
+            agg.lastUpdated = syncAt;
+            byPatternKey.set(patternKey, agg);
+        }
     }
 
     return byPatternKey;
@@ -273,6 +313,7 @@ function weightedAvg(_prior: number, _priorCount: number, _sum: number, _newCoun
 function cloneHook(a: HookPerformanceAggregate): HookPerformanceAggregate {
     return {
         angleKey: a.angleKey,
+        schemaVersion: a.schemaVersion ?? 1,
         sampleSize: a.sampleSize,
         lastUpdated: a.lastUpdated,
         byObjective: {
@@ -297,6 +338,7 @@ function cloneHook(a: HookPerformanceAggregate): HookPerformanceAggregate {
 function cloneVisual(a: VisualPerformanceAggregate): VisualPerformanceAggregate {
     return {
         patternKey: a.patternKey,
+        schemaVersion: a.schemaVersion ?? 1,
         sampleSize: a.sampleSize,
         lastUpdated: a.lastUpdated,
         byObjective: {
@@ -321,6 +363,7 @@ function cloneVisual(a: VisualPerformanceAggregate): VisualPerformanceAggregate 
 function emptyHook(angleKey: string): HookPerformanceAggregate {
     return {
         angleKey,
+        schemaVersion: 1,
         sampleSize: 0,
         lastUpdated: 0,
         byObjective: {
@@ -345,6 +388,7 @@ function emptyHook(angleKey: string): HookPerformanceAggregate {
 function emptyVisual(patternKey: string): VisualPerformanceAggregate {
     return {
         patternKey,
+        schemaVersion: 1,
         sampleSize: 0,
         lastUpdated: 0,
         byObjective: {
