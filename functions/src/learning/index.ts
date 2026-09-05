@@ -11,8 +11,8 @@
 export * from "./types.js";
 
 // ─── Phase 2 — creative grouping + learning lease ───────────────────
-// export * from "./creativeGrouping.js";   // FR-073, FR-074, FR-074a-g
-// export * from "./learningLease.js";      // FR-054–FR-065 (new collection)
+export * from "./creativeGrouping.js";   // FR-073, FR-074, FR-074a-g
+export * from "./learningLease.js";      // FR-054–FR-065 (new collection)
 
 // ─── Phase 3 — contribution ledger + delta aggregation ─────────────
 // export * from "./contributionLedger.js"; // FR-016, FR-017, FR-018, FR-046

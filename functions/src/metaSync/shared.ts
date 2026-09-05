@@ -89,6 +89,14 @@ import {
     type HookPerformanceAggregate,
     type VisualPerformanceAggregate,
 } from "../learningAggregates.js";
+import {
+    acquireLearningLease,
+    releaseLearningLease,
+    LEARNING_LEASE_TTL_MS,
+} from "../learning/learningLease.js";
+import {
+    readExistingAdDocs,
+} from "../learning/boundedLedgerRead.js";
 
 // ─── Constants ───────────────────────────────────────────────
 
@@ -823,14 +831,42 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // Batch all writes — Firestore batch max 500 ops; chunk if needed.
     const writes: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
 
-    // Batch-load existing adPerformance docs to avoid N+1 reads.
-    // We fetch the entire collection (bounded by the worker's account
-    // scope) — keyed by adId so the loop can read matchType in O(1).
+    // Batch-load existing adPerformance docs for the current sync's
+    // ad batch (FR-067). Replaces the unbounded `collection("adPerformance")
+    // .get()` collection scan that lived here before — that scan's volume
+    // grew with account age and breached SC-023 (read volume bounded by
+    // batch, not account age).
+    //
+    // The bounded read returns:
+    //   - `existingByAdId`: docs that read successfully (whole documents,
+    //     never projections — FR-071, the cascade's `deletedGenerationId`
+    //     and `metadataAvailable` live outside the strict shape the sync
+    //     writes and would be silently dropped by a `.select()`).
+    //   - `failedLedgerReads`: ad IDs whose chunk read failed. These are
+    //     NOT conflated with "never contributed" — the per-ad loop
+    //     consults this set and skips writes for those ads (FR-070).
+    //
+    // The unbounded `collection("adPerformance").get()` line is removed
+    // entirely (FR-068) — leaving it would invite a future refactor to
+    // re-introduce the unbounded scan under the new one.
     const existingByAdId = new Map<string, Partial<AdDoc>>();
+    const failedLedgerReads = new Set<string>();
     try {
-        const existingSnap = await adAccountRef.collection("adPerformance").get();
-        for (const d of existingSnap.docs) {
-            existingByAdId.set(d.id, d.data() as Partial<AdDoc>);
+        const adIdRefs = ads.map((ad) =>
+            adAccountRef.collection("adPerformance").doc(ad.id),
+        );
+        // Cast: `readExistingAdDocs` accepts a loose DbLike for testability;
+        // production passes the real Firestore handle, which is structurally
+        // compatible (it has `getAll(...)`).
+        const boundedResult = await readExistingAdDocs(getDb() as unknown as Parameters<typeof readExistingAdDocs>[0], adIdRefs);
+        for (const [id, data] of boundedResult.byId) {
+            existingByAdId.set(id, data as Partial<AdDoc>);
+        }
+        for (const id of boundedResult.failedIds) failedLedgerReads.add(id);
+        if (boundedResult.failedIds.size > 0) {
+            errors.push(
+                `load existing adPerformance: ${boundedResult.failedIds.size} ad(s) in failed chunks (FR-070)`,
+            );
         }
     } catch (e: unknown) {
         errors.push(`load existing adPerformance failed: ${(e as Error).message}`);
@@ -1184,6 +1220,10 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // Commit in chunks of 450. FIX 5B: use `merge: true` so the sync
     // does NOT wipe fields the delete cascade wrote (e.g.
     // `deletedGenerationId`, `deletedGenerationAt`, `matchedManuallyAt`).
+    // These are the **operational status writes** FR-009 / FR-060a require
+    // to be committed BEFORE the learning-write lease is attempted — the
+    // owner-action list must reflect today's sync even when learning
+    // cannot proceed.
     for (let i = 0; i < writes.length; i += 450) {
         const chunk = writes.slice(i, i + 450);
         const batch = getDb().batch();
@@ -1191,6 +1231,81 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         await batch.commit().catch((e: unknown) => {
             errors.push(`batch commit failed: ${(e as Error).message}`);
         });
+    }
+
+    // ─── Learning-write lease (FR-054a, FR-060a) ──────────────────────
+    //
+    // Per FR-060a, the lease MUST be acquired AFTER the operational
+    // status writes commit. Signalling failure does not roll back a
+    // committed Firestore write, so the operational writes stand; the
+    // retry re-applies them harmlessly (FR-055's rationale already
+    // establishes them as idempotent per-ad overwrites).
+    //
+    // Phase 2 wires the acquire/release pattern only. The actual
+    // learning write between acquire and release lands in Phase 3.
+    // Establishing the wire-up here means Phase 3's diff is the body
+    // between acquire and release — not the ordering.
+    //
+    // runId is the unique-per-run token FR-057 / FR-058 require for
+    // holder-identity verification. The lease is keyed per ACCOUNT
+    // (FR-054a, FR-054b) — Phase 970's per-owner guard at
+    // `metaSync/lease.ts` is unmodified and is NOT reached by this code
+    // path (the spec records the discrimination explicitly).
+    const learningRunId = `${userId}_${workspaceId}_${accountId}_${nowMs}`;
+    const learningLeaseAcquired = await acquireLearningLease(
+        // Cast: lease primitive accepts loose DbLike for testability; production
+        // passes the real Firestore handle (structurally compatible — `doc`,
+        // `runTransaction` are present).
+        getDb() as unknown as Parameters<typeof acquireLearningLease>[0],
+        userId,
+        accountId,
+        learningRunId,
+        nowMs,
+        LEARNING_LEASE_TTL_MS,
+    );
+    if (!learningLeaseAcquired.ok) {
+        // FR-060 + FR-060a: signal failure. Operational writes have
+        // already committed; the surrounding Cloud Tasks / manual caller
+        // decides how to retry (the existing task retry config at
+        // `worker.ts:33-37` is sufficient — 3 attempts, 30–600 s backoff).
+        //
+        // Manual path: the wrapper that called us surfaces the bilingual
+        // "already refreshing" message of FR-065. Scheduled path: the
+        // throwing function is the signal Cloud Tasks acts on for retry.
+        errors.push(
+            `learning lease held by ${learningLeaseAcquired.holderUid} ` +
+            `until ${new Date(learningLeaseAcquired.expiresAtMs).toISOString()} ` +
+            `(FR-054a, FR-060)`,
+        );
+        // Release was never acquired — return early WITHOUT running the
+        // prune/patch tail, so the "failed" status the surrounding caller
+        // sees is unambiguous.
+        return {
+            ok: false,
+            status: "failed",
+            counts: emptyCounts(),
+            errors,
+            needsReauth: false,
+            lastMetaSyncAt: nowMs,
+        };
+    }
+    // Lease is held. Phase 3 inserts the learning-write body here
+    // (FR-016, FR-021). Until then, immediately release — the lease is
+    // acquired and released within the same run because there is no
+    // learning write yet to protect.
+    try {
+        // ─── Placeholder for the Phase 3 learning write. ───
+        // Intentionally empty in Phase 2.
+        void failedLedgerReads; // referenced for Phase 3 — see T015.
+    } finally {
+        // FR-058: release verifies holder identity. A run that lost its
+        // lease to a takeover cannot release its successor's lease.
+        await releaseLearningLease(
+            getDb() as unknown as Parameters<typeof releaseLearningLease>[0],
+            userId,
+            accountId,
+            learningRunId,
+        );
     }
 
     // 11. Prune to last 7 snapshots.
