@@ -46,7 +46,7 @@ design choices that remained open at requirement level.
 | **II. Selected mode MUST be obeyed** | **N/A** | No mode/format selection is touched. |
 | **III. Launch surface frozen** | **PASS** | Additive to an existing lane; no new combination is enabled. |
 | **IV. Behavior contracts beat judgment** | **PASS** | 56 success criteria; every requirement named in the 1C pass carries one. Several are written to *discriminate* (SC-030, SC-031, SC-039, SC-040, SC-046, SC-048). |
-| **V. Arabic quality first-class** | **PASS, and nothing to do** | The feature introduces **zero** new owner-visible strings. FR-065's existing bilingual message is unchanged. The FR-059/FR-065 wording tension is recorded and deferred to an owner decision, not resolved by a silent edit. |
+| **V. Arabic quality first-class** | **PASS, with work** | This feature introduces **one** new owner-visible string: **FR-041's multi-funnel indication**, which has nothing to display before this feature because cross-funnel evidence does not exist until it ships. Delivered by **T056** in English and simple Fusha, asserted by **SC-010** and **SC-021**. FR-065's existing bilingual message is unchanged. The FR-059/FR-065 wording tension is recorded and deferred to an owner decision, not resolved by a silent edit. |
 | **VI. Hidden layers MUST be auditable** | **PASS** | FR-051a–e layered auditability; the ledger is the per-row audit trail; FR-076's four-way provenance breakdown and FR-086's days-lost count are the two new signals. |
 | **VII. No silent override without rule, signal, trace** | **PASS** | Every fallback is named: propagation provenance (FR-074e), merge (FR-074b), upward-only revision (FR-083), lease abort (FR-064). |
 | **VIII. Cost discipline** | **PASS** | **Zero** additional Graph calls (FR-081, SC-037): the per-day rows are already fetched and discarded. Reads become *cheaper* — FR-068 removes an unbounded collection scan. |
@@ -94,6 +94,8 @@ specs/969-cumulative-learning/
 ```text
 functions/src/
 ├── learning/                          # NEW — the feature's own module
+│   ├── index.ts                       # barrel re-export
+│   ├── types.ts                       # shared feature types (data-model.md)
 │   ├── creativeGrouping.ts            # FR-073, FR-074, FR-074a–g
 │   ├── contributionLedger.ts          # FR-016, FR-017, FR-018, FR-046
 │   ├── conversionAccrual.ts           # FR-081–FR-086a
@@ -110,7 +112,9 @@ functions/src/
 ├── getTopWinners.ts                   # MODIFIED — read the new record shape (FR-033)
 └── __tests__/                         # NEW test files, each registered in package.json
 
-src/                                   # Frontend: no change required by this feature
+src/
+└── i18n.tsx                           # MODIFIED — FR-041's multi-funnel indication
+                                       #   (en + simple Fusha). The ONLY frontend change.
 ```
 
 **Structure Decision**: a new `functions/src/learning/` module rather than growth
@@ -122,10 +126,15 @@ in `shared.ts` touch Firestore. This keeps the constitution's auditability princ
 cheap to satisfy and lets the discriminating success criteria (SC-030, SC-040,
 SC-046, SC-048) run without emulators.
 
-## Implementation Phases
+## Implementation Tracks
 
-Ordered so each phase is independently verifiable and the highest-risk item is not
+Ordered so each track is independently verifiable and the highest-risk item is not
 last.
+
+> **These are TRACKS, not the phases in `tasks.md`.** `tasks.md` is organised by
+> **user story**; the table below is organised by **implementation order**. They do
+> not correspond one-to-one — track 3 is not tasks' Phase 3. The mapping is given in
+> the rightmost column.
 
 | # | Phase | Delivers | Key requirements | Gate |
 |---|---|---|---|---|
