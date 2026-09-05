@@ -66,6 +66,39 @@ export const metaSyncAccountWorker = onTaskDispatched(
             nowMs: typeof payload.nowMs === "number" ? payload.nowMs : Date.now(),
         });
 
+        // PHASE 970 (BATCH 5) — first-successful-Phase-14-run evidence
+        // for the FANNED-OUT leg. Each Cloud Tasks task emits this
+        // log line server-side, indexed under the deployed
+        // `function_name="metaSyncAccountWorker"`. The on-call
+        // engineer's runbook query (see POST_DEPLOY_RUNBOOK.md §4)
+        // matches THIS line, not the one inside `runFullSync`.
+        //
+        // One log per fanned-out workspace — every workspace's
+        // counts land in Cloud Logging, which is the load-bearing
+        // property the user called out. The browser-side
+        // `console.log` in `App.tsx` is for the inline workspace
+        // only; the fan-out workspaces never touch the browser, so
+        // this server-side log is the only evidence the on-call
+        // engineer has for them.
+        console.log(
+            "📊 [Batch 5] First-successful-Phase-14-run evidence (fanned-out worker):",
+            JSON.stringify({
+                ownerUid: payload.userId,
+                workspaceId: payload.workspaceId,
+                accountId: payload.accountId,
+                trigger: payload.trigger || "scheduled",
+                ok: result.ok,
+                status: result.status,
+                counts: {
+                    ads: result.counts.ads,
+                    matched: result.counts.matched,
+                    ambiguous: result.counts.ambiguous,
+                    unmatched: result.counts.unmatched,
+                },
+                errorCount: result.errors.length,
+            }),
+        );
+
         if (!result.ok) {
             // Throw so Cloud Tasks retries (up to maxAttempts).
             // The sync body has already marked the connection as needsReauth

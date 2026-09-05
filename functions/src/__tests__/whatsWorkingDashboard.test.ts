@@ -171,22 +171,87 @@ test("recent verdicts: sorted by evaluatedAt DESC", () => {
     assert.deepEqual(recentVerdictsSorted(ads), ["d", "b", "c", "a"]);
 });
 
-// ─── Sync cooldown math ───────────────────────────────────────
+// ─── Sync cooldown (Batch-4: removed, replaced with frozen constants) ─
 
-test("sync cooldown: canSyncNow=false within 1h of last sync", () => {
-    const lastSyncAt = Date.now() - 30 * 60 * 1000; // 30 min ago
-    const cooldownMs = 60 * 60 * 1000;
-    const cooldownEndsAt = lastSyncAt + cooldownMs;
-    const canSyncNow = cooldownEndsAt <= Date.now();
-    assert.equal(canSyncNow, false);
+/**
+ * PHASE 970 (BATCH 4) — the 1-hour cooldown that lived at `whatsWorkingDashboard.ts:355-359`
+ * is removed. The dashboard now emits `canSyncNow: true` and `cooldownEndsAt: null`
+ * as frozen constants for one release, per §9 decision 2 of the investigation
+ * report (kept so cached-JS clients that still read those fields render the
+ * button as enabled; deleted in Batch 5+). The rate-limit guard that
+ * suppresses a second concurrent press lives at the orchestration layer
+ * (`metaSync/lease.ts`), not at the dashboard.
+ *
+ * These two tests replace the deleted cooldown-math tests (formerly lines
+ * 176 and 184). They assert the frozen shape directly by reading the
+ * `whatsWorkingDashboard.ts` source — fast, no Firestore stub needed.
+ */
+test("PHASE 970 Batch 4 — SyncStatus cooldown fields are FROZEN literals, not derived from lastMetaSyncAt", () => {
+    // Read the source to make sure the cooldown gate is gone. This
+    // catches a future refactor that re-introduces a date-based cooldown
+    // — the failure mode the investigation report called out as
+    // can't-degrade-into-a-cooldown.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("node:fs");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const path = require("node:path");
+    // When node:test compiles this .ts file to lib/__tests__/, the
+    // src tree lives at <repo>/src/. The compiled test sits at
+    // <repo>/lib/__tests__/, so we step up two levels into <repo>
+    // and into src/.
+    const srcPath = path.join(__dirname, "..", "..", "src", "whatsWorkingDashboard.ts");
+    const src = fs.readFileSync(srcPath, "utf8");
+
+    // SYNC_COOLDOWN_MS const must be gone — a leftover const that is
+    // unreferenced is a footgun for the next person.
+    assert.equal(
+        /const\s+SYNC_COOLDOWN_MS\s*=/.test(src),
+        false,
+        "SYNC_COOLDOWN_MS const must be removed (Batch 4)",
+    );
+
+    // The frozen literals are present.
+    assert.match(
+        src,
+        /canSyncNow:\s*true/,
+        "SyncStatus.canSyncNow must be a frozen literal `true`",
+    );
+    assert.match(
+        src,
+        /cooldownEndsAt:\s*null/,
+        "SyncStatus.cooldownEndsAt must be a frozen literal `null`",
+    );
+
+    // The gate computation formula `lastSyncAt + SYNC_COOLDOWN_MS`
+    // must be gone.
+    assert.equal(
+        /lastSyncAt\s*\+\s*SYNC_COOLDOWN_MS/.test(src),
+        false,
+        "no `lastSyncAt + SYNC_COOLDOWN_MS` cooldown formula may remain",
+    );
 });
 
-test("sync cooldown: canSyncNow=true after 1h", () => {
-    const lastSyncAt = Date.now() - 2 * 60 * 60 * 1000; // 2h ago
-    const cooldownMs = 60 * 60 * 1000;
-    const cooldownEndsAt = lastSyncAt + cooldownMs;
-    const canSyncNow = cooldownEndsAt <= Date.now();
-    assert.equal(canSyncNow, true);
+test("PHASE 970 Batch 4 — canSyncNow/cooldownEndsAt are not gated by lastMetaSyncAt", () => {
+    // Property test in disguise: even if a caller passes a lastMetaSyncAt
+    // that *would* have triggered the pre-fix cooldown, the post-fix
+    // shape is constant. The pure helpers don't carry the logic (it was
+    // deleted), so the strongest thing we can assert is the SyncStatus
+    // shape. We re-assert by reading the interface declaration.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("node:fs");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const path = require("node:path");
+    const src = fs.readFileSync(
+        path.join(__dirname, "..", "..", "src", "whatsWorkingDashboard.ts"),
+        "utf8",
+    );
+
+    // Fields still exist on the SyncStatus interface (frozen, deprecated).
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const m = src.match(/interface\s+SyncStatus\s*{([\s\S]*?)\n}/);
+    assert.ok(m, "SyncStatus interface must still exist");
+    assert.match(m[1], /canSyncNow:\s*boolean/);
+    assert.match(m[1], /cooldownEndsAt:\s*number\s*\|\s*null/);
 });
 
 // ─── makeCountAr / makeSpendLabel strings (mirror the backend) ──

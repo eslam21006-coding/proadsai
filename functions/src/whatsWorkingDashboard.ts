@@ -88,7 +88,15 @@ const HOOK_ANGLE_DISPLAY_AR: Record<string, string> = {
 const HOOK_ICON_DATA_GATE = 3;            // min conversion ads to show an icon
 const VISUAL_ICON_DATA_GATE = 3;          // min conversion ads to show an icon
 const HOOK_ICON_WEAK_THRESHOLD = 0.75;    // ≤ 75% of account avg → ⚠️
-const SYNC_COOLDOWN_MS = 60 * 60 * 1000;   // 1 hour
+// PHASE 970 (BATCH 4) — removed `SYNC_COOLDOWN_MS`. The pre-fix
+// 1-hour cooldown is gone; the new in-flight guard
+// (`metaSync/lease.ts`) handles concurrent-press suppression at the
+// orchestration layer. This file emits the legacy field names
+// (`canSyncNow`, `cooldownEndsAt`) as FROZEN constants for one
+// release so cached JS clients that still read them render the
+// button as always-enabled. They are annotated as deprecated and are
+// slated for deletion in the next phase (Batch 5+). See
+// investigation report §8.4 + §9 decision 2.
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -97,6 +105,12 @@ interface DashboardRequest {
     accountId: string;
 }
 
+/**
+ * @deprecated `canSyncNow` and `cooldownEndsAt` are FROZEN constants
+ * (always `true` / `null`) for one release — see the note above.
+ * The frontend has stopped reading them; they exist only for
+ * cached-JS clients. Removal in the next phase per §9 decision 2.
+ */
 interface SyncStatus {
     lastMetaSyncAt: number | null;
     nextScheduledSyncAt: number | null;
@@ -352,21 +366,22 @@ export async function getWhatsWorkingDashboardImpl(
         const lastSyncAt = typeof connData.lastMetaSyncAt === "number"
             ? connData.lastMetaSyncAt
             : null;
-        const now = Date.now();
-        const cooldownEndsAt = lastSyncAt && (lastSyncAt + SYNC_COOLDOWN_MS) > now
-            ? lastSyncAt + SYNC_COOLDOWN_MS
-            : null;
-        const canSyncNow = cooldownEndsAt === null;
         const nextScheduledSyncAt = lastSyncAt ? lastSyncAt + 24 * 60 * 60 * 1000 : null;
         const connection: SyncStatus["connection"] = needsReauth
             ? "needs_reauth"
             : (connected ? "connected" : "disconnected");
+        // PHASE 970 (BATCH 4) — `canSyncNow` and `cooldownEndsAt` are
+        // frozen literal constants on this release. The button is
+        // always enabled (the press path is rate-limit-guarded by
+        // the in-flight lease instead). The legacy shapes remain in
+        // the response payload so cached JS clients that still read
+        // them render correctly. Removal in Batch 5+.
         const syncStatus: SyncStatus = {
             lastMetaSyncAt: lastSyncAt,
-            nextScheduledSyncAt: nextScheduledSyncAt,
+            nextScheduledSyncAt,
             connection,
-            canSyncNow,
-            cooldownEndsAt,
+            canSyncNow: true,
+            cooldownEndsAt: null,
         };
 
         // ─── Summary strip + strongest angles/visuals + recent verdicts
