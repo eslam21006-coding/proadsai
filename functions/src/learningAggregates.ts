@@ -39,6 +39,14 @@ export interface HookPerformanceAggregate {
      * readers treat a missing value as version 0 (below current).
      */
     schemaVersion?: number;
+    /**
+     * T021: count of distinct creatives that have contributed to
+     * this angle (FR-036, FR-073). One creative = one count, regardless
+     * of how many rows it carries. Distinct from `sampleSize` (rows)
+     * and the per-bucket `count` fields (also rows). Optional for
+     * backward compatibility with older fixtures.
+     */
+    creativeCount?: number;
     sampleSize: number;
     lastUpdated: number;
     byObjective: {
@@ -179,6 +187,17 @@ function djb2Hash(s: string): string {
 }
 
 // ─── Hook aggregate ──────────────────────────────────────────
+//
+// `updateHookAggregates` and `updateVisualAggregates` were the legacy
+// OVERWRITE-semantics aggregators this feature exists to remove. They
+// were dead code outside tests after Batch 05 (no non-test caller in
+// `functions/src/`). Removed in Batch 06. The additive replacement
+// lives in `learning/aggregateDelta.ts` and is what `shared.ts` calls
+// via the `applyHookAggregatesDelta` / `applyVisualAggregatesDelta`
+// exports. Tests that exercised the OVERWRITE contract
+// (`learningAggregates.test.ts`, `learningIntegration.test.ts`) were
+// retired with the functions — they tested the contract this feature
+// removes, not an earlier contract that still has meaning.
 
 /**
  * Build / update the per-canonical-angle hook aggregates from the worker's

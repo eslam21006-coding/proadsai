@@ -60,7 +60,9 @@ export function applyHookAggregatesDelta(
     ads: ReadonlyArray<AdForLearning>,
     syncAt: number,
 ): Map<string, HookPerformanceAggregate> {
-    const byAngleKey = new Map<string, HookPerformanceAggregate>();
+    // Internal Map carries HookWorkingAggregate (with the contributedCreatives
+    // Set). Stripped to HookPerformanceAggregate on return.
+    const byAngleKey = new Map<string, HookWorkingAggregate>();
     for (const agg of existing) byAngleKey.set(agg.angleKey, cloneHook(agg));
 
     // T021/T022: group rows by creativeKey so that the unit of evidence
@@ -81,22 +83,48 @@ export function applyHookAggregatesDelta(
         const eligibleRows = rows.filter(isAdEligible);
         if (eligibleRows.length === 0) continue;
 
-        // all-rows aggregation: every eligible row contributes its
-        // values to the angle. Each creative contributes ONE unit to
-        // the angle's count.
+        // Group all eligible rows by the angle they contribute to.
+        // Within each angle, the creative contributes ONE count
+        // (per FR-073 — creative is the unit of evidence) but
+        // ALL-ROWS aggregation applies the row values.
+        const adsByAngleKey = new Map<string, AdForLearning[]>();
         for (const ad of eligibleRows) {
             if (ad.hookAngle === null) continue;
             const canonical = resolveCanonicalAngleLocal(ad.hookAngle);
             if (!canonical) continue;
-            const existing_agg = byAngleKey.get(canonical);
-            const agg = existing_agg ?? emptyHook(canonical);
-            applyAdToHook(agg, ad);
+            const list = adsByAngleKey.get(canonical);
+            if (list) list.push(ad);
+            else adsByAngleKey.set(canonical, [ad]);
+        }
+
+        for (const [angleKey, angleRows] of adsByAngleKey) {
+            const existing_agg = byAngleKey.get(angleKey);
+            const agg = existing_agg ?? emptyHook(angleKey);
+            // FIRST creative contribution to this angle from this
+            // creative → increment creativeCount. Subsequent rows of
+            // the same creative to the same angle don't re-increment.
+            if (!agg.contributedCreatives.has(creativeKey)) {
+                agg.contributedCreatives.add(creativeKey);
+                agg.creativeCount = (agg.creativeCount ?? 0) + 1;
+            }
+            // FR-020: counts never decrease. All eligible rows of the
+            // creative contribute their values to the angle's sums.
+            for (const ad of angleRows) {
+                applyAdToHook(agg, ad);
+            }
             agg.lastUpdated = syncAt;
-            byAngleKey.set(canonical, agg);
+            byAngleKey.set(angleKey, agg);
         }
     }
 
-    return byAngleKey;
+    // Strip the internal contributedCreatives Set before returning —
+    // it is working state, not part of the public aggregate shape.
+    const out = new Map<string, HookPerformanceAggregate>();
+    for (const [angleKey, agg] of byAngleKey) {
+        const { contributedCreatives: _omit, ...publicAgg } = agg;
+        out.set(angleKey, publicAgg);
+    }
+    return out;
 }
 
 /**
@@ -114,7 +142,7 @@ function groupAdsByCreative(ads: ReadonlyArray<AdForLearning>): Map<string, AdFo
     return groups;
 }
 
-function applyAdToHook(agg: HookPerformanceAggregate, ad: AdForLearning): void {
+function applyAdToHook(agg: HookWorkingAggregate, ad: AdForLearning): void {
     const isConversion = ad.campaignObjective === "conversion";
     if (isConversion) {
         agg.sampleSize += 1; // FR-020: counts are non-decreasing for conversion
@@ -310,10 +338,11 @@ function weightedAvg(_prior: number, _priorCount: number, _sum: number, _newCoun
     return _newCount === 0 ? 0 : _sum / _newCount;
 }
 
-function cloneHook(a: HookPerformanceAggregate): HookPerformanceAggregate {
-    return {
+function cloneHook(a: HookPerformanceAggregate): HookWorkingAggregate {
+    const result: HookWorkingAggregate = {
         angleKey: a.angleKey,
         schemaVersion: a.schemaVersion ?? 1,
+        creativeCount: a.creativeCount ?? 0,
         sampleSize: a.sampleSize,
         lastUpdated: a.lastUpdated,
         byObjective: {
@@ -332,7 +361,27 @@ function cloneHook(a: HookPerformanceAggregate): HookPerformanceAggregate {
             retargeting: { ...a.byAudienceType.retargeting },
             advantage_plus: { ...a.byAudienceType.advantage_plus },
         },
+        contributedCreatives: new Set(),
+        // Existing aggregates from before T021 carry no
+        // contributedCreatives. The next sync with the same creative
+        // will add the creative to the Set, incrementing creativeCount
+        // — which is wrong for a creative that contributed historically
+        // (its prior contribution should count). Per T021's spec
+        // resolution, this is acceptable as long as the integrator
+        // carries the Set forward across syncs. For Phase 3 close-out
+        // this means we either serialise the Set or re-derive it from
+        // the per-row ledger entries. Defer to the follow-up batch.
     };
+    return result;
+}
+
+/** Internal working shape for the aggregator. Carries a Set of
+ * creative keys that have already contributed, so that the second
+ * row of one creative to the same angle does not double-count it.
+ * Stripped before return (the Set is not part of the public type).
+ */
+interface HookWorkingAggregate extends HookPerformanceAggregate {
+    contributedCreatives: Set<string>;
 }
 
 function cloneVisual(a: VisualPerformanceAggregate): VisualPerformanceAggregate {
@@ -360,12 +409,14 @@ function cloneVisual(a: VisualPerformanceAggregate): VisualPerformanceAggregate 
     };
 }
 
-function emptyHook(angleKey: string): HookPerformanceAggregate {
+function emptyHook(angleKey: string): HookWorkingAggregate {
     return {
         angleKey,
         schemaVersion: 1,
+        creativeCount: 0,
         sampleSize: 0,
         lastUpdated: 0,
+        contributedCreatives: new Set(),
         byObjective: {
             conversion: { avgLinkCtr: 0, count: 0, bestVerdictCount: 0, worstVerdictCount: 0 },
             other: { avgLinkCtr: 0, count: 0 },

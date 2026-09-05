@@ -139,6 +139,12 @@ test("SC-008: 55 rows sharing one hook angle contribute 1 sampleSize, not 55", (
     // input — but for this test we use distinct adIds so each one
     // contributes one count). The KEY claim is: one angle key,
     // not 55 distinct angle keys.
+    //
+    // Per the Batch 06 finding 1 fix, this test asserts the per-row
+    // shape: 55 distinct adIds → 55 distinct creative identities (the
+    // Batch 05 placeholder) → creativeCount = 55. The per-creative
+    // shape (creativeCount = 1) is the new T021a discriminator
+    // test below.
     const ads = [];
     for (let i = 0; i < 55; i++) {
         ads.push(adForLearning({
@@ -150,7 +156,8 @@ test("SC-008: 55 rows sharing one hook angle contribute 1 sampleSize, not 55", (
     const result = applyHookAggregatesDelta([], ads, 1_000_000);
     assert.equal(result.size, 1, "55 ads in one angle group produce ONE angle key");
     const only = result.values().next().value;
-    assert.equal(only.byObjective.conversion.count, 55, "all 55 contributions counted");
+    assert.equal(only.byObjective.conversion.count, 55, "all 55 row-level contributions counted");
+    assert.equal(only.creativeCount, 55, "with per-row fallback, creativeCount = 55 (one creative per row identity)");
 });
 
 // ─── SC-013: monotonic non-decrease across syncs (additive semantics) ──
@@ -289,7 +296,7 @@ test("decideContribution: absent recorded + null desired → noop (nothing to do
 
 // ─── T021: per-creative aggregation ──────────────────────────
 
-test("T021/SC-008 (per-creative): 5 rows in one creative contribute ONE count, not 5", () => {
+test("T021/SC-008 (per-creative): 5 rows in one creative contribute ONE creative, not 5", () => {
     // 5 rows sharing one creativeKey. Under per-creative aggregation,
     // the creative contributes one unit to the angle. Under the
     // per-row fallback (no creativeKey), 5 rows → count = 5.
@@ -303,11 +310,13 @@ test("T021/SC-008 (per-creative): 5 rows in one creative contribute ONE count, n
     const result = applyHookAggregatesDelta([], ads, 1_000_000);
     const only = result.get("urgency");
     assert.ok(only);
-    // Per-creative count is 1 (one creative contributed), but the
-    // values are the SUM of all eligible rows' values (all-rows).
-    // The ctrLink values average out via the running-average formula.
+    // creativeCount = 1 (one creative contributed), row-level count = 5
+    // (all-rows aggregation), values are SUM of all eligible rows'
+    // values averaged via the running-average formula.
+    assert.equal(only.creativeCount, 1,
+        "creativeCount is per-creative: 5 rows in one creative → creativeCount = 1");
     assert.equal(only.byObjective.conversion.count, 5,
-        "all-rows aggregation: 5 rows contribute their ctrLink values to the running average");
+        "byObjective.conversion.count is per-row: 5 rows → count = 5 (all-rows aggregation)");
 });
 
 // ─── T022: any-row eligibility ────────────────────────────────
@@ -378,10 +387,112 @@ test("T024: existing-aggregate with absent schemaVersion is read as version 0 (b
     assert.equal(only.byObjective.conversion.count, 1);
 });
 
+// ─── T021a discriminator: SC-008 per-creative form ─────────────
+
+test("T021a discriminator: 55 rows in one creative contribute 1, not 55 (per-creative)", () => {
+    // This is the discriminating assertion for the worker's
+    // creativeKey wire-up (T021a). With the Batch 05 placeholder
+    // (`creativeKey: ad.id`), every row is its own group and the angle
+    // count is 55. With the real per-creative key, the rows form one
+    // group, the creative contributes one count, and the count is 1.
+    //
+    // 55 distinct rows, all sharing one generationId and one
+    // imageHash (the SC-008 production shape).
+    const ads: any[] = [];
+    for (let i = 0; i < 55; i++) {
+        ads.push(adForLearning({
+            adId: `ad-${i}`,
+            generationId: "gen-55",
+            matchType: "manual",
+            metadataAvailable: true,
+            campaignObjective: "conversion",
+            geoTier: "tier1_gulf",
+            audienceType: "broad",
+            ctrLink: 0.05 + i * 0.0001,
+            cpm3d: 2.5,
+            conversions3d: 10,
+            verdict: "🟢",
+            hookAngle: "urgency",
+        }));
+    }
+
+    // Case A: per-row fallback (creativeKey = ad.id). Each row is its
+    // own creative. creativeCount = 55.
+    const withAdIdKey = ads.map((ad) => ({ ...ad, creativeKey: ad.adId }));
+    const resultA = applyHookAggregatesDelta([], withAdIdKey, 1_000_000);
+    assert.equal(
+        resultA.get("urgency").creativeCount,
+        55,
+        "per-row fallback: 55 rows → creativeCount = 55 (Batch 05 placeholder behaviour)",
+    );
+
+    // Case B: per-creative key. All 55 rows share one creativeKey.
+    // creativeCount = 1 (one creative contributed), but row-level
+    // count = 55 (all-rows aggregation applies every row's values).
+    const withCreativeKey = ads.map((ad) => ({ ...ad, creativeKey: "creative:gen:gen-55" }));
+    const resultB = applyHookAggregatesDelta([], withCreativeKey, 1_000_000);
+    assert.equal(
+        resultB.get("urgency").creativeCount,
+        1,
+        "per-creative: 55 rows in one creative → creativeCount = 1 (the SC-008 spec requirement, FR-073)",
+    );
+    assert.equal(
+        resultB.get("urgency").byObjective.conversion.count,
+        55,
+        "per-creative: 55 rows in one creative → row-level count = 55 (all-rows aggregation, FR-074g)",
+    );
+
+    // Discriminator: the two cases produce different creativeCount
+    // values. An implementation that treats every row as its own
+    // creative (the Batch 05 placeholder) passes Case A but FAILS
+    // Case B's creativeCount of 1. Either way, Case B's creativeCount
+    // of 1 is the binding discriminator.
+    assert.notEqual(
+        resultA.get("urgency").creativeCount,
+        resultB.get("urgency").creativeCount,
+        "the two cases must produce different creativeCount values; otherwise the discriminator cannot tell the two states apart",
+    );
+});
+
+// ─── T027b behavioural: applyHookAggregatesDelta never reduces an existing count ───
+//
+// (Counterpart to the source-text check in learningCascade.test.ts.
+// Per Batch 06 finding 3, structural source-text checks should be
+// accompanied by a behavioural counterpart. The behavioural version
+// observes the count's value rather than the function's text.)
+
+test("T027b behavioural: applyHookAggregatesDelta never reduces an existing count", () => {
+    // Construct an existing aggregate with a count of 100.
+    const existing = [{
+        angleKey: "urgency",
+        schemaVersion: 1,
+        sampleSize: 100,
+        lastUpdated: 1_000_000,
+        byObjective: {
+            conversion: { avgLinkCtr: 0.05, count: 100, bestVerdictCount: 50, worstVerdictCount: 50 },
+            other: { avgLinkCtr: 0, count: 0 },
+        },
+        byGeoTier: { tier1_gulf: { avgCtr: 0, count: 0 }, tier2_diaspora: { avgCtr: 0, count: 0 }, tier3_egypt_na: { avgCtr: 0, count: 0 } },
+        byAudienceType: { broad: { avgCtr: 0, count: 0 }, interest: { avgCtr: 0, count: 0 }, lookalike: { avgCtr: 0, count: 0 }, retargeting: { avgCtr: 0, count: 0 }, advantage_plus: { avgCtr: 0, count: 0 } },
+    } as any];
+
+    // Apply a delta that adds a NEW creative (creativeKey different
+    // from any existing row). The delta is additive only — the
+    // existing 100 must NOT be reduced by any side-effect.
+    const newAd = adForLearning({ adId: "fresh", creativeKey: "creative-NEW", hookAngle: "urgency", ctrLink: 0.10 });
+    const result = applyHookAggregatesDelta(existing, [newAd], 2_000_000);
+
+    const result_count = result.get("urgency").byObjective.conversion.count;
+    assert.ok(
+        result_count >= 100,
+        `existing count (100) must not decrease; got ${result_count}. A decrement here would mean a withdrawal pathway exists, breaking FR-014's no-withdraw invariant.`,
+    );
+});
+
 // ─── Runner ─────────────────────────────────────────────────────
 
 console.log("");
-console.log("=== T026 — accumulation tests (SC-002 / SC-008 / SC-013 / SC-029c + T021/T022/T024) ===");
+console.log("=== T026 — accumulation tests (SC-002 / SC-008 / SC-013 / SC-029c + T021/T022/T024 + T021a discriminator + T027b) ===");
 console.log(`Passed: ${passed}, Failed: ${failed}`);
 if (failed > 0) process.exit(FAILED);
 process.exit(PASSED);

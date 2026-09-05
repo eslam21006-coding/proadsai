@@ -142,8 +142,18 @@ test("FR-014: previous contribution STANDS through cascade (no withdrawal)", () 
 });
 
 // ─── The aggregator has no "withdraw cascade-marked rows" pathway ──
+//
+// SOURCE-TEXT assertion (labelled per Batch 06 finding 3). The
+// behavioural counterpart — "applying a delta never reduces an
+// existing count" — lives in learningAccumulation.test.ts as
+// `T027b behavioural: applyHookAggregatesDelta never reduces an
+// existing count`. Both checks pin the same property; the source-text
+// version catches a maintainer who introduces a decrement pathway
+// that the behavioural version would also catch. Keeping both is
+// belt-and-braces; the structural assertion is kept below as the
+// standing source-text guard.
 
-test("FR-014: the additive delta has no implicit-withdrawal pathway (structurally)", () => {
+test("FR-014: the additive delta has no implicit-withdrawal pathway (SOURCE-TEXT — necessary-but-not-sufficient)", () => {
     // ApplyHookAggregatesDelta only ADDS contributions; it never
     // subtracts. The withdrawal pathway (applyHookAggregateWithdrawal)
     // requires an explicit call with a known ad to remove.
