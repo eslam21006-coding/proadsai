@@ -374,6 +374,13 @@ One batch report (this file) per Rule 0a.
 
 ```
 $ git -C "D:/proads-worktrees/969-cumulative-learning" diff --stat HEAD~1
+ functions/package.json                             |  14 +-
+ ...Guard.test.ts => testRegistrationGuard.test.ts} | 204 +++++----
+ functions/src/learning/aggregateDelta.ts           |  24 +-
+ functions/src/learningAggregates.ts                | 374 +---------------
+ .../reports/batch-11-969-report.md                 | 475 +++++++++++++++++++++
+ specs/969-cumulative-learning/tasks.md             |   2 +-
+ 6 files changed, 647 insertions(+), 446 deletions(-)
 ```
 
 ## §9 — Raw output — `git status --short` at HEAD after this batch's commit
@@ -381,6 +388,8 @@ $ git -C "D:/proads-worktrees/969-cumulative-learning" diff --stat HEAD~1
 ```
 $ git -C "D:/proads-worktrees/969-cumulative-learning" status --short
 ```
+
+(no output — clean working tree)
 
 ## §10 — Raw output — full `npm test` tail with exit code (clean build)
 
@@ -390,12 +399,10 @@ $ Remove-Item -Recurse -Force lib
 $ npm test
 ```
 
-(Full output is in `C:\temp\opencode\batch11-fix3d-npmtest.txt` on this host;
-the tail below is the final contract-fixtures pass + the exit-code line.)
+(Full output captured at `C:\temp\opencode\batch11-fix3d-npmtest.txt` on this
+host. Tail below is the final chain steps + exit code.)
 
 ```
-...
-
 > test:billing:stripeWebhook
 > npm run build && node lib/billing/__tests__/stripeWebhook.test.js
 
@@ -415,14 +422,383 @@ the tail below is the final contract-fixtures pass + the exit-code line.)
   ✅ User plan is pro
   ✅ stripeCustomerId saved
 
-[... 75 stripeWebhook assertions ...]
+(2) checkout.session.completed — GHL funnel (no client_reference_id)
+  ✅ No client_reference_id — GHL path
+  ✅ Starter plan from price_starter_monthly
+  ✅ Starter credits = 800
+  ✅ pending_plans doc exists for GHL funnel email
+  ✅ Pending plan is starter
+  ✅ stripeCustomerId in pending_plans
+
+(3) checkout.session.completed — dual-event dedup
+  ✅ Atomic .create() detects duplicate event
+
+(4) customer.subscription.updated — plan change (price ID change)
+  ✅ New plan is pro after price change
+  ✅ Credits updated to pro allocation (2500)
+  ✅ Plan actually changed from starter → pro
+  ✅ User plan updated to pro
+  ✅ User credits updated to 2500
+
+(5) customer.subscription.updated — trial → active conversion
+  ✅ isTrial set to false
+  ✅ billingStatus set to active
+  ✅ Credits reset to full plan allocation (2500)
+  ✅ Persisted isTrial = false
+  ✅ Persisted credits = 2500
+
+(6) customer.subscription.deleted — plan reset
+  ✅ Plan set to none
+  ✅ Credits set to 0
+  ✅ billingStatus set to cancelled
+  ✅ stripeSubscriptionId cleared
+  ✅ Update plan = none
+  ✅ Update credits = 0
+  ✅ Update billingStatus = cancelled
+
+(7) invoice.payment_succeeded — renewal (subscription_cycle)
+  ✅ subscription_create: NO credit reset
+  ✅ subscription_cycle: YES credit reset
+  ✅ manual: NO credit reset
+  ✅ subscription_update: NO credit reset
+  ✅ Pro credits reset to 2500 on subscription_cycle
+
+(8) invoice.payment_failed — sets past_due + grace
+  ✅ billingStatus set to past_due
+  ✅ billingIssueType set to payment_failed
+  ✅ gracePeriodEndsAt is a date ~2 days out
+  ✅ Grace period is in the future
+
+(9) charge.refunded — full subscription refund
+  ✅ Full refund detected (amount_refunded === amount)
+  ✅ Not a top-up charge → subscription refund branch
+  ✅ Refund amount = $79.00
+
+=== Callable Scenarios (T025) ===
+
+(10) createStripeCheckoutSession — happy path
+  ✅ Mode is subscription
+  ✅ client_reference_id = uid
+  ✅ 7-day trial configured
+  ✅ firebaseUid in metadata
+  ✅ Automatic tax enabled
+  ✅ success_url has paid=1
+
+(11) createStripeTopUpSession — happy path
+  ✅ Mode is payment
+  ✅ isTopUp = 'true' in metadata
+  ✅ creditAmount = '300' in metadata
+  ✅ isTopUp mirrored in payment_intent_data.metadata
+  ✅ creditAmount mirrored in payment_intent_data.metadata
+  ✅ success_url has topup=1
+
+(12) createStripePortalSession — happy path
+  ✅ User doc exists for portal
+  ✅ stripeCustomerId present
+  ✅ stripeCustomerId = cus_portal_001
+  ✅ Portal customer set
+  ✅ Flow type = subscription_cancel
+  ✅ Return URL correct
+
+=== Refund Branch Scenarios (T026) ===
+
+(13) charge.refunded — full subscription refund → cancel subscription
+  ✅ Full refund detected
+  ✅ Not top-up → subscription refund branch
+  ✅ cancellation_logs written before cancel
+  ✅ Reason = 'refund'
+
+(14) charge.refunded — full top-up refund → credits deducted
+  ✅ Full refund detected
+  ✅ Is top-up charge → credit deduction branch
+  ✅ creditAmount parsed from metadata = 300
+  ✅ Deducted = min(150, 300) = 150 (clamped at 0)
+  ✅ Credits clamped to 0 after deduction
+  ✅ refund_logs written for top-up refund
+  ✅ refund_logs creditAmountDeducted = 150
+
+(15) charge.refunded — partial refund → log only
+  ✅ Partial refund detected (amount_refunded < amount)
+  ✅ Partial refund amount = $39.50
+  ✅ Remaining amount = 3950 cents
 
 ═══ Results: 75 passed, 0 failed ═══
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=value_stack hookAngle=none ratio=1:1
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=value_stack hookAngle=none ratio=1:1
+🗺️ selectLayoutTemplate: primary=event_ticket secondary=speaker_card hookAngle=none ratio=1:1
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=value_stack hookAngle=none ratio=1:1
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=value_stack hookAngle=none ratio=1:1
 
-[... Spec 002 / Phase 3 / Spec 005 / Spec 005 Phase 2 / Spec 006 / T025 / T026a /
-     HFC.9 / HFD / HFE / BCR / US1 / US2 / BCC / US4 / US5 / HFF / Phase 16 fixtures ...]
+═══ Spec 002 — Priority Lane QA Fixtures ═══
+  ✅ Lane 1: Retargeting + Carousel
+  ✅ Lane 2: Cold + Single + before_after
+  ✅ Lane 3: Cold + Carousel + value_stack
+  ✅ Lane 4: Cold + Carousel (approved mode)
+  ✅ Lane 5: Cold + Batch + hero + value_stack
+  ✅ Lane 6: Cold + Single + value_stack
+  ✅ Lane 7: Retargeting + Single + value_stack
+  ✅ Lane 8: Minimal + hero + Single
+  ✅ Lane 9: Minimal + hero + Batch
+  ✅ Lane 10: Testimonial Carousel (Cold)
+  ✅ Lane 11: Testimonial Carousel (Retargeting)
+═══ Spec 002 — All 11 lanes passed ═══
 
-═══ Phase 16 — Creative Modes & Art Direction QA Fixtures ═══
+
+═══ Phase 3 — Resolver Function Unit Tests ═══
+  ✅ testValidateLaunchSurface: passing + blocked combos verified
+  ✅ testCarouselSlideCountPlan
+  ✅ testResolveValueStackSlideCount
+  ✅ testFilterEmptyValueStackFields
+═══ Phase 3 — All unit tests passed ═══
+
+
+═══ Spec 005 — Render Prompt Pipeline Regression Guards ═══
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=none hookAngle=none ratio=1:1
+[copy] hook: 20 sub: 9 cta: 8 benefit: 10
+  ✅ testPromptAssemblyHookTextVerbatim
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=none hookAngle=none ratio=1:1
+[copy] hook: 18 sub: 33 cta: 10 benefit: 10
+  ✅ testPromptAssemblySubStyleLuxuryMagazine
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=none hookAngle=none ratio=1:1
+[copy] hook: 18 sub: 33 cta: 10 benefit: 10
+  ✅ testPromptAssemblyRetargetingDirection
+  ✅ testCopyFidelityValidation
+═══ Spec 005 — All regression tests passed ═══
+
+
+═══ Spec 005 Phase 2 — 4-Field Fidelity + Campaign Context + Carousel ═══
+  ✅ testCopyFidelity4Fields
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=none hookAngle=none ratio=1:1
+[copy] hook: 18 sub: 33 cta: 10 benefit: 10
+  ✅ testCampaignContextPresence
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=none hookAngle=none ratio=1:1
+[copy] hook: 7 sub: 18 cta: 0 benefit: 10
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=none hookAngle=none ratio=1:1
+[copy] hook: 13 sub: 19 cta: 0 benefit: 10
+  ✅ testCarouselPerSlideCopyIsolation
+═══ Spec 005 Phase 2 — All new tests passed ═══
+
+
+═══ Spec 006 — Team Management Fixture Tests (imported callables) ═══
+  ✅ testExportedConstants
+  ✅ testInviteBlockedAtPlanLimit
+  ✅ testClaimSetsMembership
+  ✅ testExpiredInviteRejected
+  ✅ testRemovalClearsMembership
+  ✅ testViewerRejectedByDeductCredits
+  ✅ testGetInviteDetailsStatus
+═══ Spec 006 — All team fixture tests passed ═══
+
+
+═══ T025 — Entitlement Resolver Fixtures (3-plan) ═══
+  ✅ testBooleanGateFixtures: 24 fixtures passed
+  ✅ testAlwaysAllowedFixtures: 16 fixtures passed
+  ✅ testQuantityBoundedFixtures: 40 fixtures passed
+  ✅ testTeamInviteBoundaryFixtures: 4 fixtures passed
+═══ T025 — All entitlement fixtures passed ═══
+
+
+═══ T026a — Cross-module Parity ═══
+  ✅ testCrossModuleParity: backend ↔ contract canonicals verified (features + batch + savedProject + avatar)
+═══ T026a — Cross-module parity complete ═══
+
+
+═══ HFC.9 — Cultural Compliance Integration Checks ═══
+  ✅ testEnglishIsNotGated: isArabic is the gate; scan itself is pure
+  ✅ testMinimumCoverageShape: HARAM_MOTIFS=11, TRIGGER_WORDS=29
+═══ HFC.9 — Integration checks complete (unit coverage lives in __tests__/culturalCompliance.test.ts) ═══
+
+
+═══ HFD — Multi-Logo Upload Fixtures ═══
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=none hookAngle=none ratio=1:1
+[copy] hook: 18 sub: 33 cta: 10 benefit: 10
+  ✅ HFD.T1: 3-logo single-ad prompt shape verified
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=none hookAngle=none ratio=1:1
+[copy] hook: 18 sub: 33 cta: 10 benefit: 10
+  ✅ HFD.T3: 0-logo empty-branding invariant preserved
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=none hookAngle=none ratio=1:1
+[copy] hook: 18 sub: 33 cta: 10 benefit: 10
+  ✅ HFD.T4: 7-logo oversized defence-in-depth truncation verified
+  ✅ HFD.T2: 5-logo carousel per-slide attachment verified
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=none hookAngle=none ratio=1:1
+[copy] hook: 18 sub: 33 cta: 10 benefit: 10
+  ✅ HFD.T5: Arabic 2-logo equal-peer phrasing verified
+═══ HFD — All logo fixtures passed ═══
+
+
+═══ HFE — HOTFIX-E: Hybrid Logo Handling Fixtures ═══
+  ✅ HFE.8.a: minimalist single ad, 1 UI placement validated
+  ✅ HFE.8.b: lifestyle single ad, 1 environmental placement validated
+  ✅ HFE.8.c: corporate ad, screen-content ban + UI placement validated
+  ✅ HFE.8.d: mixed 5-slide carousel mode mix validated
+  ✅ HFE.8.e: 3-logo ad, per-mode caps respected
+  ✅ HFE.8.f: corrupt source — validator accepts, compositor handles fail-soft at runtime
+  ✅ HFE.8.g: over-cap UI placements dropped correctly
+  ✅ HFE.8.h: prompt blocks verified (Sharp unavailable handled at runtime)
+  ✅ HFE.8.i: prompt block content verified for pipeline ordering
+  ✅ Ban-1: SCREEN_CONTENT_BAN_BLOCK constant verified
+  ✅ Ban-2: screen-content rule allowed states verified
+  ✅ Validator: widthPct=30 clamped to 18
+  ✅ Validator: opacity=0.5 clamped to 0.85
+  ✅ Validator: logoIndex=7 dropped (only 2 logos)
+  ✅ Validator: text_only style produces zero placements
+  ✅ Validator: unrecognized mode='video' defaulted to environmental
+  ✅ Validator: 5 environmental → 3 kept, 2 dropped
+═══ HFE — All hybrid logo fixtures passed ═══
+
+
+═══ BCR — Brand Color Resolver Fixtures ═══
+  ✅ BCR-01-form-wins
+  ✅ BCR-02-avatar-wins-over-cold-ad
+  ✅ BCR-03-cold-ad-inherited
+  ✅ BCR-04-workspace-fallback
+  ✅ BCR-05-no-source
+  ✅ BCR-06-form-malformed-falls-through
+  ✅ BCR-07-form-primary-no-secondary
+  ✅ BCR-08-cta-text-light-primary
+  ✅ BCR-09-cta-text-dark-primary
+  ✅ BCR-10-cta-text-luminance-boundary (≥ 0.5 → near-black)
+  ✅ BCR-11-secondary-falls-through-independently
+═══ BCR — All brand color resolver fixtures passed ═══
+
+
+═══ US1 — Carousel / Batch Brand Color Fixtures ═══
+  ✅ T010-carousel-slide-3-brand-colors
+  ✅ T011-batch-item-2-brand-colors
+  ✅ T012-anti-placeholder-regex
+═══ US1 — All carousel/batch fixtures passed ═══
+
+
+═══ US2 — Retargeting Inheritance Fixtures ═══
+  ✅ T016a-retargeting-inherits-cold-ad-colors
+  ✅ T016b-retargeting-form-overrides-cold-ad
+  ✅ T016c-missing-cold-ad-falls-to-workspace
+═══ US2 — All retargeting fixtures passed ═══
+
+
+═══ BCC — Brand Color Compliance Fixtures ═══
+  ✅ BCC-01-no-brand-colors
+  ✅ BCC-02-empty-string
+  ✅ BCC-03-malformed-hex
+  ✅ BCC-04-image-unanalyzable
+  ✅ BCC-05-present
+  ✅ BCC-06-absent
+  ✅ BCC-07-near-miss-present
+  ✅ BCC-08-far-miss-absent
+═══ BCC — All compliance fixtures passed ═══
+
+
+═══ US4 — Compositor Brand Color Fixtures ═══
+✅ Arabic text composited: 1 lines, fontSize=4px, zone=80%×35%
+⚠️ Text overflow detected: content 23.35px > zone 22px. Scaling fonts to 94%
+✅ Full ad text composited: 4 elements, hookSize=4px
+  ✅ COMP-01-no-brand-fallback: textStyle drives all colors
+✅ Arabic text composited: 1 lines, fontSize=4px, zone=80%×35%
+⚠️ Text overflow detected: content 23.35px > zone 22px. Scaling fonts to 94%
+✅ Full ad text composited: 4 elements, hookSize=4px
+  ✅ COMP-02-brand-primary-only: CTA branded via luminance auto-contrast
+✅ Arabic text composited: 1 lines, fontSize=4px, zone=80%×35%
+⚠️ Text overflow detected: content 23.35px > zone 22px. Scaling fonts to 94%
+✅ Full ad text composited: 4 elements, hookSize=4px
+  ✅ COMP-03-brand-secondary-only: headline branded, CTA unchanged
+✅ Arabic text composited: 1 lines, fontSize=4px, zone=80%×35%
+⚠️ Text overflow detected: content 23.35px > zone 22px. Scaling fonts to 94%
+✅ Full ad text composited: 4 elements, hookSize=4px
+  ✅ COMP-04-brand-both: both CTA and headline branded
+✅ Arabic text composited: 1 lines, fontSize=4px, zone=80%×35%
+⚠️ Text overflow detected: content 23.35px > zone 22px. Scaling fonts to 94%
+✅ Full ad text composited: 4 elements, hookSize=4px
+  ✅ COMP-05-arabic-uniformity: single deterministic headline color
+✅ Arabic text composited: 1 lines, fontSize=4px, zone=80%×35%
+⚠️ Text overflow detected: content 23.35px > zone 22px. Scaling fonts to 94%
+✅ Full ad text composited: 4 elements, hookSize=4px
+  ✅ COMP-06-light-primary-cta-text-near-black
+═══ US4 — All compositor fixtures passed ═══
+
+
+═══ US5 — Scoring Integration Fixtures ═══
+  ✅ T029a-scoring-deduction-75-to-65-still-passes
+  ✅ T029b-scoring-deduction-65-to-55-now-fails
+  ✅ T029c-scoring-no-deduction-when-check-skipped
+  ✅ T029d-scoring-no-deduction-when-brand-color-present
+═══ US5 — All scoring fixtures passed ═══
+
+
+═══ HFF — HOTFIX-F: Aspect Ratio Reflow Fixtures ═══
+  ✅ T010: getSafeZoneForRatio returns spec table, throws on unknown
+  ✅ T011a: router covers all 30 non-identity pairs, 6 identity pairs
+  ✅ T012: brand-color hex FF0000 appears in re-render prompt, brandColorReinforced=true
+[reflowImage] source image URL rejected (not an allowlisted https storage host;
+value="https://example.com/original-1x1.png") for gen=gen1 item=null. Proceeding without it.
+[reflowImage] source image URL rejected (not an allowlisted https storage host; value="https://example.com/b0.png")
+for gen=gen1 item=0. Proceeding without it.
+[reflowImage] source image URL rejected (not an allowlisted https storage host; value="https://example.com/b1.png")
+for gen=gen1 item=1. Proceeding without it.
+[reflowImage] source image URL rejected (not an allowlisted https storage host; value="https://example.com/b2.png")
+for gen=gen1 item=2. Proceeding without it.
+[reflowImage] source image URL rejected (not an allowlisted https storage host; value="https://example.com/b3.png")
+for gen=gen1 item=3. Proceeding without it.
+[reflowImage] source image URL rejected (not an allowlisted https storage host;
+value="https://example.com/slide-0.png") for gen=gen1 item=0. Proceeding without it.
+[reflowImage] source image URL rejected (not an allowlisted https storage host;
+value="https://example.com/slide-1.png") for gen=gen1 item=1. Proceeding without it.
+✅ Reflow 1:1→9:16 (rerender) for gen undefined, charged 5
+  ✅ T011: single reflow 1:1→9:16 returns 9:16 and 5 credits
+✅ Reflow 1:1→9:16 (rerender) for gen undefined, charged 5
+✅ Reflow 1:1→9:16 (rerender) for gen undefined, charged 5
+✅ Reflow 1:1→9:16 (rerender) for gen undefined, charged 5
+  ✅ T020: batch reflow 4 items → 3 success (15 credits) + 1 failure (0 credits)
+⚠️ Outpaint failed (auto), falling back to rerender for gen1 item 1
+⚠️ Outpaint failed (auto), falling back to rerender for gen1 item 2
+⚠️ Outpaint failed (auto), falling back to rerender for gen1 item 3
+⚠️ Outpaint failed (auto), falling back to rerender for gen1 item 4
+[reflowImage] source image URL rejected (not an allowlisted https storage host;
+value="https://example.com/slide-2.png") for gen=gen1 item=2. Proceeding without it.
+[reflowImage] source image URL rejected (not an allowlisted https storage host;
+value="https://example.com/slide-3.png") for gen=gen1 item=3. Proceeding without it.
+[reflowImage] source image URL rejected (not an allowlisted https storage host;
+value="https://example.com/slide-4.png") for gen=gen1 item=4. Proceeding without it.
+[reflowImage] source image URL rejected (not an allowlisted https storage host;
+value="https://example.com/slide-5.png") for gen=gen1 item=5. Proceeding without it.
+[reflowImage] source image URL rejected (not an allowlisted https storage host;
+value="https://example.com/slide-6.png") for gen=gen1 item=6. Proceeding without it.
+⚠️ Outpaint failed (auto), falling back to rerender for gen1 item 0
+[reflowImage] source image URL rejected (not an allowlisted https storage host;
+value="https://example.com/slide-2.png") for gen=gen1 item=2. Proceeding without it.
+⚠️ Outpaint failed (auto), falling back to rerender for gen1 item 5
+⚠️ Outpaint failed (auto), falling back to rerender for gen1 item 6
+✅ Reflow 4:5→1:1 (rerender) for gen undefined, charged 5
+✅ Reflow 4:5→1:1 (rerender) for gen undefined, charged 5
+✅ Reflow 4:5→1:1 (rerender) for gen undefined, charged 5
+✅ Reflow 4:5→1:1 (rerender) for gen undefined, charged 5
+✅ Reflow 4:5→1:1 (rerender) for gen undefined, charged 5
+✅ Reflow 4:5→1:1 (rerender) for gen undefined, charged 5
+✅ Reflow 4:5→1:1 (rerender) for gen undefined, charged 5
+⚠️ Outpaint failed (auto), falling back to rerender for gen1 item 2
+✅ Reflow 4:5→1:1 (rerender) for gen undefined, charged 5
+  ✅ T023: carousel reflow 7 slides → all succeed (35 credits), slide order preserved; carousel_slide idx=2 → 5 credits
+  ✅ HFF.6.a: 1:1 → 4:5 auto-routes to outpaint (magnitude=0.2500)
+  ✅ HFF.6.b: 4:5 → 9:16 auto-routes to rerender (magnitude=0.4222)
+  ✅ HFF.6.c: outpaint byte-identity preserved in center region
+  ✅ HFF.6.d: extractBuildPlan + rerenderFromPlan exercise real path; NoPlanError propagated
+  ✅ HFF.6.e: user override outpaint on 4:5 → 9:16
+  ✅ HFF.6.f: user override rerender on 1:1 → 4:5
+  ✅ HFF.6.g: outpaint drift detected → fallback triggered
+  ✅ HFF.6.h: carousel_all 5 slides have plans, router picks rerender for 1:1 -> 9:16
+  ✅ HFF.6.i: NoPlanError on slide 3 (index 2), 4 others have plans
+  ✅ HFF.6.j: same-ratio no-op (magnitude=0)
+  ✅ HFF.6.k: invalid target ratio '2:1' rejected at callable boundary
+🗺️ selectLayoutTemplate: primary=standard_hero secondary=none hookAngle=none ratio=9:16
+🛑 Deprecated REFLOW path invoked — use reflowImage callable (FR-026).
+📋 Render contract warnings: High-priority zone "headline" (priority 2) not referenced in build plan. | High-priority zone "hero" (priority 1) not referenced in build plan.
+  ✅ HFF.6.l: deprecated REFLOW path returns typed error (REFLOW_DEPRECATED) — FR-026
+  ✅ HFF.6.m: generation doc structure preserved (favoriteId, no new generation created)
+  ✅ HFF.6.n: reflow-of-reflow uses original buildPlan (not derived)
+  ✅ HFF.6.o: rerenderFromPlan calls generator with extracted plan + overridden ratio
+═══ HFF — All aspect ratio reflow fixtures passed ═══
+
+
+═══ Phase 16 — Creative Modes & Art Direction QA ═══
   ✅ 10 solo modes ✓
   ✅ 10 approved pairs ✓
   ✅ 4 carousel-specific ✓
@@ -436,7 +812,7 @@ the tail below is the final contract-fixtures pass + the exit-code line.)
 ═══ Phase 16 — All creative modes & art direction QA fixtures passed ═══
 
 contractFixtures.test: PASS
-=== NPM TEST EXITCODE: 0 ===
+=== NPM TEST EXITCODE: 0
 ```
 
 NPM TEST EXITCODE: **0**
