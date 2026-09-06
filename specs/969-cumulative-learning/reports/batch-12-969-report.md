@@ -428,6 +428,12 @@ So:
 
 ```
 $ git -C "D:/proads-worktrees/969-cumulative-learning" diff --stat HEAD~1
+ functions/package.json                             |    3 +-
+ .../t025aWorkerWiringDiscriminator.test.ts         |  343 ++++++
+ functions/src/metaSync/shared.ts                   |   47 +
+ .../reports/batch-12-969-report.md                 | 1088 ++++++++++++++++++++
+ specs/969-cumulative-learning/tasks.md             |    2 +-
+ 5 files changed, 1481 insertions(+), 2 deletions(-)
 ```
 
 ## §10 — Raw output — `git status --short` at HEAD after this batch's commit
@@ -435,6 +441,8 @@ $ git -C "D:/proads-worktrees/969-cumulative-learning" diff --stat HEAD~1
 ```
 $ git -C "D:/proads-worktrees/969-cumulative-learning" status --short
 ```
+
+(no output — clean working tree)
 
 ## §11 — Raw output — full `npm test` tail with exit code (clean build)
 
