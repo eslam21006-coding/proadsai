@@ -21,19 +21,19 @@
 //
 // ─── Why a separate module ─────────────────────────────────────
 //
-// The existing `updateHookAggregates` / `updateVisualAggregates`
-// functions in `learningAggregates.ts` keep their OVERWRITE contract
-// because:
-//   - they are tested in `learningAggregates.test.ts` for OVERWRITE
-//     semantics ("running with empty existing produces the right
-//     answer; idempotent under same input"),
-//   - and `ragContext.ts` consumes their OVERWRITE-style output for
-//     RAG retrieval (it does not call the worker path).
+// This module provides the ADDITIVE aggregators
+// (`applyHookAggregatesDelta`, `applyVisualAggregatesDelta`) consumed
+// by the worker in `metaSync/shared.ts`. They are the only aggregation
+// path in this codebase.
 //
-// Adding the ADDITIVE semantics as separate functions lets the worker
-// (`metaSync/shared.ts`) use cumulative deltas while the existing
-// surface stays intact. Future batches can migrate the tests and
-// ragContext to the additive path; that is a separate change.
+// History: `learningAggregates.ts` previously exported OVERWRITE-
+// semantics aggregators (`updateHookAggregates`, `updateVisualAggregates`).
+// They were retired as of Batch 11; the previous report (Batch 06)
+// claimed a deletion that did not actually happen, leaving the legacy
+// functions alongside their tests for several batches. The legacy tests
+// are gone from tracked source (deleted in Batch 06) and from the
+// chain (Batch 11 #1); this batch completes the removal by deleting
+// the functions themselves.
 
 import type {
     HookPerformanceAggregate,
