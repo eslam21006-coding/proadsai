@@ -471,9 +471,11 @@ export async function getWhatsWorkingDashboardImpl(
             angleKey: string;
             sampleSize: number;
             /**
-             * FR-034 / FR-034a / FR-037 — distinct creatives (when the
-             * upstream producer populates it). Falls back to
-             * sampleSize (row count) until the producer is wired.
+             * T029b (Batch 13) — distinct creatives. The producer
+             * (`learning/aggregateDelta.ts`) populates this on every
+             * write; absent means the aggregate predates T021a's
+             * wire-up, in which case the gate stays closed (count
+             * of 0).
              */
             creativeCount?: number;
             byObjective: {
@@ -489,8 +491,9 @@ export async function getWhatsWorkingDashboardImpl(
                     angleKey: r.angleKey,
                     avgLinkCtr: r.byObjective.conversion.avgLinkCtr,
                     // FR-034 / FR-034a / FR-037 — gate by distinct creatives
-                    // when available; row-level count is the fallback.
-                    sampleSize: r.creativeCount ?? r.byObjective.conversion.count,
+                    // (T029b). Sum fields keep using the row-level
+                    // `count` (the average is a row-level computation).
+                    sampleSize: r.creativeCount ?? 0,
                 })),
         );
         const strongestAngles: StrongestAngle[] = hookAggs
@@ -546,9 +549,8 @@ export async function getWhatsWorkingDashboardImpl(
             patternKey: string;
             sampleSize: number;
             /**
-             * FR-034 / FR-034a / FR-037 — distinct creatives (when the
-             * upstream producer populates it). Falls back to
-             * sampleSize (row count) until the producer is wired.
+             * T029b (Batch 13) — distinct creatives. Populated by
+             * `learning/aggregateDelta.ts` on every aggregate write.
              */
             creativeCount?: number;
             byObjective: {
@@ -669,8 +671,9 @@ export async function getWhatsWorkingDashboardImpl(
             .map((v) => ({
                 angleKey: v.patternKey,
                 avgLinkCtr: v.byObjective.conversion.avgLinkCtr,
-                // FR-034 / FR-034a / FR-037 — gate by distinct creatives.
-                sampleSize: v.creativeCount ?? v.byObjective.conversion.count,
+                // FR-034 / FR-034a / FR-037 — gate by distinct creatives
+                // (T029b).
+                sampleSize: v.creativeCount ?? 0,
             }));
         const visualHotKey = pickHotAngle(visualEligibleRows);
         // Pair the public output with the raw sort keys (bestVerdictCount
@@ -858,9 +861,10 @@ export async function getHookAnglePerformanceImpl(
             angleKey: string;
             sampleSize: number;
             /**
-             * FR-034 / FR-034a / FR-037 — distinct creatives (when the
-             * upstream producer populates it). Falls back to
-             * sampleSize (row count) until the producer is wired.
+             * T029b (Batch 13) — distinct creatives. Populated by
+             * `learning/aggregateDelta.ts` on every write. Absent
+             * means the aggregate predates T021a's wire-up; the
+             * gate stays closed (count of 0).
              */
             creativeCount?: number;
             byObjective: {
@@ -873,12 +877,12 @@ export async function getHookAnglePerformanceImpl(
         // Pre-compute eligible rows + pick the top 2 (for the ⚠️
         // tooltip "جرّب [best] أو [second best]").
         const eligibleRows = hookAggs
-            .filter((r) => (r.creativeCount ?? r.byObjective?.conversion?.count ?? 0) >= HOOK_ICON_DATA_GATE)
+            .filter((r) => (r.creativeCount ?? 0) >= HOOK_ICON_DATA_GATE)
             .map((r) => ({
                 angleKey: r.angleKey,
                 avgLinkCtr: r.byObjective.conversion.avgLinkCtr,
                 // FR-034 / FR-034a / FR-037 — gate by distinct creatives.
-                sampleSize: r.creativeCount ?? r.byObjective.conversion.count,
+                sampleSize: r.creativeCount ?? 0,
             }));
         const bestTwo = pickBestTwoAngles(eligibleRows);
         const hotAngle = pickHotAngle(eligibleRows);
@@ -893,11 +897,12 @@ export async function getHookAnglePerformanceImpl(
                 continue;
             }
             const c = agg.byObjective.conversion;
-            // FR-034 / FR-034a / FR-037 — gate by distinct creatives.
-            // `sampleSize` here drives the tier-icon logic (the
-            // HOOK_ICON_DATA_GATE threshold); per the locked decision,
-            // it must read the creative count, not the row count.
-            const sampleSize = agg.creativeCount ?? c?.count ?? 0;
+            // FR-034 / FR-034a / FR-037 — gate by distinct creatives
+            // (T029b). `sampleSize` here drives the tier-icon logic
+            // (the HOOK_ICON_DATA_GATE threshold); per the locked
+            // decision, it must read the creative count, not the row
+            // count.
+            const sampleSize = agg.creativeCount ?? 0;
             const avg = c?.avgLinkCtr || 0;
             const icon = computeIconFromAvgs(sampleSize, avg, accountAvgLinkCtr, HOOK_ICON_DATA_GATE);
             // 🔥 reserved for the single top angle (avgLinkCtr maximum).

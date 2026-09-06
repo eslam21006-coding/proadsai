@@ -27,6 +27,12 @@ function makeHookAgg(overrides: Partial<HookPerformanceAggregate> = {}): HookPer
   return {
     angleKey: "urgency",
     sampleSize: 5,
+    // T029a (Batch 13): distinct-creative count. The default mirrors the
+    // fixture's pre-batch semantics — each row in `count` is its own
+    // creative, so the row count and the creative count match. Tests
+    // that need to exercise the gate under per-creative aggregation
+    // override this explicitly.
+    creativeCount: 5,
     lastUpdated: 1000,
     byObjective: {
       conversion: { avgLinkCtr: 1.5, count: 5, bestVerdictCount: 2, worstVerdictCount: 1 },
@@ -139,7 +145,10 @@ test("RAG: avoid returns bottom 3 angles with avgLinkCtr <= 75% of account avera
     makeHookAgg({ angleKey: "logical_authority", sampleSize: 5, byObjective: { conversion: { avgLinkCtr: 0.4, count: 5, bestVerdictCount: 0, worstVerdictCount: 0 }, other: { avgLinkCtr: 0, count: 0 } } }),
     makeHookAgg({ angleKey: "curiosity", sampleSize: 5, byObjective: { conversion: { avgLinkCtr: 0.6, count: 5, bestVerdictCount: 0, worstVerdictCount: 0 }, other: { avgLinkCtr: 0, count: 0 } } }),
     makeHookAgg({ angleKey: "contrast", sampleSize: 5, byObjective: { conversion: { avgLinkCtr: 0.8, count: 5, bestVerdictCount: 0, worstVerdictCount: 0 }, other: { avgLinkCtr: 0, count: 0 } } }),
-    makeHookAgg({ angleKey: "question", sampleSize: 2, byObjective: { conversion: { avgLinkCtr: 0.3, count: 2, bestVerdictCount: 0, worstVerdictCount: 0 }, other: { avgLinkCtr: 0, count: 0 } } }),
+    // T029a (Batch 13): the avoid gate counts distinct creatives
+    // (`creativeCount`), not `count` rows. Override so 'question' still
+    // has 2 creatives, below the AVOID_MIN_ADS floor of 3.
+    makeHookAgg({ angleKey: "question", sampleSize: 2, creativeCount: 2, byObjective: { conversion: { avgLinkCtr: 0.3, count: 2, bestVerdictCount: 0, worstVerdictCount: 0 }, other: { avgLinkCtr: 0, count: 0 } } }),
   ];
   const result = buildRAGContext(
     { userId: "u1", workspaceId: "w1", accountId: "a1", hookAggs, visualAggs: [], accountAvgLinkCtr: 1.0 },

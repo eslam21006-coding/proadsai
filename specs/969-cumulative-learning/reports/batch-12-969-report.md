@@ -212,6 +212,16 @@ simulations with their own flag and are indifferent to shared.ts's state. The
 SOURCE-TEXT assertion (#3) trips: it reads `shared.ts`, finds no
 `.ledger.angleKey = entry.hookAngle` line, and fails. **Exit 1.**
 
+This is half the demonstration, not both. The behavioural assertions did not
+discriminate — they passed under both states. They prove the simulation's own
+copy of the wiring logic is correct in both BEFORE and AFTER modes; they do
+not prove shared.ts is in the AFTER state. Only the SOURCE-TEXT check is
+load-bearing on the wiring. Until Phase 7 builds the stubbed Firestore /
+stubbed Meta scaffolding for T064b's behavioural runSyncForAccount test, the
+SOURCE-TEXT check is the **interim** regression guard for T025a — and is the
+only check that actually trips on a reverted wire-up. This is restated
+plainly in the test file's header (§3.4 below).
+
 **Step 4 — Restore.** Re-added the post-pass ledger-key wiring block to
 `metaSync/shared.ts`.
 
@@ -230,18 +240,50 @@ Passed: 3, Failed: 0
 === EXITCODE: 0
 ```
 
-**All three pass, exit 0.** Both halves demonstrated as requested.
+**All three pass, exit 0.** The SOURCE-TEXT half is demonstrated in both
+directions (revert trips, restore passes). The behavioural halves assert the
+simulation's own logic is correct in both modes — a useful property to have
+documented, but not the discrimination the task required.
 
-### §3.3 — Why this observes the worker's output, not the function's
+### §3.3 — What the simulation does and does not show
 
 The simulation calls `decidePerAdActionsForWorker` (the helper shared.ts
 calls) per ad, then runs the same post-pass patch loop shared.ts runs, then
-flows the resolved keys back through the same wiring. The only thing the
-simulation does NOT do is the chunked `batch.commit()` and the
-`acquireLearningLease()` lease dance — those are infra, not the worker's
-decision logic. What the test observes (`writes[i].data.ledger.angleKey /
-patternKey` after the post-pass patch) is exactly what `batch.commit()` would
-write to Firestore at the end of `runSyncForAccount`.
+flows the resolved keys back through the same wiring — **a second
+implementation of the worker's per-ad path**. A second implementation is a
+mirror: it asserts that the mirror's copy of the logic is correct in both
+BEFORE and AFTER modes. It does NOT assert that shared.ts's copy is correct.
+When shared.ts's wiring was physically deleted, the mirror kept working —
+the behavioural assertions passed and the SOURCE-TEXT check failed alone,
+which is the demonstration that the simulation is a mirror and not an
+observer of shared.ts's behaviour.
+
+The only thing the simulation does NOT do is the chunked `batch.commit()`
+and the `acquireLearningLease()` lease dance — those are infra, not the
+worker's decision logic. The TRUE observation of the worker's output
+requires driving `runSyncForAccount` end-to-end with stubbed Firestore
+and stubbed Meta, which is T064b's Phase 7 scaffolding. Until then, the
+SOURCE-TEXT assertion is the only check that catches a reverted wire-up;
+the behavioural assertions document that the test's own logic is correct
+in both modes and would, if shared.ts's wiring matched, observe resolved
+keys. A fifth simulation would not change this.
+
+### §3.4 — Coverage-limit note (also in the test file's header)
+
+The same point is documented in the test file's header so a future
+maintainer does not assume the behavioural assertions catch a regression.
+The header reads (verbatim, see `t025aWorkerWiringDiscriminator.test.ts`
+top comment):
+
+> The behavioural assertions in this file drive a simulation of the
+> worker's per-ad loop, not `runSyncForAccount` itself. They assert the
+> logic is correct; they do not observe what `shared.ts` executes.
+> Regression detection for the wiring rests on the SOURCE-TEXT assertion
+> until T064b's scaffolding lands.
+
+The SOURCE-TEXT assertion is the **interim** regression guard for T025a
+wiring; it is the only check that actually trips on a reverted wire-up,
+which the two demonstrations in §3.2 have now shown.
 
 ---
 
@@ -334,28 +376,79 @@ a test). The wiring change is purely additive at the worker level.
 
 ## §5 — Source-text census — standing section
 
-Per Batch 06 finding 3, this section is reported in every batch. Source-text
-assertions across `phase969/` test files (and the chain-wide guard):
+Per Batch 06 finding 3, this section is reported in every batch.
+
+### §5.1 — Categories
+
+Three categories are tracked:
+
+- **SOURCE-TEXT** / **SOURCE-ORDER** / **SOURCE-CONFIG** — assertion reads
+  source code (or source order) of the production code under test and
+  matches a pattern. Trips when the production source changes in a way that
+  breaks the pattern.
+- **BEHAVIOURAL** — assertion drives a callable (the production function or
+  a pure helper extracted from it) with controlled inputs and asserts on
+  its outputs. Trips when the callable's behaviour changes.
+- **SIMULATION** (new in Batch 12 review) — assertion drives a
+  **second implementation** of the production code path with controlled
+  inputs and asserts on its outputs. Trips when the simulation's own copy
+  of the logic changes, NOT when the production code changes. A useful
+  document of "what the expected behaviour looks like in both states" but
+  not a regression guard on the production code itself.
+
+The distinction between BEHAVIOURAL and SIMULATION is: a BEHAVIOURAL test
+calls the production function (or a function imported by production code);
+a SIMULATION test re-implements the production logic inside the test and
+drives that. Two demonstrations have shown that SIMULATION tests pass
+even when the production code is reverted (Batch 12 §3.2; see also
+T021a discriminator's three test pairs). They are useful as a documented
+mirror of expected logic; they are not a guard on the production code.
+Per the Batch 12 review correction, going forward, no test that drives a
+second implementation of the production path shall be labelled
+BEHAVIOURAL — SIMULATION is the correct category.
+
+### §5.2 — Census entries
 
 | File | Assertion | Category |
 |---|---|---|
 | `sc049Tripwire.test.ts` | source-order (last `batch.commit` < first `acquireLearningLease`) | SOURCE-ORDER (necessary-but-not-sufficient; SC-049 tripwire) |
 | `learningCascade.test.ts` (3rd assertion, line 156) | `applyAdToHook` has no `count -=` patterns | SOURCE-TEXT (necessary-but-not-sufficient; FR-014 structural guard) |
 | `t021aWireupDiscriminator.test.ts` (line 217) | shared.ts calls `resolveCreativeKeyByAdId(` AND `creativeKeyByAdId.get(ad.id)` | SOURCE-TEXT (T021a wire-up) |
-| `t025aWorkerWiringDiscriminator.test.ts` (line 313) | shared.ts has un-commented `.ledger.angleKey = entry.hookAngle` AND `.ledger.patternKey = computePatternKey` | SOURCE-TEXT (T025a wire-up — Batch 12) |
+| `t025aWorkerWiringDiscriminator.test.ts` (line 313) | shared.ts has un-commented `.ledger.angleKey = entry.hookAngle` AND `.ledger.patternKey = computePatternKey` | SOURCE-TEXT (T025a wire-up — Batch 12, interim regression guard until T064b) |
 | `testRegistrationGuard.test.ts` (chain-wide, Batch 11) | every `lib/**/*.test.js` chain entry has a `.ts` source on disk and vice versa | SOURCE-CONFIG (configuration invariant) |
+| `t021aWireupDiscriminator.test.ts` (lines 172-216) | T021a BEFORE/AFTER driving `simulateShared` + `resolveCreativeKeyByAdId` + `decidePerAdActionsForWorker`; asserts on `applyHookAggregatesDelta(...).creativeCount` | **SIMULATION** (reclassified per Batch 12 review: a second implementation of the worker's per-ad block; passed under both pre- and post-wire-up states — confirmed when shared.ts's `resolveCreativeKeyByAdId` call was reverted, the SIMULATION half passed both BEFORE and AFTER independently of the production source). The SOURCE-TEXT half in the same file is the interim regression guard. |
+| `t025aWorkerWiringDiscriminator.test.ts` (lines 195-289) | T025a BEFORE/AFTER driving the same simulation harness as T021a, plus the post-pass ledger-key mutation toggle | **SIMULATION** (reclassified per Batch 12 review: same shape — passed under both states when the wiring was physically deleted from `shared.ts`; the SOURCE-TEXT half in the same file is the interim regression guard) |
+| `perAdActions.test.ts` (lines 101-181) | T021a discriminator: drives `decideAdWriteActions` with `creativeKey=ad.id` vs `creativeKey="creative:gen:gen-55"`; aggregates via `applyHookAggregatesDelta`; asserts `creativeCount = 55` and `= 1` respectively | **SIMULATION** (reclassified per Batch 12 review: the test re-implements the worker's per-ad loop shape — `baseInput` + `baseVarying` + 55-row fixture — inside the test rather than calling the production helper. Asserts on its own `applyHookAggregatesDelta` output, not on shared.ts's behaviour. The source-text guard in `t021aWireupDiscriminator.test.ts` is the interim regression guard for the T021a wire-up that this SIMULATION documents.) |
+| `perAdActions.test.ts` (lines 243-290) | T025a function-level: drives `decideAdWriteActions` with `resolvedHookAngle="urgency"` / `resolvedPatternKey="p1"`; asserts `ledger.angleKey` and `ledger.patternKey` are populated | **SIMULATION** (reclassified per Batch 12 review: drives the pure helper with controlled inputs to assert the helper's behaviour. NOT the worker's behaviour. The worker's behaviour is asserted by the SOURCE-TEXT half in `t025aWorkerWiringDiscriminator.test.ts`.) |
 
-**Total source-text / source-order / source-config assertion groups**: 5.
-
+**Total assertion groups**: 9 (was 5).
 - 1 SOURCE-ORDER (SC-049 tripwire).
-- 3 SOURCE-TEXT (FR-014 cascade structural, T021a wire-up, T025a wire-up).
+- 3 SOURCE-TEXT (FR-014 cascade, T021a wire-up, T025a wire-up).
 - 1 SOURCE-CONFIG (chain-wide registration).
+- 4 SIMULATION (T021a discriminator BEFORE/AFTER; T025a discriminator BEFORE/AFTER; T021a `perAdActions` creativeKey forms; T025a `perAdActions` ledger-key forms).
 
-Each is paired with a behavioural counterpart that observes the property by
-behaviour (per the project convention). The new T025a SOURCE-TEXT assertion
-is paired with the BEFORE/AFTER behavioural assertions in the same file —
-the source-text half catches "shared.ts reverts the wiring"; the behavioural
-half catches "the helper logic is wrong".
+### §5.3 — Interim regression guards for wire-ups (T021a, T025a)
+
+T021a and T025a are wire-ups — the production code calls a helper that is
+correct in isolation but the worker must call it correctly. The SOURCE-TEXT
+assertions in `t021aWireupDiscriminator.test.ts` (line 217) and
+`t025aWorkerWiringDiscriminator.test.ts` (line 313) are the **interim**
+regression guards until T064b's stubbed-Firestore/stubbed-Meta
+scaffolding lands. They are the only checks that actually trip on a
+reverted wire-up. The behavioural halves in the same files are SIMULATION
+and are documented as such — they assert the helper logic in both modes
+but do not observe what shared.ts executes.
+
+### §5.4 — Standing convention going forward
+
+- A test that calls a production function or a function imported by
+  production code is BEHAVIOURAL.
+- A test that re-implements the production logic inside the test and drives
+  that is SIMULATION.
+- A test that reads source code or source order is SOURCE-TEXT / SOURCE-ORDER
+  / SOURCE-CONFIG as appropriate.
+- No test that drives a second implementation of the production path is
+  BEHAVIOURAL; SIMULATION is the only correct category for that shape.
 
 ---
 

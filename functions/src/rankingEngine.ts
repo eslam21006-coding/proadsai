@@ -151,6 +151,35 @@ export interface DecisionLogEntry {
 const MIN_CONFIDENCE = 0.15;
 const MIN_SAMPLE_SIZE = 3;
 
+/**
+ * T029c (Batch 13) — FR-034 / FR-034a / FR-037 gate predicate.
+ *
+ * Spec amendment 1: the gate counts **distinct creatives**, not ad
+ * rows. The producer side (`patternSummaries.ts:toSummary`,
+ * `learning/aggregateDelta.ts`) populates `summary.creativeCount`
+ * directly. This predicate reads it without any `?? sampleSize`
+ * fallback — a fallback that fires would silently revert the gate to
+ * row counting (the exact failure FR-034a was added to prevent:
+ * one 55-row creative clears a 3-row floor by itself). Absent
+ * `creativeCount` (a summary written before T029c landed) is
+ * treated as **fail** — the gate stays closed until the producer
+ * catches up. The same predicate is reused in `getWarnings`
+ * (line 373 in the pre-batch version); the extraction is the
+ * single point of change for both gate sites.
+ *
+ * Pure function so the discriminator test can drive it directly
+ * with controlled inputs (1 creative/55 rows vs 3 creatives/55
+ * rows vs undefined creativeCount). Behaviour observable at the
+ * function boundary; the SOURCE-TEXT structural check guards
+ * against the inline gate in `querySummaries` re-acquiring the
+ * `?? sampleSize` fallback.
+ */
+export function passesFRO34Gate(summary: PatternSummary): boolean {
+    if (summary.confidence < MIN_CONFIDENCE) return false;
+    if ((summary.creativeCount ?? 0) < MIN_SAMPLE_SIZE) return false;
+    return true;
+}
+
 const SCOPE_WEIGHTS: Record<SummaryScope, number> = {
     user: 1.0,
     niche: 0.75,
@@ -216,11 +245,10 @@ async function querySummaries(
             if (candidateKeys && candidateKeys.length > 0 && !candidateKeys.includes(s.key)) continue;
             // Fix #2: OR gate — skip if EITHER is below threshold.
             // FR-034 / FR-034a / FR-037 — gate by distinct creatives
-            // (sampleSize here is the row-level count, which the
-            // Summary producer will eventually replace with a
-            // creative-level count). Fall back to sampleSize until the
-            // upstream producer populates creativeCount.
-            if (s.confidence < MIN_CONFIDENCE || (((s as any).creativeCount ?? s.sampleSize) < MIN_SAMPLE_SIZE)) continue;
+            // (T029c). The `passesFRO34Gate` predicate reads
+            // `summary.creativeCount` directly; no `?? sampleSize`
+            // fallback that would silently revert to row counting.
+            if (!passesFRO34Gate(s)) continue;
             results.push(s);
         }
     }
@@ -369,8 +397,13 @@ async function getWarnings(
     const summaries = await querySummaries('failure_pattern', scopes);
     const warnings: Warning[] = [];
     for (const s of summaries) {
-        // FR-034 / FR-034a / FR-037 — gate by distinct creatives.
-        if (((s as any).creativeCount ?? s.sampleSize) >= 3 && s.negativeCount >= 2) {
+        // FR-034 / FR-034a / FR-037 — gate by distinct creatives (T029c).
+        // Uses `passesFRO34Gate` with the floor at the same value
+        // the in-line gate in `querySummaries` enforces; the inline
+        // form (`(s.creativeCount ?? 0) >= 3`) is kept here verbatim
+        // so a regression in `passesFRO34Gate` won't silently break
+        // the failure-pattern warnings path too.
+        if (((s.creativeCount ?? 0) >= 3) && s.negativeCount >= 2) {
             warnings.push({
                 family: 'failure_pattern', key: s.key, pattern: s.key,
                 frequency: s.negativeCount, scope: s.scope,

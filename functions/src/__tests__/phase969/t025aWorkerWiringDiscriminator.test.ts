@@ -13,6 +13,19 @@
 // withdraw-then-add path cannot locate what to withdraw, and FR-051a's
 // audit guarantee cannot answer "why is this count what it is".
 //
+// COVERAGE LIMIT (Batch 12 review correction). The behavioural
+// assertions in this file drive a simulation of the worker's per-ad
+// loop, not `runSyncForAccount` itself. They assert the logic is
+// correct; they do not observe what `shared.ts` executes. Regression
+// detection for the wiring rests on the SOURCE-TEXT assertion until
+// T064b's scaffolding lands. The two demonstrations in the Batch 12
+// report (§3.2) showed this directly: physically deleting the wiring
+// block from `shared.ts` left the two behavioural assertions passing
+// (the simulation's own copy of the logic was correct in both modes)
+// and only the SOURCE-TEXT check tripped. The behavioural assertions
+// are useful as a documented mirror of the expected logic in both
+// states; they are not the discriminator the task required.
+//
 // This file drives the WORKER path end-to-end through the helpers
 // `shared.ts` calls in the same order, and observes what the queued
 // `writes[i].data` would carry when committed. The discriminator flag
@@ -30,14 +43,14 @@
 // the keys FR-013/017's withdraw-then-add path and FR-051a's audit
 // guarantee both depend on.
 //
-// The SOURCE-TEXT structural check verifies that `shared.ts` contains
-// the wiring. A regression that reverts shared.ts (removing the
+// The SOURCE-TEXT structural check is the **interim** regression guard
+// for T025a wiring. A regression that reverts shared.ts (removing the
 // post-pass `ledger.angleKey/patternKey` mutation) trips the structural
-// check, even when the helper logic itself is correct. Together with
-// the tests above, the discriminator catches three failure modes:
-//   - helper logic wrong (test #1 or #2 fails),
-//   - shared.ts wiring missing (test #3 fails),
-//   - both halves consistent but observed by the same simulation.
+// check. When T064b lands in Phase 7 (stubbed Firestore + stubbed Meta
+// scaffolding for `runSyncForAccount`), T064b inherits the obligation
+// to also assert the worker's real output for the ledger-key wiring;
+// until then, SOURCE-TEXT is the only check that catches a reverted
+// wire-up.
 //
 // Batch 09 established the pattern; T021a made the same mistake three
 // times before Batch 09 finally observed the WORKER'S output rather than

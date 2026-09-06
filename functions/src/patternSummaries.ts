@@ -31,6 +31,23 @@ export interface PatternSummary {
     language: string | null;
     aspectRatio: string | null;
     sampleSize: number;
+    /**
+     * T029c (Batch 13) — distinct-creative count for the bucket.
+     * Spec amendment 1 changes the unit the gate counts from ad rows
+     * to distinct creatives (FR-034 / FR-034a / FR-037). For
+     * PatternSummary the bucket key (pairId / templateId /
+     * universeFamily / hookAngle) groups NRecs that each represent
+     * one generation/creative, so `b.n` already counts creatives —
+     * the field is populated to `b.n` for clarity and so the gate
+     * can read it directly without a `?? sampleSize` fallback that
+     * silently regresses to row counting.
+     *
+     * Optional for backward compatibility with summaries written
+     * before T029c landed; gates MUST treat absent as fail (no
+     * creative attributed yet, gate stays closed until the producer
+     * populates).
+     */
+    creativeCount?: number;
     deployCount: number;
     spendBackedCount: number;
     usedCount: number;
@@ -342,7 +359,16 @@ function toSummary(b: Bucket, fam: SummaryFamily, key: string, scope: SummarySco
         summaryId: buildSummaryId(scope, sv, fam, key), family: fam, key, scope, scopeValue: sv,
         niche: top(b.niches), offerType: top(b.offers), funnelStage: top(b.stages),
         language: top(b.langs), aspectRatio: top(b.ratios),
-        sampleSize: b.n, deployCount: b.deploy, spendBackedCount: b.spendBacked,
+        sampleSize: b.n,
+        // T029c (Batch 13) — distinct-creative count. Each NRec in the
+        // bucket represents one generation/creative for the bucket's
+        // family key (pairId / templateId / universeFamily / hookAngle),
+        // so b.n already counts creatives. Populating `creativeCount`
+        // lets the gate (FR-034 / FR-034a / FR-037) read it directly
+        // rather than fall back to sampleSize and silently revert to
+        // row counting.
+        creativeCount: b.n,
+        deployCount: b.deploy, spendBackedCount: b.spendBacked,
         usedCount: b.used, favoriteCount: b.fav, positiveCount: b.pos,
         negativeCount: b.neg, conversionCount: b.conv,
         totalSpend: +b.spend.toFixed(2), totalImpressions: b.impr, totalClicks: b.clicks,
