@@ -903,6 +903,18 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // it doesn't grow between syncs.
     const learnedAds: AdForLearning[] = [];
 
+    // T025a (Batch 12): track each contributing ad's queued `adDoc` by
+    // adId so the post-pass generation patch can flow the resolved
+    // `angleKey` / `patternKey` back into the queued write. The per-ad
+    // block (below) queues `writes.push({ ..., data: decision.adDoc })`
+    // BEFORE the patch runs and the function was passed nulls for
+    // `resolvedHookAngle` / `resolvedPatternKey` (those resolve later,
+    // once `genMap` is loaded). The map only contains entries for ads
+    // that contribute — failed-read ads never reach `learnedAds`, so
+    // their adDoc.ledger stays undefined (FR-070: no contribution → no
+    // ledger entry).
+    const ledgerAdDocsByAdId = new Map<string, AdDoc>();
+
     // T021a (Batch 08): compute the per-creative grouping and resolve
     // each ad's `creativeKey` from the CreativeGroup it belongs to.
     // Until this lands, the per-ad loop used `ad.id` as a per-row
@@ -1115,6 +1127,11 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
 
         if (decision.inLearnedAds && decision.learnedAd) {
             learnedAds.push(decision.learnedAd);
+            // T025a (Batch 12): track the queued adDoc so the post-pass
+            // patch can flow the resolved angleKey/patternKey back into
+            // the ledger entry on this same object (which IS the data
+            // the `writes` array holds — `writes[i].data === decision.adDoc`).
+            ledgerAdDocsByAdId.set(ad.id, decision.adDoc);
         }
     }
 
@@ -1165,6 +1182,36 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 entry.universe =
                     pickString(input.preferredUniverse)
                     || pickString(ci.universeId);
+
+                // T025a (Batch 12): the per-ad block queued the
+                // adDoc write BEFORE this post-pass patch with
+                // `resolvedHookAngle` / `resolvedPatternKey` null.
+                // Now that the patch has resolved those values from
+                // the generation doc, flow them back into the queued
+                // write's ledger entry. Without this, every live
+                // ledger record carries `angleKey: null` and
+                // `patternKey: null` — both FR-013/017's
+                // withdraw-then-add path (needs the keys to locate
+                // what to withdraw) and FR-051a's audit guarantee
+                // (needs the keys to answer "why is this count what
+                // it is") are inoperative.
+                //
+                // Failed-read ads never reach `learnedAds`, so they
+                // never appear here — their adDoc.ledger is undefined
+                // (FR-070: no contribution → no ledger entry). Ads
+                // with a genMap miss keep the null keys the original
+                // queue wrote, preserving the "no resolved keys known"
+                // signal until the generation doc is found.
+                const ledgerAdDoc = ledgerAdDocsByAdId.get(entry.adId);
+                if (ledgerAdDoc?.ledger) {
+                    ledgerAdDoc.ledger.angleKey = entry.hookAngle;
+                    ledgerAdDoc.ledger.patternKey = computePatternKey(
+                        entry.layoutTemplate,
+                        entry.creativeModes,
+                        entry.artDirection,
+                        entry.universe,
+                    );
+                }
             }
             // 3. Load existing aggregates. CRITICAL: any read error here
             //    must PROPAGATE (not be caught) — silently returning [] would
