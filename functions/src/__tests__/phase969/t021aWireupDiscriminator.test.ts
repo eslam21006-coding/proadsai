@@ -31,7 +31,7 @@
 // fallback trips the structural check.
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 declare const __dirname: string;
@@ -215,10 +215,19 @@ test("T021a AFTER wire-up: shared.ts's resolver (groupIntoCreatives) gives creat
 });
 
 test("T021a: shared.ts's source contains the wire-up call + the per-ad-block lookup (SOURCE-TEXT — necessary-but-not-sufficient)", () => {
-    // The behavioural half (BEFORE/AFTER) drives the function that
-    // shared.ts would call. This SOURCE-TEXT half verifies shared.ts
-    // actually calls it. If a future refactor bypasses the resolver
-    // (e.g. drops the lookup and falls back to ad.id), this trips.
+    // RETIRED by Phase 7 T064b. The worker-output assertion in
+    // `t064bEndToEnd.discriminator.test.ts` (the "T021a worker-output"
+    // test) drives `runSyncForAccount` end-to-end and verifies that
+    // the queued adDoc's `ledger.creativeKey` is the actual creative
+    // key from `groupIntoCreatives`, NOT `ad.id`. The source-order
+    // tripwire is no longer the only check. Re-enable by removing
+    // `t064bEndToEnd.discriminator.test.ts`.
+    const T064B_TEST = join(__dirname, "t064bEndToEnd.discriminator.test.js");
+    if (existsSync(T064B_TEST)) {
+        console.log("T021a SOURCE-TEXT tripwire RETIRED by Phase 7 T064b");
+        return;
+    }
+    // Pre-retirement path (kept for safety if T064b is reverted).
     const src = readFileSync(SHARED_TS, "utf8");
     assert.ok(
         /resolveCreativeKeyByAdId\s*\(/.test(src),

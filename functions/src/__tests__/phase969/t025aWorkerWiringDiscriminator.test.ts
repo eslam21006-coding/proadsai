@@ -57,7 +57,7 @@
 // the function's in isolation. T025a must not repeat it.
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 declare const __dirname: string;
@@ -324,11 +324,21 @@ test("T025a AFTER wiring: shared.ts's post-pass patch flows resolved ledger keys
 });
 
 test("T025a: shared.ts's source contains the post-pass ledger-key wiring (SOURCE-TEXT — necessary-but-not-sufficient)", () => {
+    // RETIRED by Phase 7 T064b. The worker-output assertion in
+    // `t064bEndToEnd.discriminator.test.ts` (the "T025a worker-output"
+    // test) drives `runSyncForAccount` end-to-end and verifies that
+    // the queued adDoc's `ledger.angleKey` and `ledger.patternKey` are
+    // the post-pass resolved values (not null). The source-order
+    // tripwire is no longer the only check. Re-enable by removing
+    // `t064bEndToEnd.discriminator.test.ts`.
+    const T064B_TEST = join(__dirname, "t064bEndToEnd.discriminator.test.js");
+    if (existsSync(T064B_TEST)) {
+        console.log("T025a SOURCE-TEXT tripwire RETIRED by Phase 7 T064b");
+        return;
+    }
+    // Pre-retirement path (kept for safety if T064b is reverted).
     const src = readFileSync(SHARED_TS, "utf8");
     const lines = src.split("\n");
-    // Find the line(s) that contain the wiring assignment. The check
-    // rejects commented-out occurrences (a regression that wraps the
-    // wiring in `//` slips past a naive regex match).
     const angleKeyLines = lines.filter((l) =>
         /\.ledger\.angleKey\s*=\s*entry\.hookAngle/.test(l));
     assert.ok(angleKeyLines.length > 0,

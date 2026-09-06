@@ -29,16 +29,45 @@
 //     a necessary but not sufficient condition for runtime order.
 //
 // The retirement is structural: when T064b lands in Phase 7, this file's
-// `describe.skip` annotation fires and the test no longer runs.
-// Owner correction to Batch 02b §3.3 makes this explicit.
+// tripwire fires its retirement sentinel — `tests for SC-049 now live in
+// `t064bEndToEnd.discriminator.test.ts` as worker-output observations
+// rather than source-order text-matching. Owner correction to Batch 02b
+// §3.3 made this explicit; Batch 15 (Phase 7) operationalises the
+// retirement by short-circuiting this file when the successor test
+// exists.
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 declare const __dirname: string;
 
 const SHARED_TS = join(__dirname, "..", "..", "..", "src", "metaSync", "shared.ts");
+
+// ─── Retirement sentinel (Batch 15 / Phase 7) ───────────────────
+//
+// When `t064bEndToEnd.discriminator.test.ts` exists in this directory,
+// the SC-049 + T021a + T025a worker-output observations live there as
+// real observations. The source-order tripwire becomes redundant — a
+// refactor that reorders or moves the commit inside a conditional no
+// longer slips past because the end-to-end test exercises the real
+// control flow. We short-circuit here so the tripwire stops running.
+const T064B_TEST = join(__dirname, "t064bEndToEnd.discriminator.test.js");
+if (existsSync(T064B_TEST)) {
+    console.log("──────────────────────────────────────────────────────────────────────────────");
+    console.log("SC-049 source-order tripwire (T018c) — RETIRED by Phase 7 T064b");
+    console.log("──────────────────────────────────────────────────────────────────────────────");
+    console.log("The SC-049 behavioural test (`t064bEndToEnd.discriminator.test.ts`) drives");
+    console.log("`runSyncForAccount` end-to-end with stubbed Firestore + Meta, pre-populates");
+    console.log("the lease doc with a different runId, and asserts both halves of FR-060a:");
+    console.log("  (a) operational status writes committed before the lease attempt,");
+    console.log("  (b) `SyncResult.status === 'failed'` when acquire is refused.");
+    console.log("The source-order text-match is no longer the only check. This file's");
+    console.log("SOURCE-TEXT assertions are now redundant and the test exits 0 without");
+    console.log("running them. To re-enable the tripwire, delete t064bEndToEnd.discriminator.test.ts");
+    console.log("(the retirement becomes a Phase 7 follow-up if T064b is ever reverted).");
+    process.exit(0);
+}
 
 const PASSED = 0;
 const FAILED = 1;
