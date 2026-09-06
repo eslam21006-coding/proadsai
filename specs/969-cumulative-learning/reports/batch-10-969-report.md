@@ -228,17 +228,108 @@ remain, awaiting an owner-approved Batch 11 deletion-and-rebuild plan.
 ## Raw output — `git diff --stat HEAD~1` at HEAD after this batch's commit
 
 ```
-<!-- placeholder: populated below after commit -->
+$ git -C "D:/proads-worktrees/969-cumulative-learning" diff --stat HEAD~1
+ .../reports/batch-10-969-report.md                 | 244 +++++++++++++++++++++
+ specs/969-cumulative-learning/tasks.md             |   4 +
+ 2 files changed, 248 insertions(+)
 ```
 
 ## Raw output — `git status --short` at HEAD after this batch's commit
 
 ```
-<!-- placeholder: populated below after commit -->
+$ git -C "D:/proads-worktrees/969-cumulative-learning" status --short
+(no output — clean working tree)
 ```
 
 ## Raw output — `npm test` (full chain) at HEAD after this batch's commit
 
 ```
-<!-- placeholder: populated below after commit -->
+$ cd functions && npm test
+> functions@ test D:\proads-worktrees\969-cumulative-learning\functions
+> npm run build && node lib/__tests__/savedProjects.projectStatus.test.js && ... && npm run test:phase969 && node lib/contractFixtures.test.js
+
+> build
+> tsc && shx mkdir -p lib/assets && shx cp -r src/assets/* lib/assets/
+
+[...]
+  ✅ SC-008: 55 rows sharing one hook angle contribute 1 sampleSize, not 55
+  ✅ T021/SC-008 (per-creative): 5 rows in one creative contribute ONE creative, not 5
+=== T026 — accumulation tests (SC-002 / SC-008 / SC-013 / SC-029c + T021/T022/T024 + T021a discriminator + T027b) ===
+[...]
+# Subtest: visual aggregate: same image in two ad sets → separate records per context
+ok 12 - visual aggregate: same image in two ad sets → separate records per context
+# Subtest: idempotency: running updateHookAggregates twice on the same data is stable (empty existing)
+ok 17 - idempotency: running updateHookAggregates twice on the same data is stable (empty existing)
+# Subtest: idempotency: updateVisualAggregates also passes the 'result back' test
+ok 19 - idempotency: updateVisualAggregates also passes the 'result back' test
+[...]
+  ✅ SC-029: 55 rows sharing one imageHash with 1 manual link → 1 creative
+  ✅ SC-029: every row in the 55-row group resolves to the manual generationId
+  ✅ SC-029a: two different imageHashes with the same generationId merge into one creative
+  ✅ SC-029a: merge preserves every row from both source hash groups
+  ✅ SC-029b route 1: hashless linked row forms a contributing single-member group
+  ✅ SC-029b route 2: already-linked row whose hash was nulled still contributes
+  ✅ SC-029b: hashless linked row, no matching creative, joins as single-member group
+  ✅ SC-029c: one matched row + several propagated rows → one creative with all rows
+  ✅ SC-029c: resolved provenance is direct_auto (the matched row won FR-074a precedence)
+  ✅ SC-029c: propagated rows in the group carry linkProvenance 'propagated'
+  ✅ SC-046: rows with neither key form a non-contributing single-member group (FR-075)
+  ✅ SC-046: hash-only group with no link in any row → contributes false
+  ✅ FR-074a: hash group with both manual and auto_hash resolves to the manual generationId
+  ✅ FR-074f: propagated rows in the group keep matchType: null so the precedence lock does not fire
+  ✅ idempotency: grouping the same input twice yields identical groups
+  ✅ order-independence: shuffled 55-row input produces the same creative as the original
+  ✅ order-independence: reverse-sorted two-hash fixture merges identically
+  ✅ mixed: linked + propagated + hashless-linked + neither → correct creative count
+  ✅ fixtures importable: buildLinkedRow and buildPropagatedRow return distinct shapes
+
+=== creativeGrouping — contract tests ===
+Passed: 19, Failed: 0
+[...]
+  ✅ T021a BEFORE wire-up: shared.ts's resolver (per-row fallback) gives creativeCount = 55 (per-row)
+  ✅ T021a AFTER wire-up: shared.ts's resolver (groupIntoCreatives) gives creativeCount = 1 (per-creative)
+  ✅ T021a: shared.ts's source contains the wire-up call + the per-ad-block lookup (SOURCE-TEXT — necessary-but-not-sufficient)
+
+=== T021a wire-up discriminator (Batch 09) ===
+Passed: 3, Failed: 0
+[...]
+  ✅ T025a: ledger.angleKey is populated from resolvedHookAngle (not null)
+  ✅ T025a: ledger.patternKey populated from resolvedPatternKey
+  ✅ T025a: ledger.creativeKey carries the actual creative key (FR-073), not ad.id
+  ✅ T025a: NO ledger entry for a non-contributing ad (FR-070/ledger hygiene)
+
+=== T028 — perAdActions tests (T021a discriminator + FR-070 behavioural + T025a ledger keys) ===
+Passed: 11, Failed: 0
+[...]
+  ✅ FR-014: cascade-marked creative no longer contributes going forward
+  ✅ FR-014: previous contribution STANDS through cascade (no withdrawal)
+  ✅ FR-014: the additive delta has no implicit-withdrawal pathway (SOURCE-TEXT — necessary-but-not-sufficient)
+  ✅ a creative never half-cascades: the eligibility filter rejects every row of a metadataAvailable=false creative
+
+=== T027 — cascade preservation (FR-014) ===
+Passed: 4, Failed: 0
+[...]
+═══ Phase 16 — Creative Modes & Art Direction QA ═══
+  ✅ 10 solo modes ✓
+  ✅ 10 approved pairs ✓
+  ✅ 4 carousel-specific ✓
+  ✅ 3 batch-specific ✓
+  ✅ 2 retargeting-specific ✓
+  ✅ self-correction ✓
+  ✅ 4 blocked combinations ✓
+  ✅ 8 adapt states ✓
+  ✅ audit: 8/8 strings free of cultural-compliance trigger words ✓
+
+═══ Phase 16 — All creative modes & art direction QA fixtures passed ═══
+
+contractFixtures.test: PASS
+
+EXITCODE=0
 ```
+
+The full chain output (4074 lines) is captured to `D:/temp/npm-test-batch10.txt`
+on this worktree's host for any later cross-reference. The two contradictions
+from Item 1 appear together: the legacy test passes ("separate records per
+context") AND the new per-creative test passes ("1 sampleSize, not 55"). The
+chain reaches `contractFixtures.test: PASS` with `EXITCODE=0`.
+
