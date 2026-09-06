@@ -104,8 +104,9 @@ import {
     decideAdWriteActions,
 } from "../learning/decideAdWriteActions.js";
 import {
-    groupIntoCreatives,
-} from "../learning/creativeGrouping.js";
+    decidePerAdActionsForWorker,
+    resolveCreativeKeyByAdId,
+} from "../learning/learningPerAdLoop.js";
 
 // ─── Constants ───────────────────────────────────────────────
 
@@ -906,34 +907,21 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // each ad's `creativeKey` from the CreativeGroup it belongs to.
     // Until this lands, the per-ad loop used `ad.id` as a per-row
     // fallback; this is the FR-073 unit of evidence wire-up.
-    const creativeKeyByAdId = new Map<string, string>();
-    try {
-        const creativeGroups = groupIntoCreatives(
-            ads.map((ad) => ({
-                adId: ad.id,
-                imageHash: (() => {
-                    const m = adMatchResults.get(ad.id);
-                    return m?.imageHash ?? null;
-                })(),
-                generationId: adMatchResults.get(ad.id)?.generationId ?? null,
-                matchType: (() => {
-                    const m = adMatchResults.get(ad.id);
-                    if (!m) return null;
-                    return m.matchType;
-                })(),
-                linkProvenance: null,
-            })),
-        );
-        for (const group of creativeGroups) {
-            for (const row of group.rows) {
-                creativeKeyByAdId.set(row.adId, group.creativeKey);
-            }
-        }
-    } catch {
-        // Per-row fallback if grouping fails for any reason. The
-        // aggregator falls back to adId when creativeKey is absent
-        // (T021a), so this is safe.
-    }
+    //
+    // T028 (Batch 09): the map-construction logic is extracted to
+    // `resolveCreativeKeyByAdId` in `learning/learningPerAdLoop.ts` so
+    // the T021a discriminator test drives the same function `shared.ts`
+    // calls. The function's catch block preserves the per-row
+    // fallback for any error condition.
+    const creativeKeyByAdId = resolveCreativeKeyByAdId(
+        ads.map((ad) => ({
+            adId: ad.id,
+            imageHash: adMatchResults.get(ad.id)?.imageHash ?? null,
+            generationId: adMatchResults.get(ad.id)?.generationId ?? null,
+            matchType: adMatchResults.get(ad.id)?.matchType ?? null,
+            linkProvenance: null,
+        })),
+    );
 
     for (const ad of ads) {
         const windows = adInsightsMap.get(ad.id);
@@ -1039,30 +1027,37 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             };
         }
 
-        // ─── T028: extract of the per-ad learning section ───────────
-        // The decision is now in `decideAdWriteActions` (Batch 07), which
-        // is tested directly. `shared.ts` calls the function and queues
-        // its outputs. There is exactly ONE implementation of the per-ad
-        // learning logic — here, calling into the helper — and one copy
-        // of its tests. A regression to the per-row fallback or to a
-        // silent-`null` ledger would fail `perAdActions.test.ts`, which
-        // is the discriminator that the owner required.
-        const decision = decideAdWriteActions(
-            {
-                adId: ad.id,
-                // T021a (Batch 08): the per-creative grouping was computed
-                // before this loop. Per-row fallback (ad.id) is in place
-                // for the case where groupIntoCreatives did not produce
-                // a key for this ad.
-                creativeKey: creativeKeyByAdId.get(ad.id) ?? ad.id,
-                resolvedHookAngle: null,
-                resolvedPatternKey: null,
-                ledgerReadFailed,
-                matchAmbiguous: match?.ambiguous ?? false,
-                existingData,
-                keepMetadataUnavailable,
-            },
-            {
+        // ─── T028 (Batch 09): per-ad block reduced to a single call ───
+        // `decidePerAdActionsForWorker` (in `learning/learningPerAdLoop.ts`)
+        // resolves the per-ad worker context (creativeKey from
+        // `creativeKeyByAdId`, ledgerReadFailed, existingData,
+        // keepMetadataUnavailable, matchAmbiguous) and returns the
+        // decision + tally. Tests drive this function directly with
+        // both the BEFORE (creativeKey = ad.id) and AFTER (creativeKey
+        // = the real creative key from groupIntoCreatives) states and
+        // observe the per-creative property (FR-073).
+        const perAd = decidePerAdActionsForWorker({
+            adId: ad.id,
+            creativeKey: creativeKeyByAdId.get(ad.id) ?? ad.id,
+            // T025a (Batch 09): the post-pass generation patch fills
+            // hookAngle/patternKey in learnedAds[i] AFTER this per-ad
+            // block runs. Here we pass null; the worker patches the
+            // values later. Tests drive the function with the
+            // post-pass state set (resolvedHookAngle: "urgency") to
+            // verify the per-creative aggregation.
+            resolvedHookAngle: null,
+            resolvedPatternKey: null,
+            match: match ? {
+                generationId: match.generationId,
+                matchType: match.matchType,
+                matchDistance: match.matchDistance,
+                imageHash: match.imageHash,
+            } : null,
+            existingData,
+            ledgerReadFailed,
+            matchAmbiguous: match?.ambiguous ?? false,
+            keepMetadataUnavailable,
+            varying: {
                 metrics: {
                     spend3d: metrics.spend3d,
                     spend7d: metrics.spend7d,
@@ -1099,29 +1094,25 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                     imageHash: match.imageHash,
                 } : null,
             },
-        );
+        });
+
+        const decision = perAd.decision;
+        const tally = perAd.tally;
 
         writes.push({
             ref: adAccountRef.collection("adPerformance").doc(ad.id),
             data: decision.adDoc as unknown as Record<string, unknown>,
         });
 
-        // Tally: the function decided matched/ambiguous/unmatched based
-        // on the resolved linking + the match-ambiguous flag. FR-070's
-        // discriminator (failed-read → null link → unmatched) is
-        // subsumed by the function's per-ad logic.
-        if (decision.tally === "matched") {
+        if (tally === "matched") {
             matchedCount++;
             if (decision.generationId) matchedGenIds.add(decision.generationId);
-        } else if (decision.tally === "ambiguous") {
+        } else if (tally === "ambiguous") {
             ambiguousCount++;
         } else {
             unmatchedCount++;
         }
 
-        // FR-070 + T021's per-creative aggregation: contribute to
-        // learnedAds only if the function says so. The function built
-        // the full AdForLearning (including creativeKey per FR-073).
         if (decision.inLearnedAds && decision.learnedAd) {
             learnedAds.push(decision.learnedAd);
         }
