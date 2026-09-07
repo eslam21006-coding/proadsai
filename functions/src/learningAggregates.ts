@@ -29,6 +29,43 @@ import { resolveCanonicalAngle } from "./canonicalAngle.js";
 
 export type LearningVerdict = "🟢" | "🟡" | "🔴" | "🛟" | "⏳";
 
+/**
+ * FR-027 (Phase 969 T047): the per-funnel-type breakdown keys. The four
+ * funnel types are the owner's funnel taxonomy
+ * (`paid_event | paid_product | free_webinar | lead_magnet_call`); the
+ * `unknown` bucket is the explicit home for rows whose funnel attribution
+ * could not be resolved (FR-032 — receives no same-funnel weighting; never
+ * matches a requested type; still counts toward headline totals).
+ */
+export type FunnelTypeBucketKey =
+    | "paid_event"
+    | "paid_product"
+    | "free_webinar"
+    | "lead_magnet_call"
+    | "unknown";
+
+/** Per-funnel-type bucket shared by hook + visual aggregates. */
+export interface FunnelTypeBucket {
+    count: number;
+}
+
+/** Whole per-funnel-type breakdown on a hook or visual aggregate. */
+export interface ByFunnelTypeBreakdown {
+    paid_event: FunnelTypeBucket;
+    paid_product: FunnelTypeBucket;
+    free_webinar: FunnelTypeBucket;
+    lead_magnet_call: FunnelTypeBucket;
+    unknown: FunnelTypeBucket;
+}
+
+export const EMPTY_BY_FUNNEL_TYPE: ByFunnelTypeBreakdown = {
+    paid_event: { count: 0 },
+    paid_product: { count: 0 },
+    free_webinar: { count: 0 },
+    lead_magnet_call: { count: 0 },
+    unknown: { count: 0 },
+};
+
 /** Mirrors the data-model §5 hookPerformance aggregate. */
 export interface HookPerformanceAggregate {
     angleKey: string;
@@ -62,6 +99,15 @@ export interface HookPerformanceAggregate {
             count: number;
         };
     };
+    /**
+     * FR-027 (Phase 969 T047) per-funnel-type breakdown. Optional on
+     * read for forward compatibility — readers MUST default to
+     * {@link EMPTY_BY_FUNNEL_TYPE} when the field is absent (older
+     * aggregates from before T047). The dashboard's multi-funnel
+     * indication reads from this field (FR-041); see `isMultiFunnel`
+     * in `whatsWorkingDashboard.ts` for the source of truth.
+     */
+    byFunnelType?: ByFunnelTypeBreakdown;
     byGeoTier: {
         tier1_gulf: { avgCtr: number; count: number };
         tier2_diaspora: { avgCtr: number; count: number };
@@ -99,6 +145,8 @@ export interface VisualPerformanceAggregate {
             count: number;
         };
     };
+    /** FR-027 per-funnel-type breakdown — see HookPerformanceAggregate. */
+    byFunnelType?: ByFunnelTypeBreakdown;
     byGeoTier: {
         tier1_gulf: { avgCpm: number; avgCtr: number; count: number };
         tier2_diaspora: { avgCpm: number; avgCtr: number; count: number };
@@ -131,6 +179,14 @@ export interface AdForLearning {
     metadataAvailable: boolean;
     /** "conversion" | "other" — controls the byObjective bucket. */
     campaignObjective: "conversion" | "other";
+    /**
+     * FR-027 (Phase 969 T047): the funnel type attributed to this row
+     * from the workspace's funnel settings at sync time. Required
+     * by the worker's read path; older fixtures and tests that omit
+     * it fall back to `unknown` inside the aggregator (FR-032 — the
+     * unknown bucket still counts toward headline totals).
+     */
+    funnelType?: FunnelTypeBucketKey;
     geoTier: "tier1_gulf" | "tier2_diaspora" | "tier3_egypt_na";
     audienceType: "broad" | "interest" | "lookalike" | "retargeting" | "advantage_plus";
     ctrLink: number;
@@ -145,6 +201,18 @@ export interface AdForLearning {
     creativeModes: string[];
     artDirection: string | null;
     universe: string | null;
+}
+
+/**
+ * Resolve an ad row's `funnelType` to a known bucket. Falls back to
+ * `"unknown"` for any input that is absent, malformed, or outside
+ * the four funnel types. Per FR-032 unknown evidence still counts
+ * toward headline totals — receiving bucket, not disqualifying bucket.
+ */
+export function resolveFunnelTypeBucketKey(raw: unknown): FunnelTypeBucketKey {
+    if (raw === "paid_event" || raw === "paid_product"
+        || raw === "free_webinar" || raw === "lead_magnet_call") return raw;
+    return "unknown";
 }
 
 // ─── Pattern key: deterministic hash of the visual pattern ────

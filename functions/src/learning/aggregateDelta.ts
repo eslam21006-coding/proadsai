@@ -40,6 +40,7 @@ import type {
     VisualPerformanceAggregate,
 } from "../learningAggregates.js";
 import type { AdForLearning } from "../learningAggregates.js";
+import { EMPTY_BY_FUNNEL_TYPE, resolveFunnelTypeBucketKey } from "../learningAggregates.js";
 
 // ─── Hook aggregator — additive deltas ─────────────────────────
 
@@ -158,6 +159,14 @@ function applyAdToHook(agg: HookWorkingAggregate, ad: AdForLearning): void {
         );
         if (ad.verdict === "🟢") agg.byObjective.conversion.bestVerdictCount += 1;
         if (ad.verdict === "🔴") agg.byObjective.conversion.worstVerdictCount += 1;
+        // FR-027 / T047: per-funnel-type breakdown. Mirrors the all-rows
+        // semantics of `byObjective.conversion.count` — every contributing
+        // row counts once against its attributed funnel bucket. The
+        // aggregator attributes rows to the workspace's funnel type read
+        // at sync time; missing attribution falls back to "unknown"
+        // (FR-032 — receives no same-funnel weighting but still counts
+        // toward headline totals).
+        incrementByFunnelType(agg, ad);
         const tier = ad.geoTier;
         const tierBefore = agg.byGeoTier[tier];
         agg.byGeoTier[tier] = {
@@ -237,6 +246,8 @@ function applyAdToVisual(agg: VisualPerformanceAggregate, ad: AdForLearning): vo
     } else {
         agg.byObjective.other.count += 1;
     }
+    // FR-027 / T047 — applies regardless of objective bucket.
+    incrementByFunnelType(agg, ad);
 }
 
 // ─── Withdrawal helper (FR-018 idempotency) ──────────────────────
@@ -281,6 +292,8 @@ export function applyHookAggregateWithdrawal(
             clone.byObjective.other.count -= 1;
         }
     }
+    // FR-027 / T047 — withdrawal symmetric with addition.
+    decrementByFunnelType(clone, ad);
     return clone;
 }
 
@@ -349,6 +362,7 @@ function cloneHook(a: HookPerformanceAggregate): HookWorkingAggregate {
             conversion: { ...a.byObjective.conversion },
             other: { ...a.byObjective.other },
         },
+        byFunnelType: a.byFunnelType ? cloneByFunnelType(a.byFunnelType) : undefined,
         byGeoTier: {
             tier1_gulf: { ...a.byGeoTier.tier1_gulf },
             tier2_diaspora: { ...a.byGeoTier.tier2_diaspora },
@@ -394,6 +408,7 @@ function cloneVisual(a: VisualPerformanceAggregate): VisualPerformanceAggregate 
             conversion: { ...a.byObjective.conversion },
             other: { count: a.byObjective.other.count },
         },
+        byFunnelType: a.byFunnelType ? cloneByFunnelType(a.byFunnelType) : undefined,
         byGeoTier: {
             tier1_gulf: { ...a.byGeoTier.tier1_gulf },
             tier2_diaspora: { ...a.byGeoTier.tier2_diaspora },
@@ -421,6 +436,7 @@ function emptyHook(angleKey: string): HookWorkingAggregate {
             conversion: { avgLinkCtr: 0, count: 0, bestVerdictCount: 0, worstVerdictCount: 0 },
             other: { avgLinkCtr: 0, count: 0 },
         },
+        byFunnelType: cloneByFunnelType(EMPTY_BY_FUNNEL_TYPE),
         byGeoTier: {
             tier1_gulf: { avgCtr: 0, count: 0 },
             tier2_diaspora: { avgCtr: 0, count: 0 },
@@ -446,6 +462,7 @@ function emptyVisual(patternKey: string): VisualPerformanceAggregate {
             conversion: { avgCpm: 0, avgLinkCtr: 0, count: 0, bestVerdictCount: 0, worstVerdictCount: 0 },
             other: { count: 0 },
         },
+        byFunnelType: cloneByFunnelType(EMPTY_BY_FUNNEL_TYPE),
         byGeoTier: {
             tier1_gulf: { avgCpm: 0, avgCtr: 0, count: 0 },
             tier2_diaspora: { avgCpm: 0, avgCtr: 0, count: 0 },
@@ -459,4 +476,49 @@ function emptyVisual(patternKey: string): VisualPerformanceAggregate {
             advantage_plus: { avgCpm: 0, avgCtr: 0, count: 0 },
         },
     };
+}
+
+// ─── FR-027 / T047 helpers — per-funnel-type breakdown ───────────────
+//
+// Mirrors the all-rows semantics of `byObjective.conversion.count`:
+// each contributing row attributes once to its `funnelType`. The
+// aggregator reads `ad.funnelType ?? "unknown"` and resolves unknown
+// inputs to the explicit "unknown" bucket (FR-032 — still counts
+// toward headline totals, never matches a requested funnel type).
+// Reads always go through `cloneByFunnelType` so the breakdown is
+// owned by the aggregate, not aliased into the function caller.
+
+type ByFunnelTypeAgg = HookPerformanceAggregate | VisualPerformanceAggregate;
+type ByFunnelTypeBreakdown = import("../learningAggregates.js").ByFunnelTypeBreakdown;
+type FunnelTypeBucketKey = import("../learningAggregates.js").FunnelTypeBucketKey;
+
+function cloneByFunnelType(
+    src: Partial<Record<FunnelTypeBucketKey, Readonly<{ count: number }>>>,
+): ByFunnelTypeBreakdown {
+    return {
+        paid_event: src.paid_event ? { count: src.paid_event.count } : { count: 0 },
+        paid_product: src.paid_product ? { count: src.paid_product.count } : { count: 0 },
+        free_webinar: src.free_webinar ? { count: src.free_webinar.count } : { count: 0 },
+        lead_magnet_call: src.lead_magnet_call ? { count: src.lead_magnet_call.count } : { count: 0 },
+        unknown: src.unknown ? { count: src.unknown.count } : { count: 0 },
+    };
+}
+
+function incrementByFunnelType(agg: ByFunnelTypeAgg, ad: AdForLearning): void {
+    const key = resolveFunnelTypeBucketKey(ad.funnelType);
+    const existing: ByFunnelTypeBreakdown = agg.byFunnelType
+        ? cloneByFunnelType(agg.byFunnelType)
+        : cloneByFunnelType(EMPTY_BY_FUNNEL_TYPE);
+    const bucket = existing[key];
+    existing[key] = { count: bucket.count + 1 };
+    agg.byFunnelType = existing;
+}
+
+function decrementByFunnelType(agg: ByFunnelTypeAgg, ad: AdForLearning): void {
+    const key = resolveFunnelTypeBucketKey(ad.funnelType);
+    const existing = agg.byFunnelType;
+    if (!existing) return;
+    const bucket = existing[key];
+    if (bucket.count <= 0) return;
+    existing[key] = { count: bucket.count - 1 };
 }

@@ -93,6 +93,13 @@ export interface PerAdWorkerContext {
     keepMetadataUnavailable: boolean;
     /** Whether the match candidate is ambiguous. */
     matchAmbiguous: boolean;
+    /**
+     * FR-027 (Phase 969 T047) — the workspace's funnel type at sync
+     * time. The aggregator attributes this row to one of the four
+     * real funnel types or to the explicit "unknown" bucket. The
+     * dashboard's `multiFunnel` indication reads `byFunnelType`.
+     */
+    funnelType: import("../learningAggregates.js").FunnelTypeBucketKey;
 }
 
 export interface PerAdWorkerInputs {
@@ -112,6 +119,10 @@ export interface PerAdWorkerInputs {
     keepMetadataUnavailable: boolean;
     /** The varying inputs (metrics, ctx, objective, etc.). */
     varying: PerAdVaryingInputs;
+    /** FR-027 — funnel attribution for this row. Optional in the public
+     * input type so existing tests stay type-clean; the helper falls
+     * back to "unknown" when absent (FR-032). */
+    funnelType?: import("../learningAggregates.js").FunnelTypeBucketKey;
 }
 
 export interface PerAdWorkerResult {
@@ -146,6 +157,8 @@ export function decidePerAdActionsForWorker(
             matchAmbiguous: inputs.matchAmbiguous,
             existingData: inputs.existingData,
             keepMetadataUnavailable: inputs.keepMetadataUnavailable,
+            // FR-027 / T047 — pass through to AdForLearning below.
+            funnelType: inputs.funnelType,
         },
         inputs.varying,
     );

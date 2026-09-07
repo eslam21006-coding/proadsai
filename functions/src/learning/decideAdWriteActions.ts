@@ -70,6 +70,13 @@ export interface PerAdActionsInput {
     existingData: Partial<AdDoc> | undefined;
     /** Forwarded to `decideAdWrite` for the cascade-preservation mark. */
     keepMetadataUnavailable: boolean;
+    /**
+     * FR-027 (Phase 969 T047) — the workspace's funnel type at sync
+     * time. Threads through to `AdForLearning.funnelType` so the
+     * aggregator's per-funnel-type breakdown reflects real
+     * attribution. Optional; helper defaults to "unknown" (FR-032).
+     */
+    funnelType?: import("../learningAggregates.js").FunnelTypeBucketKey;
 }
 
 /** Inputs that vary per-ad (metrics, verdict, match). */
@@ -169,6 +176,11 @@ export function decideAdWriteActions(
             matchType: decision.adDoc.matchType ?? null,
             metadataAvailable: decision.adDoc.metadataAvailable ?? false,
             campaignObjective: varying.objective.bucket,
+            // FR-027 / T047 — funnel attribution read from the
+            // workspace's funnel settings; missing attribution falls
+            // back to "unknown" inside the aggregator (the helper
+            // does the resolution).
+            funnelType: ctx.funnelType,
             geoTier: varying.ctx.geoTier,
             audienceType: varying.ctx.audienceType,
             ctrLink: varying.metrics.ctrLink,

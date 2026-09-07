@@ -676,6 +676,14 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // spam across a large sync.
     let funnelSettings: FunnelSettingsForVerdict | null = null;
     let settingsIncompleteLogged = false;
+    // FR-027 (Phase 969 T047) — the workspace's funnel type. Resolved
+    // once per sync from the settings doc. Each row in `learnedAds`
+    // attributes to this value; the aggregator's per-funnel-type
+    // breakdown accumulates from there. Resolves to "unknown" when
+    // the doc is absent (FR-032 — receives no same-funnel weighting,
+    // still counts toward headline totals).
+    type WorkspaceFunnelType = "paid_event" | "paid_product" | "free_webinar" | "lead_magnet_call" | "unknown";
+    let workspaceFunnelType: WorkspaceFunnelType = "unknown";
     try {
         const settingsRef = getDb()
             .collection("users").doc(userId)
@@ -687,6 +695,10 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             const data = settingsSnap.data() as Record<string, unknown>;
             if (data && typeof data.derived === "object" && data.derived !== null) {
                 funnelSettings = { derived: data.derived as FunnelSettingsForVerdict["derived"] };
+                if (data.funnelType === "paid_event" || data.funnelType === "paid_product"
+                    || data.funnelType === "free_webinar" || data.funnelType === "lead_magnet_call") {
+                    workspaceFunnelType = data.funnelType;
+                }
 
                 // FR-042 / FR-049: emit the gate log when the stored
                 // settings doc is incomplete. Single canonical
@@ -1059,6 +1071,11 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             // verify the per-creative aggregation.
             resolvedHookAngle: null,
             resolvedPatternKey: null,
+            // FR-027 (Phase 969 T047) — every contributing row
+            // attributes to the workspace's funnel type read from
+            // the settings doc; the aggregator's `byFunnelType`
+            // accumulates from there.
+            funnelType: workspaceFunnelType,
             match: match ? {
                 generationId: match.generationId,
                 matchType: match.matchType,
