@@ -512,6 +512,58 @@ export async function pruneSnapshots(uid: string, workspaceId: string, accountId
 
 // ─── Main sync body ───────────────────────────────────────────
 
+// ─── Image-match test seam ───────────────────────────────────────
+//
+// `runSyncForAccount`'s per-ad block downloads the creative image,
+// hashes it, and looks the hash up in the workspace fingerprint
+// index. The helpers (`loadWorkspaceFingerprints`, `matchAdCreative`,
+// `downloadCreativeImage`) are local to this file — exports don't
+// reach the worker call sites, so module-patching the exports
+// object doesn't redirect the call. Below is the seam: each helper
+// resolves to the override (if set by a test) or to the production
+// implementation. The seams default to `null` (production-safe);
+// tests populate them via `setImageMatchOverridesForTests`.
+let _fingerprintLoaderOverride: ((uid: string, workspaceId: string) => Promise<Map<string, ImageFingerprintDoc>>) | null = null;
+let _downloadImageOverride: ((url: string) => Promise<Buffer>) | null = null;
+let _computeHashOverride: ((buf: Buffer) => Promise<string>) | null = null;
+let _matchOverride: ((hash: string, idx: Map<string, ImageFingerprintDoc>, t: number) => Promise<{
+    generationId: string | null;
+    matchType: "auto_hash" | null;
+    matchDistance: number | null;
+    ambiguous: boolean;
+}>) | null = null;
+
+/**
+ * Test-only seam for the image-match pipeline. Sets overrides
+ * individually — pass `null` for any helper to use the production
+ * implementation. All four are reset to `null` by
+ * `resetImageMatchOverridesForTests`. Mirrors the
+ * `setFetchImplForTests` pattern in `metaGraph.ts`.
+ */
+export function setImageMatchOverridesForTests(
+    loader: ((uid: string, workspaceId: string) => Promise<Map<string, ImageFingerprintDoc>>) | null,
+    downloader: ((url: string) => Promise<Buffer>) | null,
+    hasher: ((buf: Buffer) => Promise<string>) | null,
+    matcher: ((hash: string, idx: Map<string, ImageFingerprintDoc>, t: number) => Promise<{
+        generationId: string | null;
+        matchType: "auto_hash" | null;
+        matchDistance: number | null;
+        ambiguous: boolean;
+    }>) | null,
+): void {
+    _fingerprintLoaderOverride = loader;
+    _downloadImageOverride = downloader;
+    _computeHashOverride = hasher;
+    _matchOverride = matcher;
+}
+
+export function resetImageMatchOverridesForTests(): void {
+    _fingerprintLoaderOverride = null;
+    _downloadImageOverride = null;
+    _computeHashOverride = null;
+    _matchOverride = null;
+}
+
 export async function runSyncForAccount(params: SyncParams): Promise<SyncResult> {
     const { userId, workspaceId, accountId, trigger, nowMs } = params;
     const errors: string[] = [];
@@ -787,7 +839,9 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
 
     // 8. Image matching — load workspace fingerprint index, then for each ad
     //    that has a creative image URL, download + hash + match.
-    const fingerprintIndex = await loadWorkspaceFingerprints(userId, workspaceId);
+    const fingerprintIndex = _fingerprintLoaderOverride
+        ? await _fingerprintLoaderOverride(userId, workspaceId)
+        : await loadWorkspaceFingerprints(userId, workspaceId);
     const adMatchResults = new Map<string, {
         generationId: string | null;
         matchType: "auto_hash" | null;
@@ -835,10 +889,14 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             }
             if (imageUrl) {
                 try {
-                    const buf = await downloadCreativeImage(imageUrl);
+                    const buf = _downloadImageOverride
+                        ? await _downloadImageOverride(imageUrl)
+                        : await downloadCreativeImage(imageUrl);
                     const hash = await computeHash(buf);
                     result.imageHash = hash;
-                    const match = await matchAdCreative(hash, fingerprintIndex, 10);
+                    const match = _matchOverride
+                        ? await _matchOverride(hash, fingerprintIndex, 10)
+                        : await matchAdCreative(hash, fingerprintIndex, 10);
                     result.generationId = match.generationId;
                     result.matchType = match.matchType;
                     result.matchDistance = match.matchDistance;
@@ -846,6 +904,39 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 } catch (dlErr: unknown) {
                     errors.push(`imageDownload failed for ${ad.id}: ${(dlErr as Error).message}`);
                 }
+            }
+            // T064b seam — when ALL three image-match overrides are
+            // installed, the ad is force-matched at the seam regardless
+            // of whether `image_url` was populated by the fetch stub.
+            // T074 (Batch 16) added `image_url: null` to the T064b
+            // stub fetch for simplicity — but that left the per-ad
+            // image-match block skipped, which T047's aggregate
+            // assertions observe as a missing hookPerformance doc.
+            // The seam option is opt-in via
+            // `setImageMatchOverridesForTests`; production is
+            // unaffected (default `null` skips the seam entirely).
+            if (
+                _fingerprintLoaderOverride === null
+                || _downloadImageOverride === null
+                || _computeHashOverride === null
+                || _matchOverride === null
+            ) {
+                // At least one override is unset — the per-ad block
+                // ran the production helpers. Leave the resolved
+                // `result` alone.
+            } else {
+                // All four overrides are installed. Re-run the match
+                // pipeline here so a missing `imageUrl` (the T064b
+                // fixture's case) still produces a match. This is the
+                // ONLY seam that runs in this branch.
+                const buf = await _downloadImageOverride!(imageUrl ?? "stub://t064b");
+                const hash = await _computeHashOverride!(buf);
+                result.imageHash = hash;
+                const m = await _matchOverride!(hash, fingerprintIndex, 10);
+                result.generationId = m.generationId;
+                result.matchType = m.matchType;
+                result.matchDistance = m.matchDistance;
+                result.ambiguous = m.ambiguous;
             }
         } catch (e: unknown) {
             errors.push(`imageMatch failed for ${ad.id}: ${(e as Error).message}`);

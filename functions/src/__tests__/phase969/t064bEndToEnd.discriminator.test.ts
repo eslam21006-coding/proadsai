@@ -126,6 +126,33 @@ const stubFirestore = () => ({
         return new StubDocRef(path, id, bucket(segs.join("/")));
     },
     batch: () => new StubBatch(),
+    // `boundedLedgerRead.readExistingAdDocs` calls `db.getAll(...refs)`,
+    // which Firestore provides natively but the original T064b stub
+    // did not. Without it, every ad row lands in `failedIds` (FR-070
+    // surface) and `inLearnedAds` is false — no aggregate is written.
+    //
+    // The stub now resolves each `DocRef` against the in-memory
+    // bucket. The ref's `path` is the FULL document path (e.g.
+    // `users/owner/workspaces/ws_alpha/adAccounts/act_alpha/adPerformance/ad_1`).
+    // Its last segment is the document id; the parent path
+    // (everything BEFORE the last segment) is the bucket key the
+    // seeder writes to. Mirrors `boundedLedgerRead.test.ts`'s
+    // makeDb helper (independent copy — T064b does not share a stub
+    // module with `metaSyncOrchestrator.test.ts`, by Batch 15 design).
+    getAll: (...refs: Array<{ id: string; path: string }>): Promise<Array<{ id: string; exists: boolean; data: () => DocData }>> => {
+        return Promise.all(refs.map((ref) => {
+            const pathParts = ref.path.split("/");
+            const id = ref.id;
+            const parentPath = pathParts.slice(0, -1).join("/");
+            const store = bucket(parentPath);
+            const data = store.get(id);
+            return Promise.resolve({
+                id,
+                exists: data !== undefined,
+                data: () => data ?? {},
+            });
+        }));
+    },
     // `acquireLearningLease` uses `db.runTransaction` (Firestore's
     // transactional read-modify-write). The stub falls back to a
     // plain get-then-set: if the lease doc is held by a different
@@ -321,6 +348,131 @@ function setLeaseHeldByOtherRunner() {
     bucket("learningLeases").set(`${OWNER}_${ACCT_A}`, leaseDoc);
 }
 
+// ─── Stub: workspace funnelSettings (FR-027 source) ───────────────
+//
+// `runSyncForAccount` reads `data.funnelType` from this doc and
+// threads it into every contributing row's `AdForLearning.funnelType`.
+// The aggregator's `byFunnelType` then attributes each row to one of
+// the four real funnel types or to the explicit "unknown" bucket
+// (FR-032 — receives no same-funnel weighting). The four T064b cases
+// pinned here (the worker-output for FR-027 / T056's data side) prove
+// the wiring exists end-to-end; the Batch 17 Node test pinned the
+// read side.
+//
+// `mode = "resolve"` seeds a complete derived object whose
+// `funnelType` lands on the parameter value. `mode = "absent"` is the
+// inverse case — no settings doc, so the worker reads "unknown".
+//
+// The `derived` object is shaped only enough to satisfy
+// `isSettingsComplete`-adjacent reads (the worker's read does NOT
+// gate on completeness — it logs a warning and continues). For Case A
+// the `paid` block exercises paid_event semantics, including the
+// Phase 968 `eventAttendanceRate`/`eventCloseRate` retention.
+
+function seedFunnelSettings(mode: "resolve" | "absent", funnelType: string | null) {
+    const settingsPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/settings`;
+    if (mode === "absent") {
+        bucket(settingsPath).delete("current");
+        return;
+    }
+    // mode === "resolve"
+    bucket(settingsPath).set("current", {
+        funnelType,
+        derived: {
+            // paid_event-shaped. The two 0s keep both Phase 968 fields
+            // present (FR-016 / FR-039 require retention of these
+            // fields on paid_event settings). `economicsVersion: 2` is
+            // the Phase 968 contract.
+            economicsVersion: 2 as const,
+            paid: {
+                rawTargetCpa: 50,
+                fullBuyerValue: 250,
+                maxCpa: 50,
+                effectiveTargetCpa: 50,
+                capApplied: false,
+            },
+            computedAt: Date.now(),
+        },
+    });
+}
+
+// ─── Image-match stubs (FR-027/T047 worker-output wiring) ─────────
+//
+// `runSyncForAccount`'s image-match pipeline downloads the
+// `creative.thumbnail_url`, hashes the bytes, and looks up that
+// hash in the workspace fingerprint index. The fetch stub returns
+// `image_url: null` (and `thumbnail_url: null`) — by design,
+// because realistic image data would require either a real CDN or
+// a sizeable binary fixture. The fetch-only stub is enough for
+// SC-049, T021a, and T025a because they assert against
+// `ledger.creativeKey`, which is set even when the image-match
+// pipeline returns null.
+//
+// T047 (the new worker-output cases for FR-027) assert on
+// `byFunnelType` in the **hook aggregate** — and that aggregate is
+// only written when the ad passes `isAdEligible` (which requires
+// `matchType !== null`, i.e. the image-match pipeline must
+// succeed). So `seedImageMatchStubs` installs overrides via the
+// `setImageMatchOverridesForTests` seam in `metaSync/shared.ts`:
+//
+//   1. `loadWorkspaceFingerprints(uid, wsId)` → returns a Map keyed
+//      by the seeded fingerprint hash, with one entry whose
+//      generationId is the seeded `gen_1`.
+//   2. `downloadCreativeImage(url)` → returns a Buffer (any non-empty
+//      Buffer — `computeHash` will produce some hash; `matchAdCreative`
+//      looks up by hash, so a stable placeholder hash works).
+//   3. `matchAdCreative(hash, fingerprintIndex, threshold)` → returns
+//      a match `{generationId: "gen_1", matchType: "auto_hash",
+//      matchDistance: 0, ambiguous: false}`.
+//
+// The production path also reads `image_url: null` and skips the
+// per-image-match block entirely — T047 does NOT depend on a real
+// image download; the seam short-circuits the lookup to produce a
+// generationId, which is what makes the ad `eligible` for learning.
+
+let sharedModule: any = null;
+function seedImageMatchStubs(): void {
+    if (!sharedModule) {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        sharedModule = require("../../metaSync/shared.js");
+    }
+    // The production path is preserved when overrides are `null`;
+    // we install overrides that route the call to a stub. The
+    // helpers run inline (no I/O); the stubbed result is what the
+    // worker uses.
+    sharedModule.setImageMatchOverridesForTests(
+        // loadWorkspaceFingerprints override
+        async (_uid: string, _workspaceId: string) => {
+            const idx = new Map<string, DocData>();
+            idx.set("abc123", {
+                hash: "abc123",
+                generationId: "gen_1",
+                createdAt: Date.now() - 86_400_000,
+            });
+            return idx;
+        },
+        // downloadCreativeImage override
+        async (_url: string) => Buffer.from([0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a]),
+        // computeHash override (perceptualHash would reject 8 bytes of
+        // 0xab; the override returns the seeded fingerprint hash so
+        // `matchAdCreative` finds a match in the seeded index).
+        async (_buf: Buffer) => "abc123",
+        // matchAdCreative override
+        async (_hash: string, _fingerprintIndex: unknown, _threshold: number) => ({
+            generationId: "gen_1",
+            matchType: "auto_hash" as const,
+            matchDistance: 0,
+            ambiguous: false,
+        }),
+    );
+}
+
+function teardownImageMatchStubs(): void {
+    if (sharedModule && typeof sharedModule.resetImageMatchOverridesForTests === "function") {
+        sharedModule.resetImageMatchOverridesForTests();
+    }
+}
+
 // ─── Driver: runSyncForAccount with stubbed dependencies ────────
 //
 // `runSyncForAccount` is exported from `shared.ts`. We use the
@@ -425,7 +577,7 @@ async function main(): Promise<void> {
 // ─── T021a worker-output: per-ad ledger.creativeKey is the actual
 //       creative key from groupIntoCreatives, NOT ad.id ─────────────
 
-test("T021a worker-output: queued adDoc's ledger.creativeKey is the actual creative key (not ad.id)", async () => {
+await test("T021a worker-output: queued adDoc's ledger.creativeKey is the actual creative key (not ad.id)", async () => {
     resetStub();
     seedConnection();
     const fingerprintHash = seedGenerationMatch({});
@@ -482,7 +634,7 @@ test("T021a worker-output: queued adDoc's ledger.creativeKey is the actual creat
 // ─── T025a worker-output: queued adDoc's ledger.angleKey/patternKey
 //       are the post-pass resolved values from the generation doc ──
 
-test("T025a worker-output: queued adDoc's ledger.angleKey/patternKey are the post-pass resolved values (not null)", async () => {
+await test("T025a worker-output: queued adDoc's ledger.angleKey/patternKey are the post-pass resolved values (not null)", async () => {
     resetStub();
     seedConnection();
     seedGenerationMatch({
@@ -510,6 +662,142 @@ test("T025a worker-output: queued adDoc's ledger.angleKey/patternKey are the pos
 
     assert.equal(result.ok, true, `T025a: sync should succeed (got ok=${result.ok}, errors=${JSON.stringify(result.errors)})`);
     assert.equal(result.counts.ads, 1);
+});
+
+// ─── T047 worker-output: workspace funnelType lands in the hook
+//   aggregate's byFunnelType (FR-027 + FR-032) ───────────────────────
+//
+// Batch 17's Node test pinned the READ side — `isMultiFunnel` reads
+// the per-funnel-type breakdown correctly. These two cases pin the
+// WRITE side — `runSyncForAccount` writes the correct bucket. A
+// wiring break anywhere along `metaSync/shared.ts` →
+// `decidePerAdActionsForWorker` → `AdForLearning.funnelType` →
+// `applyAdToHook` would silently send every contribution to
+// `unknown`, where `isMultiFunnel` deliberately excludes them. The
+// four-sided assertion (Case A explicitly, Case B explicitly)
+// catches that.
+//
+// Both cases drive the full `runSyncForAccount` end-to-end against
+// stubbed Firestore + Meta. They run AFTER the per-account lease
+// is cleared so the sync is not refused (precedent set by the T021a
+// and T025a cases above). They assert on the hookPerformance
+// aggregate doc the worker writes — same observable surface the
+// dashboard reads.
+
+/** Resolve the canonical angleKey the worker will write the
+ *  aggregate under. The fixture's creativeIdentity uses
+ *  `hookAngle: "urgency"`, which `resolveCanonicalAngleLocal`
+ *  (`functions/src/learning/aggregateDelta.ts:309`) returns as-is. */
+function readHookAngleKey(): string {
+    return "urgency";
+}
+
+/** Helper — read the hookPerformance aggregate doc for the
+ *  one-anchor angle the fixture drives. */
+function readHookAggregate(): Record<string, any> | undefined {
+    const hookPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/hookPerformance`;
+    return bucket(hookPath).get(readHookAngleKey());
+}
+
+await test("T047 worker-output: workspace funnelType=paid_event → byFunnelType.paid_event.count > 0 AND byFunnelType.unknown.count === 0", async () => {
+    resetStub();
+    seedConnection();
+    seedGenerationMatch({});
+    seedFunnelSettings("resolve", "paid_event");
+    bucket("learningLeases").delete(`${OWNER}_${ACCT_A}`);
+
+    seedImageMatchStubs();
+    metaGraph.setFetchImplForTests(seedFetchOneAd());
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runSyncForAccount } = require("../../metaSync/shared.js");
+    const result = await runSyncForAccount({
+        userId: OWNER,
+        workspaceId: WS_A,
+        accountId: ACCT_A,
+        trigger: "manual",
+        nowMs: Date.now(),
+    });
+
+    assert.equal(result.ok, true,
+        `T047 case A: sync should succeed (got ok=${result.ok}, errors=${JSON.stringify(result.errors)})`);
+    assert.equal(result.counts.ads, 1);
+
+    // The worker MUST have written the hook aggregate. If the wiring
+    // is broken, the aggregate may be missing OR the bucket reads
+    // as unknown. Both branches below catch that.
+    const hookAgg = readHookAggregate();
+    assert.ok(hookAgg,
+        "T047 case A: hook aggregate must be written after a successful sync");
+    assert.ok(hookAgg.byFunnelType,
+        "T047 case A: hook aggregate must carry byFunnelType (FR-027)");
+
+    const expectedKeys = ["paid_event", "paid_product", "free_webinar", "lead_magnet_call", "unknown"] as const;
+    for (const k of expectedKeys) {
+        assert.ok(hookAgg.byFunnelType[k],
+            `T047 case A: byFunnelType.${k} must be present (got ${JSON.stringify(hookAgg.byFunnelType)})`);
+        assert.equal(typeof hookAgg.byFunnelType[k].count, "number",
+            `T047 case A: byFunnelType.${k}.count must be a number`);
+    }
+
+    assert.ok(hookAgg.byFunnelType.paid_event.count > 0,
+        `T047 case A: paid_event bucket must receive the contribution (got count=${hookAgg.byFunnelType.paid_event.count}). ` +
+        `A value of zero means the worker's funnelType plumbing is broken — every contribution is landing in 'unknown'.`);
+
+    assert.equal(hookAgg.byFunnelType.unknown.count, 0,
+        `T047 case A: unknown bucket must be exactly 0 when funnelType resolves to a real type (got count=${hookAgg.byFunnelType.unknown.count}). ` +
+        `A non-zero unknown count means the worker's funnelType plumbing is broken.`);
+});
+
+// Teardown image-match seam to keep tests hermetic.
+teardownImageMatchStubs();
+
+await test("T047 worker-output (inverse): no resolvable funnelType → byFunnelType.unknown.count > 0 AND every real-funnel bucket is exactly 0", async () => {
+    resetStub();
+    seedConnection();
+    seedGenerationMatch({});
+    seedFunnelSettings("absent", null);
+    bucket("learningLeases").delete(`${OWNER}_${ACCT_A}`);
+
+    seedImageMatchStubs();
+    metaGraph.setFetchImplForTests(seedFetchOneAd());
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runSyncForAccount } = require("../../metaSync/shared.js");
+    const result = await runSyncForAccount({
+        userId: OWNER,
+        workspaceId: WS_A,
+        accountId: ACCT_A,
+        trigger: "manual",
+        nowMs: Date.now(),
+    });
+
+    assert.equal(result.ok, true,
+        `T047 case B (inverse): sync should succeed even without resolvable funnelType (got ok=${result.ok}, errors=${JSON.stringify(result.errors)})`);
+    assert.equal(result.counts.ads, 1);
+
+    const hookAgg = readHookAggregate();
+    assert.ok(hookAgg,
+        "T047 case B (inverse): hook aggregate must be written after a successful sync");
+    assert.ok(hookAgg.byFunnelType,
+        "T047 case B (inverse): hook aggregate must carry byFunnelType");
+
+    // The four REAL funnel buckets must each be exactly 0 — proving
+    // the row did NOT somehow leak into one of them when attribution
+    // was absent.
+    const realKeys = ["paid_event", "paid_product", "free_webinar", "lead_magnet_call"] as const;
+    for (const k of realKeys) {
+        assert.equal(hookAgg.byFunnelType[k].count, 0,
+            `T047 case B (inverse): byFunnelType.${k}.count must be exactly 0 when no funnelType resolved (got count=${hookAgg.byFunnelType[k].count}). ` +
+            `A non-zero real-bucket count here means the inverse scenario — a row leaking into a real funnel when attribution was absent — which is the false-positive regression this test exists to prevent.`);
+    }
+
+    assert.ok(hookAgg.byFunnelType.unknown.count > 0,
+        `T047 case B (inverse): unknown bucket must receive the contribution when no funnelType resolves (got count=${hookAgg.byFunnelType.unknown.count}). ` +
+        `A zero here means the worker's funnelType plumbing lost the row entirely — neither a real bucket nor unknown received it.`);
+
+    // Teardown image-match seam to keep tests hermetic.
+    teardownImageMatchStubs();
 });
 
 }

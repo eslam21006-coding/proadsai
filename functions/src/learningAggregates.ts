@@ -66,6 +66,46 @@ export const EMPTY_BY_FUNNEL_TYPE: ByFunnelTypeBreakdown = {
     unknown: { count: 0 },
 };
 
+/**
+ * Per-funnel-type breakdown shared by hook + visual aggregates.
+ *
+ * **The counts are ROW counts, not creative counts.** Every contributing
+ * row attributes once to one of the four real funnel buckets or to
+ * the explicit `unknown` bucket (FR-032). The shape mirrors
+ * `byObjective.conversion.count`: non-decreasing under FR-020a's
+ * additive contract, all-rows semantics.
+ *
+ * **Why this matters for the FR-030 weighting path.** `isMultiFunnel`
+ * (Batch 17 source of truth in `whatsWorkingDashboard.ts`) only
+ * reads the >0 boolean per bucket, so row counts suffice for the
+ * FR-041 boolean indicator. The retrieval-side SAME-FUNNEL WEIGHTING
+ * that FR-030 will need is a different surface — it must weigh
+ * by **distinct creatives** per funnel (the FR-073 unit of evidence),
+ * not by raw row count. If FR-030's landing reads `byFunnelType`
+ * directly, one creative fanned across 55 rows under one funnel
+ * outweighs a creative in another funnel 55:1 in any
+ * popularity-weighted score. That is exactly the same 7.4:1 fan-out
+ * inflation Batch 06 closed with `creativeCount` and
+ * `contributedCreatives` on `byObjective`, rebuilt here per funnel.
+ *
+ * **The implementation path when FR-030 lands:** mirror
+ * `HookWorkingAggregate.contributedCreatives` (a `Set<creativeKey>`
+ * per bucket) AND expose a `byFunnelTypeCreativeCount:
+ * Partial<Record<FunnelTypeBucketKey, number>>` field — populated
+ * alongside `count` in `applyAdToHook`/`applyAdToVisual`. Do NOT
+ * consume `byFunnelType.count` directly for retrieval weighting;
+ * the dashboard's `multiFunnel` boolean is the ONLY legitimate
+ * current consumer (Batch 17 owner audit). The seam of "
+ * `count` per bucket, weighted by row count" is a known production
+ * hazard worth not repeating.
+ *
+ * FR-027 requires the field to exist; FR-030 will require the
+ * unit to change. The seam is "row counts are sufficient for the
+ * FR-041 boolean, but FR-030's retrieval weighting must not consume
+ * these directly." This note exists so the FR-030 implementer
+ * does not need to re-learn the unit mismatch.
+ */
+
 /** Mirrors the data-model §5 hookPerformance aggregate. */
 export interface HookPerformanceAggregate {
     angleKey: string;
