@@ -141,6 +141,14 @@ interface StrongestAngle {
     nameAr: string;
     icon: "🔥" | "✅" | "⚠️";
     countAr: string;
+    /**
+     * FR-041 (Phase 969 T056) — true when this angle aggregate has
+     * non-zero contributions in BOTH `conversion` and `other` campaign
+     * objectives (i.e. it has been used across more than one funnel
+     * type). The frontend surfaces the `whats_working.multi_funnel.label`
+     * string ONLY when this flag is true.
+     */
+    multiFunnel: boolean;
 }
 
 interface StrongestVisual {
@@ -148,6 +156,13 @@ interface StrongestVisual {
     descriptionAr: string;
     icon: "🔥" | "✅" | "⚠️";
     countAr: string;
+    /**
+     * FR-041 (Phase 969 T056) — same definition as `StrongestAngle.multiFunnel`,
+     * but applied to the visual pattern's aggregate. Mirrored as a separate
+     * field so the frontend can render the label identically on either
+     * surface without inspecting the other list.
+     */
+    multiFunnel: boolean;
 }
 
 interface UnmatchedAd {
@@ -519,6 +534,21 @@ export async function getWhatsWorkingDashboardImpl(
                         nameAr: HOOK_ANGLE_DISPLAY_AR[r.angleKey] || HOOK_ANGLE_DISPLAY_EN[r.angleKey] || r.angleKey,
                         icon: displayIcon,
                         countAr: makeCountAr(c.count, c.bestVerdictCount, "ar"),
+                        // FR-041 (Phase 969 T056) — multi-funnel
+                        // indication. True when this angle aggregate
+                        // has been used in BOTH conversion and other
+                        // campaign objectives (the dashboard never
+                        // surfaces campaignObjective fields to the
+                        // owner; only the boolean flag here). Counts
+                        // come from `byObjective.{conversion|other}.count`
+                        // as populated by `learning/aggregateDelta.ts`
+                        // (FR-020a: counts are non-decreasing on the
+                        // conversion bucket; the `other` bucket similarly
+                        // accumulates monotonically).
+                        multiFunnel:
+                            c.count > 0
+                            && typeof r.byObjective?.other?.count === "number"
+                            && r.byObjective.other.count > 0,
                     },
                     _w: c.bestVerdictCount,
                     _n: c.count,
@@ -563,6 +593,10 @@ export async function getWhatsWorkingDashboardImpl(
             descriptionAr: string;
             icon: "🔥" | "✅" | "⚠️";
             countAr: string;
+            // FR-041 (Phase 969 T056) — mirror of
+            // `StrongestVisual.multiFunnel` so the sort tuple's
+            // out-alias keeps the field that the frontend reads.
+            multiFunnel: boolean;
         };
         type VisualTuple = { out: VisualStrongestVisualRow; _w: number; _n: number };
 
@@ -705,6 +739,15 @@ export async function getWhatsWorkingDashboardImpl(
                     descriptionAr: patternDescriptionMap.get(v.patternKey) || "—",
                     icon: displayIcon,
                     countAr: makeCountAr(c.count, c.bestVerdictCount, "ar"),
+                    // FR-041 (Phase 969 T056) — multi-funnel
+                    // indication for visual patterns. Same definition
+                    // as the angle branch: true when this pattern
+                    // aggregate has non-zero contributions in BOTH
+                    // conversion and other campaign objectives.
+                    multiFunnel:
+                        c.count > 0
+                        && typeof v.byObjective?.other?.count === "number"
+                        && v.byObjective.other.count > 0,
                 },
                 _w: c.bestVerdictCount,
                 _n: c.count,

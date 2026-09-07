@@ -57,6 +57,16 @@ interface StrongestAngle {
     nameAr: string;
     icon: "🔥" | "✅" | "⚠️";
     countAr: string;
+    /**
+     * FR-041 (Phase 969 T056) — server emits true when this angle
+     * has been used in BOTH `conversion` and `other` campaign
+     * objectives. The dashboard renders the
+     * `whats_working.multi_funnel.label` next to the row only when
+     * this flag is true. A label that always shows (or never shows)
+     * is the same defect as the bug this flag replaces — see
+     * batch-16 report §2.2 for the both-directions assertion.
+     */
+    multiFunnel: boolean;
 }
 
 interface StrongestVisual {
@@ -64,6 +74,11 @@ interface StrongestVisual {
     descriptionAr: string;
     icon: "🔥" | "✅" | "⚠️";
     countAr: string;
+    /**
+     * FR-041 (Phase 969 T056) — same as `StrongestAngle.multiFunnel`,
+     * but for the visual pattern aggregate. Backend source of truth.
+     */
+    multiFunnel: boolean;
 }
 
 interface UnmatchedAd {
@@ -388,25 +403,52 @@ function StrongestList<T extends StrongestAngle | StrongestVisual>(props: {
 }
 
 function AngleRow({ item }: { item: StrongestAngle }): React.ReactElement {
+    const { t } = useT();
     return (
         <div className="bg-slate-900/30 border border-slate-800/40 rounded-xl px-3 py-2.5 flex items-center justify-between">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
                 <span className="text-base">{item.icon}</span>
                 <span className="text-slate-100 text-xs font-bold">{item.nameAr}</span>
+                {/* FR-041 (Phase 969 T056) — multi-funnel indication.
+                    Renders ONLY when the backend's `multiFunnel` is true
+                    (angle was used across both conversion and other
+                    campaign objectives). The label and tooltip route
+                    through `useT()` so they translate when the user
+                    toggles the language. Asserted both directions in
+                    tests/whatsWorkingMultiFunnel.test.tsx. */}
+                {item.multiFunnel && (
+                    <span
+                        className="text-[10px] text-emerald-400 bg-emerald-900/30 px-2 py-0.5 rounded-md border border-emerald-800/40 shrink-0"
+                        title={t("whats_working.multi_funnel.tooltip")}
+                    >
+                        {t("whats_working.multi_funnel.label")}
+                    </span>
+                )}
             </div>
-            <span className="text-slate-400 text-[10px]">{item.countAr}</span>
+            <span className="text-slate-400 text-[10px] shrink-0">{item.countAr}</span>
         </div>
     );
 }
 
 function VisualRow({ item }: { item: StrongestVisual }): React.ReactElement {
+    const { t } = useT();
     return (
         <div className="bg-slate-900/30 border border-slate-800/40 rounded-xl px-3 py-2.5 flex items-center justify-between">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
                 <span className="text-base">{item.icon}</span>
                 <span className="text-slate-100 text-xs font-bold">{item.descriptionAr}</span>
+                {/* FR-041 (Phase 969 T056) — mirror of AngleRow, surfaced
+                    on visual pattern rows. Same conditional. */}
+                {item.multiFunnel && (
+                    <span
+                        className="text-[10px] text-emerald-400 bg-emerald-900/30 px-2 py-0.5 rounded-md border border-emerald-800/40 shrink-0"
+                        title={t("whats_working.multi_funnel.tooltip")}
+                    >
+                        {t("whats_working.multi_funnel.label")}
+                    </span>
+                )}
             </div>
-            <span className="text-slate-400 text-[10px]">{item.countAr}</span>
+            <span className="text-slate-400 text-[10px] shrink-0">{item.countAr}</span>
         </div>
     );
 }

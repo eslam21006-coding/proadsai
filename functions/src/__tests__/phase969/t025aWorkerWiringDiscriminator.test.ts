@@ -16,15 +16,11 @@
 // COVERAGE LIMIT (Batch 12 review correction). The behavioural
 // assertions in this file drive a simulation of the worker's per-ad
 // loop, not `runSyncForAccount` itself. They assert the logic is
-// correct; they do not observe what `shared.ts` executes. Regression
-// detection for the wiring rests on the SOURCE-TEXT assertion until
-// T064b's scaffolding lands. The two demonstrations in the Batch 12
-// report (§3.2) showed this directly: physically deleting the wiring
-// block from `shared.ts` left the two behavioural assertions passing
-// (the simulation's own copy of the logic was correct in both modes)
-// and only the SOURCE-TEXT check tripped. The behavioural assertions
-// are useful as a documented mirror of the expected logic in both
-// states; they are not the discriminator the task required.
+// correct; they do not observe what `shared.ts` executes. The worker-
+// output observation that replaces the SOURCE-TEXT structural check
+// lives in `t064bEndToEnd.discriminator.test.ts` ("T025a worker-output")
+// — see the RETIRED comment block below for why the source-text check
+// is no longer the right place to assert wire-up.
 //
 // This file drives the WORKER path end-to-end through the helpers
 // `shared.ts` calls in the same order, and observes what the queued
@@ -43,25 +39,11 @@
 // the keys FR-013/017's withdraw-then-add path and FR-051a's audit
 // guarantee both depend on.
 //
-// The SOURCE-TEXT structural check is the **interim** regression guard
-// for T025a wiring. A regression that reverts shared.ts (removing the
-// post-pass `ledger.angleKey/patternKey` mutation) trips the structural
-// check. When T064b lands in Phase 7 (stubbed Firestore + stubbed Meta
-// scaffolding for `runSyncForAccount`), T064b inherits the obligation
-// to also assert the worker's real output for the ledger-key wiring;
-// until then, SOURCE-TEXT is the only check that catches a reverted
-// wire-up.
-//
-// Batch 09 established the pattern; T021a made the same mistake three
-// times before Batch 09 finally observed the WORKER'S output rather than
-// the function's in isolation. T025a must not repeat it.
+// SIMULATION category (reclassified Batch 12). The wire-up observation
+// has moved to `t064bEndToEnd.discriminator.test.ts` and is no longer
+// here. Re-enable the source-text check only by reverting T064b.
 
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-
-declare const __dirname: string;
-const SHARED_TS = join(__dirname, "..", "..", "..", "src", "metaSync", "shared.ts");
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
@@ -323,39 +305,17 @@ test("T025a AFTER wiring: shared.ts's post-pass patch flows resolved ledger keys
         "expected at least one queued write with a ledger entry");
 });
 
-test("T025a: shared.ts's source contains the post-pass ledger-key wiring (SOURCE-TEXT — necessary-but-not-sufficient)", () => {
-    // RETIRED by Phase 7 T064b. The worker-output assertion in
-    // `t064bEndToEnd.discriminator.test.ts` (the "T025a worker-output"
-    // test) drives `runSyncForAccount` end-to-end and verifies that
-    // the queued adDoc's `ledger.angleKey` and `ledger.patternKey` are
-    // the post-pass resolved values (not null). The source-order
-    // tripwire is no longer the only check. Re-enable by removing
-    // `t064bEndToEnd.discriminator.test.ts`.
-    const T064B_TEST = join(__dirname, "t064bEndToEnd.discriminator.test.js");
-    if (existsSync(T064B_TEST)) {
-        console.log("T025a SOURCE-TEXT tripwire RETIRED by Phase 7 T064b");
-        return;
-    }
-    // Pre-retirement path (kept for safety if T064b is reverted).
-    const src = readFileSync(SHARED_TS, "utf8");
-    const lines = src.split("\n");
-    const angleKeyLines = lines.filter((l) =>
-        /\.ledger\.angleKey\s*=\s*entry\.hookAngle/.test(l));
-    assert.ok(angleKeyLines.length > 0,
-        "shared.ts must flow entry.hookAngle into the queued adDoc's ledger.angleKey");
-    for (const l of angleKeyLines) {
-        assert.ok(!l.trimStart().startsWith("//"),
-            "the angleKey wiring line is commented out — restore the wire-up");
-    }
-    const patternKeyLines = lines.filter((l) =>
-        /\.ledger\.patternKey\s*=\s*computePatternKey/.test(l));
-    assert.ok(patternKeyLines.length > 0,
-        "shared.ts must compute ledger.patternKey from the resolved visual-pattern fields");
-    for (const l of patternKeyLines) {
-        assert.ok(!l.trimStart().startsWith("//"),
-            "the patternKey wiring line is commented out — restore the wire-up");
-    }
-});
+// RETIRED (Phase 7 Batch 16, owner audit 2026-09-06): the SOURCE-TEXT
+// assertion that shared.ts flows `entry.hookAngle` into
+// `adDoc.ledger.angleKey` and `computePatternKey(...)` into
+// `adDoc.ledger.patternKey` has been replaced by the worker-output
+// assertion in `t064bEndToEnd.discriminator.test.ts` ("T025a
+// worker-output"), which drives `runSyncForAccount` end-to-end against
+// a stubbed bucket and reads the queued `adDoc.ledger.angleKey` /
+// `.patternKey` directly. Source-text matching had a long-standing
+// failure mode (refactor that comments out the line while keeping it
+// in the file); the worker-output assertion exercises real control
+// flow. Re-enable the source-text check only by reverting T064b.
 
 // ─── Runner ─────────────────────────────────────────────────────
 

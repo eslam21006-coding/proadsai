@@ -24,18 +24,13 @@
 // into one CreativeGroup. All 55 rows share the real creative key.
 // `creativeCount = 1` — the per-creative property HOLDS.
 //
-// SOURCE-TEXT structural check: in addition to the behavioural
-// discriminator, this test reads `shared.ts` and asserts that the
-// wire-up is in place (calls `resolveCreativeKeyByAdId` and uses its
-// map in the per-ad block). A regression that reverts to the per-row
-// fallback trips the structural check.
+// SIMULATION category (reclassified Batch 12). The worker-output
+// observation that replaces the prior SOURCE-TEXT structural check
+// lives in `t064bEndToEnd.discriminator.test.ts` ("T021a worker-output")
+// — see the RETIRED comment block below for why the source-text check
+// is no longer the right place to assert wire-up.
 
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-
-declare const __dirname: string;
-const SHARED_TS = join(__dirname, "..", "..", "..", "src", "metaSync", "shared.ts");
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
@@ -214,28 +209,16 @@ test("T021a AFTER wire-up: shared.ts's resolver (groupIntoCreatives) gives creat
         "AFTER wire-up: resolveCreativeKeyByAdId groups 55 ads into 1 creative → creativeCount = 1 (per-creative)");
 });
 
-test("T021a: shared.ts's source contains the wire-up call + the per-ad-block lookup (SOURCE-TEXT — necessary-but-not-sufficient)", () => {
-    // RETIRED by Phase 7 T064b. The worker-output assertion in
-    // `t064bEndToEnd.discriminator.test.ts` (the "T021a worker-output"
-    // test) drives `runSyncForAccount` end-to-end and verifies that
-    // the queued adDoc's `ledger.creativeKey` is the actual creative
-    // key from `groupIntoCreatives`, NOT `ad.id`. The source-order
-    // tripwire is no longer the only check. Re-enable by removing
-    // `t064bEndToEnd.discriminator.test.ts`.
-    const T064B_TEST = join(__dirname, "t064bEndToEnd.discriminator.test.js");
-    if (existsSync(T064B_TEST)) {
-        console.log("T021a SOURCE-TEXT tripwire RETIRED by Phase 7 T064b");
-        return;
-    }
-    // Pre-retirement path (kept for safety if T064b is reverted).
-    const src = readFileSync(SHARED_TS, "utf8");
-    assert.ok(
-        /resolveCreativeKeyByAdId\s*\(/.test(src),
-        "shared.ts must call resolveCreativeKeyByAdId to build the per-creative map");
-    assert.ok(
-        /creativeKeyByAdId\.get\(ad\.id\)/.test(src),
-        "shared.ts must look up creativeKey from the per-creative map in the per-ad block");
-});
+// RETIRED (Phase 7 Batch 16, owner audit 2026-09-06): the SOURCE-TEXT
+// assertion that shared.ts calls `resolveCreativeKeyByAdId(` and reads
+// `creativeKeyByAdId.get(ad.id)` has been replaced by the worker-output
+// assertion in `t064bEndToEnd.discriminator.test.ts` ("T021a worker-output"),
+// which drives `runSyncForAccount` end-to-end against a stubbed bucket
+// and reads the queued `adDoc.ledger.creativeKey` directly. Source-text
+// matching had a long-standing failure mode (a refactor that moves the
+// call inside a conditional, while keeping the lexical ordering, slips
+// past); the worker-output assertion exercises real control flow. Re-
+// enable the source-text check only by reverting T064b.
 
 // ─── Runner ─────────────────────────────────────────────────────
 
