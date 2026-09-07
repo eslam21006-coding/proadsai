@@ -1,3 +1,4 @@
+<!-- specs/969-cumulative-learning/reports/coderabbit-round-01.md: triage results for CodeRabbit Round 1. -->
 # CodeRabbit Round 1 — Comment Triage
 
 **Date**: 2026-09-07
@@ -41,8 +42,8 @@
 | CR-M2 | `learning/creativeGrouping.ts:277-286` (in dropped body) | Two hashless linked rows for the same generation produce two groups with the same creativeKey | **STYLE / OUT OF SCOPE**. The `attachGenOnly` route is exercised by `learningGrouping.test.ts` already, and a `Batch 14 — `NRec` aggregation` fix is recorded in `specs/969-cumulative-learning/reports/batch-14-969-report.md`. The edge case the reviewer describes is not represented in any test fixture. Documenting it would be useful, but it is not a bug that the current tests miss. |
 | CR-M3 | `decideAdWriteActions.ts:134` | `adName` is always written as an empty string | **REAL BUG → FIXED.** Both branches of the ternary returned `""`. Threaded `adName` through `PerAdVaryingInputs` and read it from the worker (`ad.name`). |
 | CR-M4 | `t064bEndToEnd.discriminator.test.ts:663-665` | The T025a case does not assert the ledger keys its name claims | **REAL BUG → FIXED.** The case asserted only `result.ok` and `result.counts.ads`. Now reads the queued adDoc and asserts `ledger.angleKey === "urgency"` and a non-empty `ledger.patternKey`. |
-| CR-M5 | `learning/boundedLedgerRead.ts:79` | Reject invalid chunk sizes | **REAL BUG → FIXED.** Added a guard: `!Number.isSafeInteger(chunkSize) || chunkSize <= 0` throws `RangeError`. |
-| CR-M6 | `learning/learningLease.ts:106` | Reject invalid lease TTL values | **REAL BUG → FIXED.** Added a guard: `!Number.isFinite(ttlMs) || ttlMs <= 0` throws `RangeError`. |
+| CR-M5 | `learning/boundedLedgerRead.ts:79` | Reject invalid chunk sizes | **REAL BUG → FIXED.** Added a guard: `!Number.isSafeInteger(chunkSize) \|\| chunkSize <= 0` throws `RangeError`. |
+| CR-M6 | `learning/learningLease.ts:106` | Reject invalid lease TTL values | **REAL BUG → FIXED.** Added a guard: `!Number.isFinite(ttlMs) \|\| ttlMs <= 0` throws `RangeError`. |
 | CR-M7 | `specs/.../contracts/creativeGrouping.md:14-15` | Make per-row provenance representable | **OUT OF SCOPE — spec work**. Per-row provenance is a contract change, not a code defect. The current behavior is documented; a per-row provenance is a future spec task. |
 | CR-M8 | `specs/.../contracts/contributionLedger.md:8-13` | Define the merge operation in the contract | **OUT OF SCOPE — spec work**. Same category as M7. |
 | CR-M9 | `specs/.../contracts/creativeGrouping.md:21-22` | Define conflicts between manual links | **OUT OF SCOPE — speculative**. No test fixture has two manual rows with different `generationId` in one group. Spec call to make when it occurs. |
