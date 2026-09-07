@@ -163,18 +163,7 @@ export function decidePerAdActionsForWorker(
         inputs.varying,
     );
 
-    // Tally: which bucket does this ad increment? Mirrors the
-    // pre-Batch-08 inline logic in shared.ts.
-    const genId = decision.adDoc.generationId ?? null;
-    const matchType = decision.adDoc.matchType ?? null;
-    let tally: "matched" | "ambiguous" | "unmatched";
-    if (genId && (matchType === "auto_hash" || matchType === "manual")) {
-        tally = "matched";
-    } else if (inputs.matchAmbiguous) {
-        tally = "ambiguous";
-    } else {
-        tally = "unmatched";
-    }
-
-    return { decision, tally };
+    // The tally rule lives in `decideAdWriteActions`; reuse its
+    // derived `decision.tally` so the two copies cannot drift.
+    return { decision, tally: decision.tally };
 }

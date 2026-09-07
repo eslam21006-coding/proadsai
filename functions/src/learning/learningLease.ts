@@ -105,6 +105,12 @@ export async function acquireLearningLease(
     nowMs: number,
     ttlMs: number = LEARNING_LEASE_TTL_MS,
 ): Promise<AcquireResult> {
+    // Defensive guard: a non-positive or non-finite TTL would write an
+    // already-expired lease. The next caller would see "expired" and
+    // take over, defeating the lock. Surface as RangeError.
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+        throw new RangeError(`ttlMs must be a positive finite number (got ${ttlMs})`);
+    }
     const ref = db.doc(leaseDocPath(ownerUid, accountId));
 
     return db.runTransaction(async (txn) => {

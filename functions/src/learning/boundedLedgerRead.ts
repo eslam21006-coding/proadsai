@@ -77,6 +77,13 @@ export async function readExistingAdDocs(
     options: { chunkSize?: number } = {},
 ): Promise<BoundedLedgerReadResult> {
     const chunkSize = options.chunkSize ?? LEDGER_READ_CHUNK_SIZE;
+    // Defensive guard: a non-positive or non-integer chunkSize would
+    // either skip the loop (chunkSize === 0) or advance it by an
+    // unbounded count (NaN / Infinity). Either is a silent-fail
+    // surface — surface as RangeError so the caller fails loudly.
+    if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) {
+        throw new RangeError(`chunkSize must be a positive safe integer (got ${chunkSize})`);
+    }
     const byId = new Map<string, Record<string, unknown>>();
     const failedIds = new Set<string>();
 

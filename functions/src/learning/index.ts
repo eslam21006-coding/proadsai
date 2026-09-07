@@ -20,6 +20,10 @@ export * from "./aggregateDelta.js";      // FR-015, FR-019–FR-022
 
 // ─── Phase 3 — T018b field-level discrimination (FR-070) ──────────
 export * from "./fieldLevelDiscrimination.js";
+// ─── Phase 5 — bounded ledger read + per-ad decision + per-ad loop ─
+export * from "./boundedLedgerRead.js";     // FR-068–FR-070
+export * from "./decideAdWriteActions.js";   // FR-070, FR-073, FR-074
+export * from "./learningPerAdLoop.js";      // T021a/T025a integration call site
 
 // ─── Phase 4 — conversion accrual + efficiency figure ──────────────
 // export * from "./conversionAccrual.js";  // FR-081–FR-086a

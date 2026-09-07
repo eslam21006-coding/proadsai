@@ -29,6 +29,7 @@
 // directly with both keys and asserts the discriminator holds.
 
 import type { AdDoc } from "../metaSync/shared.js";
+import { CURRENT_LEARNING_SCHEMA_VERSION } from "./types.js";
 import {
     decideAdWrite,
     type DecideAdWriteInput,
@@ -91,6 +92,13 @@ export interface PerAdVaryingInputs {
     thumbnailUrl: string | undefined;
     verdict: DecideAdWriteInput["verdict"];
     match: DecideAdWriteInput["match"];
+    /**
+     * The ad's display name as returned by Meta. Threads through to
+     * `baseDoc.adName` so the worker preserves it on `merge: true`
+     * writes instead of overwriting with the literal `""` that
+     * `decideAdWrite` previously received.
+     */
+    adName: string;
 }
 
 // ─── Outputs ────────────────────────────────────────────────────
@@ -131,7 +139,7 @@ export function decideAdWriteActions(
     // existing data and ledgerReadFailed flag.
     const decision = decideAdWrite({
         adId: ctx.adId,
-        adName: varying.match ? "" : "", // adName comes from the worker's per-ad lookup
+        adName: varying.adName,
         existingData: ctx.existingData,
         ledgerReadFailed: ctx.ledgerReadFailed,
         match: varying.match,
@@ -215,7 +223,7 @@ export function decideAdWriteActions(
             },
             efficiencyContributed: false,
             efficiencyValue: null,
-            schemaVersion: 1,
+            schemaVersion: CURRENT_LEARNING_SCHEMA_VERSION,
         };
         (decision as PerAdActionsResult & { _learnedAd: AdForLearning })._learnedAd = ad;
     }

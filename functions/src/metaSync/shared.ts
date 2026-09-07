@@ -892,7 +892,15 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                     const buf = _downloadImageOverride
                         ? await _downloadImageOverride(imageUrl)
                         : await downloadCreativeImage(imageUrl);
-                    const hash = await computeHash(buf);
+                    // Each helper seam is consulted individually when
+                    // set, so a test that installs only the hasher still
+                    // takes the production download/match paths but
+                    // hashes with the override. The all-or-nothing seam
+                    // (further down) additionally bypasses the whole
+                    // block when all four helpers are installed.
+                    const hash = _computeHashOverride
+                        ? await _computeHashOverride(buf)
+                        : await computeHash(buf);
                     result.imageHash = hash;
                     const match = _matchOverride
                         ? await _matchOverride(hash, fingerprintIndex, 10)
@@ -1200,6 +1208,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 thumbnailUrl: (ad.creative && typeof ad.creative === "object")
                     ? (ad.creative.image_url || ad.creative.thumbnail_url || undefined)
                     : undefined,
+                adName: ad.name ?? "",
                 verdict: {
                     verdict: verdictResult.verdict,
                     ruleCode: verdictResult.ruleCode,

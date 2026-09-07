@@ -320,11 +320,16 @@ function seedGenerationMatch(opts: {
         timestamp: Date.now() - 86_400_000,
         output: { phase: "build_plan" },
         feedback: { rating: null, tags: [], freeText: "", savedToFavorites: false },
+        // T025a worker-output asserts `ledger.patternKey` is non-empty.
+        // `computePatternKey` early-exits on any missing field, so
+        // include the visual fields the post-pass patch reads.
         creativeIdentity: opts.creativeIdentity ?? {
             selectedModes: ["standard_hero", "value_stack"],
             contractTemplateId: "cta_card",
             universeCategory: "office",
             hookAngle: "urgency",
+            visualSubStyle: "lifestyle",
+            universeId: "test_universe",
         },
     });
     return fingerprintHash;
@@ -637,16 +642,14 @@ await test("T021a worker-output: queued adDoc's ledger.creativeKey is the actual
 await test("T025a worker-output: queued adDoc's ledger.angleKey/patternKey are the post-pass resolved values (not null)", async () => {
     resetStub();
     seedConnection();
-    seedGenerationMatch({
-        creativeIdentity: {
-            selectedModes: ["standard_hero", "value_stack"],
-            contractTemplateId: "cta_card",
-            universeCategory: "office",
-            hookAngle: "urgency",
-        },
-    });
+    // Use the default creativeIdentity (which includes the visual
+    // fields `computePatternKey` reads) — the T025a worker-output
+    // assertion checks that the post-pass patches flow resolved keys
+    // into the queued ledger, which requires those visual fields.
+    seedGenerationMatch({});
     bucket("learningLeases").delete(`${OWNER}_${ACCT_A}`);
 
+    seedImageMatchStubs();
     metaGraph.setFetchImplForTests(seedFetchOneAd());
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -662,6 +665,17 @@ await test("T025a worker-output: queued adDoc's ledger.angleKey/patternKey are t
 
     assert.equal(result.ok, true, `T025a: sync should succeed (got ok=${result.ok}, errors=${JSON.stringify(result.errors)})`);
     assert.equal(result.counts.ads, 1);
+
+    // The adDoc write is to the workspace path (LEG B) — read it back
+    // and assert the ledger carries the post-pass resolved values.
+    const wsAdPerfPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/adPerformance`;
+    const adDoc = bucket(wsAdPerfPath).get("ad_1");
+    assert.ok(adDoc, "T025a: contributing ad must have an adPerformance doc");
+    assert.ok(adDoc.ledger, "T025a: contributing ad must carry a ledger entry");
+    assert.equal(adDoc.ledger.angleKey, "urgency",
+        "T025a worker-output: ledger.angleKey must be the resolved hook angle, not null");
+    assert.ok(typeof adDoc.ledger.patternKey === "string" && adDoc.ledger.patternKey.length > 0,
+        "T025a worker-output: ledger.patternKey must be the resolved pattern hash, not null");
 });
 
 // ─── T047 worker-output: workspace funnelType lands in the hook
@@ -802,4 +816,10 @@ await test("T047 worker-output (inverse): no resolvable funnelType → byFunnelT
 
 }
 
-main();
+main()
+    .then(runner)
+    .catch((err: Error) => {
+        console.log(`  ❌ harness error: ${err.message}`);
+        console.log(err.stack ?? "");
+        process.exit(FAILED);
+    });
