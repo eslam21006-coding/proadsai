@@ -152,14 +152,23 @@ test("computeCreativeHash: missing fields produce different hashes (no spurious 
     // A creative with no `selectedModes` is not the same as one with
     // `selectedModes = [""]` (the empty-string-empty-array default).
     // Hash collision would merge them in the bucket.
-    const a = computeCreativeHash({
-        selectedModes: [],
-        contractTemplateId: null,
-        universeCategory: null,
-        hookAngle: null,
-    });
-    const b = computeCreativeHash(null);
-    assert.notEqual(a, b, "empty identity must not collide with null identity");
+    //
+    // BATCH 21 — CodeRabbit round-2 fix: with the audit-fix, an
+    // identity whose four fields are all empty/absent hashes to
+    // null (the fallback path). Two such identities collide on null,
+    // and that's CORRECT — they share no creative identity, so the
+    // bucket counts each as one legacy row. The pre-fix code
+    // returned a non-null djb2 hash of the constant string `'|||'`
+    // for any empty identity; that was the bug. The assertion
+    // below now distinguishes a populated identity from null and
+    // from an empty identity (which also returns null).
+    const populated = computeCreativeHash({ selectedModes: ["standard_hero"], contractTemplateId: "cta_card", universeCategory: "office", hookAngle: "urgency" });
+    const empty = computeCreativeHash({ selectedModes: [], contractTemplateId: null, universeCategory: null, hookAngle: null });
+    const absent = computeCreativeHash(null);
+    assert.ok(populated, "populated identity must produce a non-null hash");
+    assert.equal(empty, null, "empty identity must hash to null (CodeRabbit round-2)");
+    assert.equal(absent, null, "absent identity must hash to null");
+    assert.notEqual(populated, empty, "populated identity must not collide with empty identity");
 });
 
 test("computeCreativeHash: returns null for null input", () => {

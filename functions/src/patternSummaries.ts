@@ -188,7 +188,7 @@ function computeScores(c: {
  * falls back to the doc-id (preserves the prior behaviour for old
  * `generations` docs written before this field existed).
  */
-export function computeCreativeHash(ci: { selectedModes?: string[] | null; contractTemplateId?: string | null; universeCategory?: string | null; hookAngle?: string | null }): string | null {
+export function computeCreativeHash(ci: { selectedModes?: string[] | null; contractTemplateId?: string | null; universeCategory?: string | null; hookAngle?: string | null } | null | undefined): string | null {
     if (!ci) return null;
     const parts = [
         [...(ci.selectedModes || [])].sort().join('+'),
@@ -196,6 +196,18 @@ export function computeCreativeHash(ci: { selectedModes?: string[] | null; contr
         ci.universeCategory || '',
         ci.hookAngle || '',
     ].join('|');
+    // BATCH 21 — CodeRabbit round-2 fix: when all four identity
+    // fields are absent, `parts === '|||'`. Without this guard the
+    // function returned a non-null djb2 hash of the constant `'|||'`
+    // string, so every record with no creativeIdentity shared one
+    // hash. That made `Bucket.creativeHashes` always report size 1
+    // for the legacy data the universeFamily gate accepts on
+    // `inp.tone`, so `creativeCount` undercounted and the FR-034a
+    // floor of 3 stayed closed. It also made the legacy fallback key
+    // (`__legacy_${r.userId}_${b.n}_${r.adId}`) unreachable from this
+    // producer — the row's `creativeHash` was never null in
+    // practice.
+    if (parts === '|||') return null;
     // djb2 hash; stable across runs and short enough to log.
     let h = 5381;
     for (let i = 0; i < parts.length; i++) {
@@ -289,7 +301,7 @@ function normalizeAndFilter(docs: FirebaseFirestore.QueryDocumentSnapshot[]): { 
             // T029c fix (Batch 14) — see `computeCreativeHash` above.
             // Stable per-creative identifier so re-generations of the
             // same creative do not inflate `creativeCount`.
-            creativeHash: computeCreativeHash(ci),
+            creativeHash: computeCreativeHash(d.creativeIdentity || null),
             adId: doc.id,
         });
         quality.accepted++;
