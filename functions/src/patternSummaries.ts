@@ -1,4 +1,4 @@
-/**
+﻿/**
  * patternSummaries.ts — Ticket 1 (Hardened)
  * ═══════════════════════════════════════════════════════════════════════════
  * Pattern summaries pipeline with:
@@ -224,6 +224,14 @@ interface NRec {
      * creative count.
      */
     creativeHash: string | null;
+    /**
+     * BATCH 20 — Item 3 (CR-M18 hashless fallback uniqueness). The
+     * `generations` document id, used to disambiguate hashless rows
+     * in the legacy fallback key. Without this, all hashless rows
+     * from one user in the same angle collapse to a single Set
+     * entry, undercounting `creativeCount` for them.
+     */
+    adId: string;
 }
 
 interface QualityReport {
@@ -282,6 +290,7 @@ function normalizeAndFilter(docs: FirebaseFirestore.QueryDocumentSnapshot[]): { 
             // Stable per-creative identifier so re-generations of the
             // same creative do not inflate `creativeCount`.
             creativeHash: computeCreativeHash(ci),
+            adId: doc.id,
         });
         quality.accepted++;
     }
@@ -414,7 +423,7 @@ function add(b: Bucket, r: NRec): void {
     // discriminator test in §3 of the Batch 14 report constructs two
     // NRecs with the same `creativeHash` and asserts the bucket's
     // creativeCount is 1, not 2.
-    b.creativeHashes.add(r.creativeHash ?? `__legacy_${r.userId}_${b.n}`);
+    b.creativeHashes.add(r.creativeHash ?? `__legacy_${r.userId}_${b.n}_${r.adId}`);
 }
 
 function toSummary(b: Bucket, fam: SummaryFamily, key: string, scope: SummaryScope, sv: string): PatternSummary {
@@ -478,6 +487,19 @@ function aggregate(records: NRec[]): PatternSummary[] {
     }
     return out;
 }
+
+// BATCH 20 — Item 3 test seam. The bucketing path (`newBucket`,
+// `add`) is private; the behavioural test in
+// `__tests__/patternSummaries.creativeHash.test.ts` exercises the
+// hashless fallback uniqueness through these seams. Production
+// callers do not import from `__bucketForTests`; the underscore
+// prefix signals test-only and the export lives at the module scope
+// rather than any barrel re-export.
+export const __bucketForTests = {
+    newBucket,
+    add,
+} as const;
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WRITE + JOB STATE

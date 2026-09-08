@@ -1,4 +1,4 @@
-// functions/src/metaSync/shared.ts — Phase 14 Layer 2 shared sync logic
+﻿// functions/src/metaSync/shared.ts — Phase 14 Layer 2 shared sync logic
 // ═══════════════════════════════════════════════════════════
 // The "run one account sync" body that the dispatcher, the worker, and the
 // manual trigger all call. Lives in its own file so the Cloud Functions
@@ -103,6 +103,8 @@ import {
 import {
     decideAdWriteActions,
 } from "../learning/decideAdWriteActions.js";
+import { decideContribution } from "../learning/contributionLedger.js";
+import type { ContributionLedgerEntry } from "../learning/types.js";
 import {
     decidePerAdActionsForWorker,
     resolveCreativeKeyByAdId,
@@ -964,7 +966,16 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         .collection("adAccounts").doc(accountId);
 
     // Batch all writes — Firestore batch max 500 ops; chunk if needed.
+    // BATCH 20 — Item 1: FR-060a lease fence. Two arrays:
+    //   - writes     — operational status writes (FR-009, FR-060a)
+    //                    commit BEFORE the learning lease is attempted.
+    //   - ggregateWrites — learning-aggregate writes (hook/visual
+    //                    performance) commit INSIDE the lease-held try
+    //                    block. The lease must fence the aggregate
+    //                    write, not just the per-ad write.
     const writes: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
+    const aggregateWrites: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
+
 
     // Batch-load existing adPerformance docs for the current sync's
     // ad batch (FR-067). Replaces the unbounded `collection("adPerformance")
@@ -1330,6 +1341,28 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                     );
                 }
             }
+            // would be a noop against the recorded entry. The per-ad
+            // block queued the adDoc with `angleKey: null, patternKey:
+            // null`; the post-pass patch above has flowed the resolved
+            // keys into `ledgerAdDoc.ledger`. We compare the patched
+            // `ledgerAdDoc.ledger` (desired) against
+            // `existingByAdId.get(adId)?.ledger` (recorded, from the
+            // bounded read). When they match, the row is a noop and
+            // must be removed from `learnedAds` before the aggregator
+            // runs. Otherwise a second sync over the same input would
+            // double-count the per-row sums (FR-018).
+            for (let i = learnedAds.length - 1; i >= 0; i--) {
+                const ad = learnedAds[i];
+                const ledgerAdDoc = ledgerAdDocsByAdId.get(ad.adId);
+                const desired = ledgerAdDoc?.ledger as ContributionLedgerEntry | undefined;
+                const recorded = existingByAdId.get(ad.adId)?.ledger as ContributionLedgerEntry | undefined;
+                if (!desired || !recorded) continue;
+                const decision = decideContribution(desired, recorded ?? null);
+                if (decision.kind === "noop") {
+                    learnedAds.splice(i, 1);
+                }
+            }
+
             // 3. Load existing aggregates. CRITICAL: any read error here
             //    must PROPAGATE (not be caught) — silently returning [] would
             //    cause the aggregator to compute stats from a wrong baseline,
@@ -1354,14 +1387,14 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             //    Use set with merge=true so concurrent updates to other
             //    dimensions don't clobber.
             for (const [angleKey, agg] of newHook) {
-                writes.push({
+                aggregateWrites.push({
                     ref: adAccountRef.collection("hookPerformance").doc(angleKey),
                     data: agg as unknown as Record<string, unknown>,
                 });
             }
             for (const [patternKey, agg] of newVisual) {
                 if (!patternKey) continue;
-                writes.push({
+                aggregateWrites.push({
                     ref: adAccountRef.collection("visualPerformance").doc(patternKey),
                     data: agg as unknown as Record<string, unknown>,
                 });
@@ -1541,9 +1574,29 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         // failedLedgerReads set is consumed in the per-ad loop above
         // (T018b) — the field-level discrimination omits the linking
         // fields from the adDoc merge write.
-    } finally {
+
+
+        // BATCH 20 — Item 1: commit the learning-aggregate writes
+        // (hookPerformance / visualPerformance) INSIDE the lease-held
+        // try block. The operational writes have already committed
+        // above; this loop's writes are fenced by the lease.
+        for (let i = 0; i < aggregateWrites.length; i += 450) {
+            const chunk = aggregateWrites.slice(i, i + 450);
+            const batch = getDb().batch();
+            for (const w of chunk) batch.set(w.ref, w.data, { merge: true });
+            await batch.commit().catch((e: unknown) => {
+        errors.push(`aggregate batch commit failed: ${(e as Error).message}`);
+            });
+        }
         // FR-058: release verifies holder identity. A run that lost its
         // lease to a takeover cannot release its successor's lease.
+        await releaseLearningLease(
+            getDb() as unknown as Parameters<typeof releaseLearningLease>[0],
+            userId,
+            accountId,
+            learningRunId,
+        );
+    } finally {
         await releaseLearningLease(
             getDb() as unknown as Parameters<typeof releaseLearningLease>[0],
             userId,

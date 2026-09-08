@@ -1,6 +1,6 @@
-// functions/src/__tests__/phase969/t064bEndToEnd.discriminator.test.ts — T064b SC-049 + worker-output observations (Phase 7)
-// ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// Phase 969 Phase 7, T064b — SC-049 behavioural test + worker-output
+﻿// functions/src/__tests__/phase969/t064bEndToEnd.discriminator.test.ts ΓÇö T064b SC-049 + worker-output observations (Phase 7)
+// ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+// Phase 969 Phase 7, T064b ΓÇö SC-049 behavioural test + worker-output
 // observations for T021a and T025a wire-ups.
 //
 // Why this file exists:
@@ -16,7 +16,7 @@
 //
 // What this file asserts:
 // ------------------------
-//   - SC-049: pre-populated lease with a different runId →
+//   - SC-049: pre-populated lease with a different runId ΓåÆ
 //     `runSyncForAccount` returns `{status: "failed"}` AND the
 //     operational adPerformance writes committed BEFORE the lease
 //     attempt (FR-060a's ordering preserved).
@@ -31,7 +31,7 @@
 // ----------------------
 // The Firestore stub, fetch stub, admin override, secrets override,
 // and lease override are modelled on `metaSyncOrchestrator.test.ts`.
-// They are NOT extracted to a shared module in this batch — the
+// They are NOT extracted to a shared module in this batch ΓÇö the
 // duplication is contained to the two test files and would be cleaned
 // up in a follow-up if a third driver of `runSyncForAccount` appears.
 // The behavioural surface of every stubbed dependency is the
@@ -42,7 +42,7 @@ import assert from "node:assert/strict";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const admin: any = require("firebase-admin");
 
-// ─── Firestore stub (in-memory) ─────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Firestore stub (in-memory) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 type DocData = Record<string, any>;
 const stubStore: Record<string, Map<string, DocData>> = {};
@@ -129,7 +129,7 @@ const stubFirestore = () => ({
     // `boundedLedgerRead.readExistingAdDocs` calls `db.getAll(...refs)`,
     // which Firestore provides natively but the original T064b stub
     // did not. Without it, every ad row lands in `failedIds` (FR-070
-    // surface) and `inLearnedAds` is false — no aggregate is written.
+    // surface) and `inLearnedAds` is false ΓÇö no aggregate is written.
     //
     // The stub now resolves each `DocRef` against the in-memory
     // bucket. The ref's `path` is the FULL document path (e.g.
@@ -137,7 +137,7 @@ const stubFirestore = () => ({
     // Its last segment is the document id; the parent path
     // (everything BEFORE the last segment) is the bucket key the
     // seeder writes to. Mirrors `boundedLedgerRead.test.ts`'s
-    // makeDb helper (independent copy — T064b does not share a stub
+    // makeDb helper (independent copy ΓÇö T064b does not share a stub
     // module with `metaSyncOrchestrator.test.ts`, by Batch 15 design).
     getAll: (...refs: Array<{ id: string; path: string }>): Promise<Array<{ id: string; exists: boolean; data: () => DocData }>> => {
         return Promise.all(refs.map((ref) => {
@@ -204,13 +204,13 @@ Object.defineProperty(legacyTokenModule, "decryptLegacyToken", {
     writable: true,
 });
 
-// ─── Fixtures ─────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Fixtures ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 const OWNER = "owner_uid_AAAA";
 const WS_A = "ws_alpha";
 const ACCT_A = "act_alpha";
 
-// ─── Stub: connection doc (loadStoredConnection reads this) ────────
+// ΓöÇΓöÇΓöÇ Stub: connection doc (loadStoredConnection reads this) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function seedConnection() {
     // LEG A reads from the top-level `metaConnections/{userId}` doc.
@@ -238,7 +238,7 @@ function seedConnection() {
     });
 }
 
-// ─── Stub: Meta fetch (campaigns, adsets, ads, insights) ──────────
+// ΓöÇΓöÇΓöÇ Stub: Meta fetch (campaigns, adsets, ads, insights) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function seedFetchOneAd() {
     const fetchImpl: typeof fetch = (async (input: any): Promise<Response> => {
@@ -292,15 +292,15 @@ function seedFetchOneAd() {
     return fetchImpl;
 }
 
-// ─── Stub: legacyToken (decryptLegacyToken returns PLAIN_TOKEN) ─────
+// ΓöÇΓöÇΓöÇ Stub: legacyToken (decryptLegacyToken returns PLAIN_TOKEN) ΓöÇΓöÇΓöÇΓöÇΓöÇ
 //
 // `secretsModule.metaAppSecret.value()` is overridden above.
 // `decryptLegacyToken(encryptedToken, secret)` then derives the access
 // token from the encrypted bytes + secret. We don't care about the
-// crypto here — the production code only checks `secret` is non-empty,
+// crypto here ΓÇö the production code only checks `secret` is non-empty,
 // so any non-empty string is fine.
 
-// ─── Stub: fingerprint + generation match (T021a/T025a) ────────────
+// ΓöÇΓöÇΓöÇ Stub: fingerprint + generation match (T021a/T025a) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function seedGenerationMatch(opts: {
     fingerprintHash?: string;
@@ -335,7 +335,7 @@ function seedGenerationMatch(opts: {
     return fingerprintHash;
 }
 
-// ─── Lease override (for the SC-049 case) ────────────────────────
+// ΓöÇΓöÇΓöÇ Lease override (for the SC-049 case) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function setLeaseHeldByOtherRunner() {
     // `parseHolder` (learningLease.ts:79) requires ALL of these
@@ -353,24 +353,24 @@ function setLeaseHeldByOtherRunner() {
     bucket("learningLeases").set(`${OWNER}_${ACCT_A}`, leaseDoc);
 }
 
-// ─── Stub: workspace funnelSettings (FR-027 source) ───────────────
+// ΓöÇΓöÇΓöÇ Stub: workspace funnelSettings (FR-027 source) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 //
 // `runSyncForAccount` reads `data.funnelType` from this doc and
 // threads it into every contributing row's `AdForLearning.funnelType`.
 // The aggregator's `byFunnelType` then attributes each row to one of
 // the four real funnel types or to the explicit "unknown" bucket
-// (FR-032 — receives no same-funnel weighting). The four T064b cases
+// (FR-032 ΓÇö receives no same-funnel weighting). The four T064b cases
 // pinned here (the worker-output for FR-027 / T056's data side) prove
 // the wiring exists end-to-end; the Batch 17 Node test pinned the
 // read side.
 //
 // `mode = "resolve"` seeds a complete derived object whose
 // `funnelType` lands on the parameter value. `mode = "absent"` is the
-// inverse case — no settings doc, so the worker reads "unknown".
+// inverse case ΓÇö no settings doc, so the worker reads "unknown".
 //
 // The `derived` object is shaped only enough to satisfy
 // `isSettingsComplete`-adjacent reads (the worker's read does NOT
-// gate on completeness — it logs a warning and continues). For Case A
+// gate on completeness ΓÇö it logs a warning and continues). For Case A
 // the `paid` block exercises paid_event semantics, including the
 // Phase 968 `eventAttendanceRate`/`eventCloseRate` retention.
 
@@ -401,12 +401,12 @@ function seedFunnelSettings(mode: "resolve" | "absent", funnelType: string | nul
     });
 }
 
-// ─── Image-match stubs (FR-027/T047 worker-output wiring) ─────────
+// ΓöÇΓöÇΓöÇ Image-match stubs (FR-027/T047 worker-output wiring) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 //
 // `runSyncForAccount`'s image-match pipeline downloads the
 // `creative.thumbnail_url`, hashes the bytes, and looks up that
 // hash in the workspace fingerprint index. The fetch stub returns
-// `image_url: null` (and `thumbnail_url: null`) — by design,
+// `image_url: null` (and `thumbnail_url: null`) ΓÇö by design,
 // because realistic image data would require either a real CDN or
 // a sizeable binary fixture. The fetch-only stub is enough for
 // SC-049, T021a, and T025a because they assert against
@@ -414,24 +414,24 @@ function seedFunnelSettings(mode: "resolve" | "absent", funnelType: string | nul
 // pipeline returns null.
 //
 // T047 (the new worker-output cases for FR-027) assert on
-// `byFunnelType` in the **hook aggregate** — and that aggregate is
+// `byFunnelType` in the **hook aggregate** ΓÇö and that aggregate is
 // only written when the ad passes `isAdEligible` (which requires
 // `matchType !== null`, i.e. the image-match pipeline must
 // succeed). So `seedImageMatchStubs` installs overrides via the
 // `setImageMatchOverridesForTests` seam in `metaSync/shared.ts`:
 //
-//   1. `loadWorkspaceFingerprints(uid, wsId)` → returns a Map keyed
+//   1. `loadWorkspaceFingerprints(uid, wsId)` ΓåÆ returns a Map keyed
 //      by the seeded fingerprint hash, with one entry whose
 //      generationId is the seeded `gen_1`.
-//   2. `downloadCreativeImage(url)` → returns a Buffer (any non-empty
-//      Buffer — `computeHash` will produce some hash; `matchAdCreative`
+//   2. `downloadCreativeImage(url)` ΓåÆ returns a Buffer (any non-empty
+//      Buffer ΓÇö `computeHash` will produce some hash; `matchAdCreative`
 //      looks up by hash, so a stable placeholder hash works).
-//   3. `matchAdCreative(hash, fingerprintIndex, threshold)` → returns
+//   3. `matchAdCreative(hash, fingerprintIndex, threshold)` ΓåÆ returns
 //      a match `{generationId: "gen_1", matchType: "auto_hash",
 //      matchDistance: 0, ambiguous: false}`.
 //
 // The production path also reads `image_url: null` and skips the
-// per-image-match block entirely — T047 does NOT depend on a real
+// per-image-match block entirely ΓÇö T047 does NOT depend on a real
 // image download; the seam short-circuits the lookup to produce a
 // generationId, which is what makes the ad `eligible` for learning.
 
@@ -478,7 +478,7 @@ function teardownImageMatchStubs(): void {
     }
 }
 
-// ─── Driver: runSyncForAccount with stubbed dependencies ────────
+// ΓöÇΓöÇΓöÇ Driver: runSyncForAccount with stubbed dependencies ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 //
 // `runSyncForAccount` is exported from `shared.ts`. We use the
 // `metaGraph` `setFetchImplForTests` seam to inject the canned fetch.
@@ -496,10 +496,10 @@ let failed = 0;
 async function test(name: string, fn: () => Promise<void> | void): Promise<void> {
     try {
         await fn();
-        console.log(`  ✅ ${name}`);
+        console.log(`  Γ£à ${name}`);
         passed++;
     } catch (e) {
-        console.log(`  ❌ ${name}`);
+        console.log(`  Γ¥î ${name}`);
         console.log(`     ${(e as Error).message}`);
         failed++;
     }
@@ -514,7 +514,7 @@ function runner() {
 }
 
 async function main(): Promise<void> {
-    await test("SC-049: pre-populated lease (different runId) → status='failed'", async () => {
+    await test("SC-049: pre-populated lease (different runId) ΓåÆ status='failed'", async () => {
         resetStub();
         seedConnection();
         seedGenerationMatch({});
@@ -577,10 +577,171 @@ async function main(): Promise<void> {
             `SC-049 second-half: at least one operational write should be committed before the lease refusal; ` +
             `found ${wsWrites.size} writes at ${wsPath} and ${rootWrites.size} at root adPerformance. ` +
             `run status=${result.status}, errors=${JSON.stringify(result.errors)}`);
+});
+
+// ΓöÇΓöÇΓöÇ BATCH 19 ΓÇö Item 1 (lease fence on aggregate writes) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+//
+// Batch 18 confirmed the audit: the per-ad `writes` array carries both
+// operational writes (adPerformance) AND aggregate writes
+// (hookPerformance, visualPerformance, baselines, syncSnapshot). The
+// commit loop runs BEFORE `acquireLearningLease`. A lease-refused run
+// has already committed its aggregates ΓÇö defeating FR-054a / FR-055
+// (the lease's entire purpose).
+//
+// Two tests pin the fix: a lease-refused run writes operational
+// state and NO aggregate; a lease-acquired run writes both. They
+// assert directly against the stubbed bucket so they survive
+// independent of the result shape.
+
+await test("BATCH 20: lease-refused run writes operational state and NO aggregate document", async () => {
+    resetStub();
+    seedConnection();
+    seedGenerationMatch({});
+    // BATCH 20: seed the image-match stubs so the per-ad block
+    // populates learnedAds. Without this, the aggregate code path
+    // doesn't execute and the bug (aggregate commit before lease)
+    // is not exercised -- the original BATCH 19 lease-refused case
+    // passed on reverted source because of this gap. With the
+    // stubs in place, learnedAds is non-empty, aggregates are
+    // pushed to writes, and on reverted source they commit
+    // before the lease is acquired.
+    seedImageMatchStubs();
+    setLeaseHeldByOtherRunner();
+    metaGraph.setFetchImplForTests(seedFetchOneAd());
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runSyncForAccount } = require("../../metaSync/shared.js");
+
+    const result = await runSyncForAccount({
+        userId: OWNER,
+        workspaceId: WS_A,
+        accountId: ACCT_A,
+        trigger: "manual",
+        nowMs: Date.now(),
     });
 
-// ─── T021a worker-output: per-ad ledger.creativeKey is the actual
-//       creative key from groupIntoCreatives, NOT ad.id ─────────────
+    // FR-060a: lease-refused sync still reports the action list. The
+    // owner-action list (per-ad adPerformance writes) is the
+    // operational state.
+    assert.equal(result.status, "failed",
+        `Batch 19 item 1: lease-refused must report status="failed" (got ${result.status}, errors=${JSON.stringify(result.errors)})`);
+
+    // FR-054a / FR-055: the aggregate write MUST be fenced by the
+    // lease. A lease-refused run commits operational state and NO
+    // aggregate document. Direct bucket inspection ΓÇö the stub's
+    // commit() is what the worker would call against Firestore.
+    const hookPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/hookPerformance`;
+    const visualPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/visualPerformance`;
+    assert.equal(bucket(hookPath).size, 0,
+        `Batch 19 item 1: lease-refused must NOT commit any hook aggregate document (found ${bucket(hookPath).size} writes at ${hookPath})`);
+    assert.equal(bucket(visualPath).size, 0,
+        `Batch 19 item 1: lease-refused must NOT commit any visual aggregate document (found ${bucket(visualPath).size} writes at ${visualPath})`);
+
+    // Sanity: operational writes DID commit.
+    const wsAdPerfPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/adPerformance`;
+    const rootAdPerfPath = "adPerformance";
+    const totalOperational = bucket(wsAdPerfPath).size + bucket(rootAdPerfPath).size;
+    assert.ok(totalOperational >= 1,
+        `Batch 19 item 1: lease-refused must still commit operational writes (FR-060a); found ${totalOperational} adPerformance writes.`);
+});
+
+await test("BATCH 20: lease-acquired run writes BOTH operational and aggregate documents", async () => {
+    resetStub();
+    seedConnection();
+    seedGenerationMatch({});
+    // No held lease ΓÇö the worker should acquire.
+    bucket("learningLeases").delete(`${OWNER}_${ACCT_A}`);
+    seedImageMatchStubs();
+    metaGraph.setFetchImplForTests(seedFetchOneAd());
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runSyncForAccount } = require("../../metaSync/shared.js");
+
+    const result = await runSyncForAccount({
+        userId: OWNER,
+        workspaceId: WS_A,
+        accountId: ACCT_A,
+        trigger: "manual",
+        nowMs: Date.now(),
+    });
+
+    assert.equal(result.ok, true,
+        `Batch 19 item 1: lease-acquired must report ok=true (got ${result.ok}, errors=${JSON.stringify(result.errors)})`);
+
+    // Both operational AND aggregate docs must be present.
+    const wsAdPerfPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/adPerformance`;
+    const hookPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/hookPerformance`;
+    const visualPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/visualPerformance`;
+    assert.ok(bucket(wsAdPerfPath).size + bucket("adPerformance").size >= 1,
+        `Batch 19 item 1: lease-acquired must commit adPerformance writes`);
+    assert.ok(bucket(hookPath).size >= 1,
+        `Batch 19 item 1: lease-acquired must commit hookPerformance writes (found ${bucket(hookPath).size})`);
+    assert.ok(bucket(visualPath).size >= 1,
+        `Batch 19 item 1: lease-acquired must commit visualPerformance writes (found ${bucket(visualPath).size})`);
+});
+
+// ΓöÇΓöÇΓöÇ BATCH 19 ΓÇö Item 2 (idempotency: twice-over-same-input) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+//
+// FR-018: a contribution MUST be added once and never duplicated.
+// The per-creative `Set` deduplicates `creativeCount`, but every other
+// numeric field ΓÇö `byObjective.conversion.count`, `avgLinkCtr` and
+// the rest ΓÇö accumulates on every pass. Nightly Cloud Tasks runs
+// re-apply the same rows and the counts grow.
+//
+// This test is the one that matters at the system level. Not the
+// pure aggregator (covered by SC-002), but the worker itself. It
+// runs `runSyncForAccount` twice with the same data and asserts
+// the aggregate is unchanged on the second pass.
+
+await test("BATCH 19: twice-over-same-input leaves the aggregate unchanged on the second pass (FR-018)", async () => {
+    resetStub();
+    seedConnection();
+    seedGenerationMatch({});
+    bucket("learningLeases").delete(`${OWNER}_${ACCT_A}`);
+    seedImageMatchStubs();
+    metaGraph.setFetchImplForTests(seedFetchOneAd());
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runSyncForAccount } = require("../../metaSync/shared.js");
+
+    const params = {
+        userId: OWNER,
+        workspaceId: WS_A,
+        accountId: ACCT_A,
+        trigger: "manual" as const,
+        nowMs: Date.now(),
+    };
+
+    // First pass.
+    const first = await runSyncForAccount(params);
+    assert.equal(first.ok, true,
+        `Batch 19 item 2: first pass must succeed (got ${first.ok}, errors=${JSON.stringify(first.errors)})`);
+
+    const hookPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/hookPerformance`;
+    const firstHook = bucket(hookPath).get("urgency");
+    assert.ok(firstHook, "Batch 19 item 2: first pass must produce a hook aggregate document");
+    const firstCount = (firstHook.byObjective?.conversion?.count) ?? 0;
+
+    // Do NOT clear state. The second pass must be a no-op for the
+    // per-row contribution: every recorded value should equal its
+    // first-pass value exactly. This is FR-018's system-level
+    // guarantee.
+    const second = await runSyncForAccount({ ...params, nowMs: Date.now() });
+    assert.equal(second.ok, true,
+        `Batch 19 item 2: second pass must also succeed (got ${second.ok}, errors=${JSON.stringify(second.errors)})`);
+
+    const secondHook = bucket(hookPath).get("urgency");
+    assert.ok(secondHook, "Batch 19 item 2: second pass must still leave a hook aggregate document");
+    const secondCount = (secondHook.byObjective?.conversion?.count) ?? 0;
+
+    assert.equal(secondCount, firstCount,
+        `Batch 19 item 2: aggregate contribution count must be idempotent across runs (first=${firstCount}, second=${secondCount}; FR-018 requires no double-counting)`);
+    assert.equal(secondHook.creativeCount, firstHook.creativeCount,
+        `Batch 19 item 2: distinct-creative count must be idempotent across runs (first=${firstHook.creativeCount}, second=${secondHook.creativeCount})`);
+});
+
+// ΓöÇΓöÇΓöÇ T021a worker-output: per-ad ledger.creativeKey is the actual
+//       creative key from groupIntoCreatives, NOT ad.id ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 await test("T021a worker-output: queued adDoc's ledger.creativeKey is the actual creative key (not ad.id)", async () => {
     resetStub();
@@ -618,7 +779,7 @@ await test("T021a worker-output: queued adDoc's ledger.creativeKey is the actual
 
     // After T021a's wire-up, the per-ad block's decision.adDoc.ledger.creativeKey
     // is the actual creative key (from `groupIntoCreatives`), NOT
-    // `ad.id`. The pre-fix behavior was `creativeKey: ad.id` — exactly
+    // `ad.id`. The pre-fix behavior was `creativeKey: ad.id` ΓÇö exactly
     // what FR-034a's "1 creative 55 rows" failure mode asserted.
     assert.equal(adDoc.adId, "ad_1");
     if (adDoc.ledger) {
@@ -627,7 +788,7 @@ await test("T021a worker-output: queued adDoc's ledger.creativeKey is the actual
             `expected the actual creative key from groupIntoCreatives. ` +
             `Got: ${JSON.stringify(adDoc.ledger.creativeKey)}`);
         // The actual creative key has the form `creative:<bucket>:<key>`.
-        // We accept anything that's not 'ad_1' and not 'auto' — the
+        // We accept anything that's not 'ad_1' and not 'auto' ΓÇö the
         // exact shape is internal to groupIntoCreatives.
         assert.ok(typeof adDoc.ledger.creativeKey === "string" && adDoc.ledger.creativeKey.length > 0,
             `T021a: ledger.creativeKey must be a non-empty string. Got: ${JSON.stringify(adDoc.ledger.creativeKey)}`);
@@ -636,14 +797,14 @@ await test("T021a worker-output: queued adDoc's ledger.creativeKey is the actual
     // For a successful match + sync, ledger MUST be present.
 });
 
-// ─── T025a worker-output: queued adDoc's ledger.angleKey/patternKey
-//       are the post-pass resolved values from the generation doc ──
+// ΓöÇΓöÇΓöÇ T025a worker-output: queued adDoc's ledger.angleKey/patternKey
+//       are the post-pass resolved values from the generation doc ΓöÇΓöÇ
 
 await test("T025a worker-output: queued adDoc's ledger.angleKey/patternKey are the post-pass resolved values (not null)", async () => {
     resetStub();
     seedConnection();
     // Use the default creativeIdentity (which includes the visual
-    // fields `computePatternKey` reads) — the T025a worker-output
+    // fields `computePatternKey` reads) ΓÇö the T025a worker-output
     // assertion checks that the post-pass patches flow resolved keys
     // into the queued ledger, which requires those visual fields.
     seedGenerationMatch({});
@@ -666,7 +827,7 @@ await test("T025a worker-output: queued adDoc's ledger.angleKey/patternKey are t
     assert.equal(result.ok, true, `T025a: sync should succeed (got ok=${result.ok}, errors=${JSON.stringify(result.errors)})`);
     assert.equal(result.counts.ads, 1);
 
-    // The adDoc write is to the workspace path (LEG B) — read it back
+    // The adDoc write is to the workspace path (LEG B) ΓÇö read it back
     // and assert the ledger carries the post-pass resolved values.
     const wsAdPerfPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/adPerformance`;
     const adDoc = bucket(wsAdPerfPath).get("ad_1");
@@ -678,14 +839,14 @@ await test("T025a worker-output: queued adDoc's ledger.angleKey/patternKey are t
         "T025a worker-output: ledger.patternKey must be the resolved pattern hash, not null");
 });
 
-// ─── T047 worker-output: workspace funnelType lands in the hook
-//   aggregate's byFunnelType (FR-027 + FR-032) ───────────────────────
+// ΓöÇΓöÇΓöÇ T047 worker-output: workspace funnelType lands in the hook
+//   aggregate's byFunnelType (FR-027 + FR-032) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 //
-// Batch 17's Node test pinned the READ side — `isMultiFunnel` reads
+// Batch 17's Node test pinned the READ side ΓÇö `isMultiFunnel` reads
 // the per-funnel-type breakdown correctly. These two cases pin the
-// WRITE side — `runSyncForAccount` writes the correct bucket. A
-// wiring break anywhere along `metaSync/shared.ts` →
-// `decidePerAdActionsForWorker` → `AdForLearning.funnelType` →
+// WRITE side ΓÇö `runSyncForAccount` writes the correct bucket. A
+// wiring break anywhere along `metaSync/shared.ts` ΓåÆ
+// `decidePerAdActionsForWorker` ΓåÆ `AdForLearning.funnelType` ΓåÆ
 // `applyAdToHook` would silently send every contribution to
 // `unknown`, where `isMultiFunnel` deliberately excludes them. The
 // four-sided assertion (Case A explicitly, Case B explicitly)
@@ -695,7 +856,7 @@ await test("T025a worker-output: queued adDoc's ledger.angleKey/patternKey are t
 // stubbed Firestore + Meta. They run AFTER the per-account lease
 // is cleared so the sync is not refused (precedent set by the T021a
 // and T025a cases above). They assert on the hookPerformance
-// aggregate doc the worker writes — same observable surface the
+// aggregate doc the worker writes ΓÇö same observable surface the
 // dashboard reads.
 
 /** Resolve the canonical angleKey the worker will write the
@@ -706,14 +867,14 @@ function readHookAngleKey(): string {
     return "urgency";
 }
 
-/** Helper — read the hookPerformance aggregate doc for the
+/** Helper ΓÇö read the hookPerformance aggregate doc for the
  *  one-anchor angle the fixture drives. */
 function readHookAggregate(): Record<string, any> | undefined {
     const hookPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/hookPerformance`;
     return bucket(hookPath).get(readHookAngleKey());
 }
 
-await test("T047 worker-output: workspace funnelType=paid_event → byFunnelType.paid_event.count > 0 AND byFunnelType.unknown.count === 0", async () => {
+await test("T047 worker-output: workspace funnelType=paid_event ΓåÆ byFunnelType.paid_event.count > 0 AND byFunnelType.unknown.count === 0", async () => {
     resetStub();
     seedConnection();
     seedGenerationMatch({});
@@ -756,7 +917,7 @@ await test("T047 worker-output: workspace funnelType=paid_event → byFunnelType
 
     assert.ok(hookAgg.byFunnelType.paid_event.count > 0,
         `T047 case A: paid_event bucket must receive the contribution (got count=${hookAgg.byFunnelType.paid_event.count}). ` +
-        `A value of zero means the worker's funnelType plumbing is broken — every contribution is landing in 'unknown'.`);
+        `A value of zero means the worker's funnelType plumbing is broken ΓÇö every contribution is landing in 'unknown'.`);
 
     assert.equal(hookAgg.byFunnelType.unknown.count, 0,
         `T047 case A: unknown bucket must be exactly 0 when funnelType resolves to a real type (got count=${hookAgg.byFunnelType.unknown.count}). ` +
@@ -766,7 +927,7 @@ await test("T047 worker-output: workspace funnelType=paid_event → byFunnelType
 // Teardown image-match seam to keep tests hermetic.
 teardownImageMatchStubs();
 
-await test("T047 worker-output (inverse): no resolvable funnelType → byFunnelType.unknown.count > 0 AND every real-funnel bucket is exactly 0", async () => {
+await test("T047 worker-output (inverse): no resolvable funnelType ΓåÆ byFunnelType.unknown.count > 0 AND every real-funnel bucket is exactly 0", async () => {
     resetStub();
     seedConnection();
     seedGenerationMatch({});
@@ -796,19 +957,19 @@ await test("T047 worker-output (inverse): no resolvable funnelType → byFunnelT
     assert.ok(hookAgg.byFunnelType,
         "T047 case B (inverse): hook aggregate must carry byFunnelType");
 
-    // The four REAL funnel buckets must each be exactly 0 — proving
+    // The four REAL funnel buckets must each be exactly 0 ΓÇö proving
     // the row did NOT somehow leak into one of them when attribution
     // was absent.
     const realKeys = ["paid_event", "paid_product", "free_webinar", "lead_magnet_call"] as const;
     for (const k of realKeys) {
         assert.equal(hookAgg.byFunnelType[k].count, 0,
             `T047 case B (inverse): byFunnelType.${k}.count must be exactly 0 when no funnelType resolved (got count=${hookAgg.byFunnelType[k].count}). ` +
-            `A non-zero real-bucket count here means the inverse scenario — a row leaking into a real funnel when attribution was absent — which is the false-positive regression this test exists to prevent.`);
+            `A non-zero real-bucket count here means the inverse scenario ΓÇö a row leaking into a real funnel when attribution was absent ΓÇö which is the false-positive regression this test exists to prevent.`);
     }
 
     assert.ok(hookAgg.byFunnelType.unknown.count > 0,
         `T047 case B (inverse): unknown bucket must receive the contribution when no funnelType resolves (got count=${hookAgg.byFunnelType.unknown.count}). ` +
-        `A zero here means the worker's funnelType plumbing lost the row entirely — neither a real bucket nor unknown received it.`);
+        `A zero here means the worker's funnelType plumbing lost the row entirely ΓÇö neither a real bucket nor unknown received it.`);
 
     // Teardown image-match seam to keep tests hermetic.
     teardownImageMatchStubs();
@@ -819,7 +980,9 @@ await test("T047 worker-output (inverse): no resolvable funnelType → byFunnelT
 main()
     .then(runner)
     .catch((err: Error) => {
-        console.log(`  ❌ harness error: ${err.message}`);
+        console.log(`  Γ¥î harness error: ${err.message}`);
         console.log(err.stack ?? "");
         process.exit(FAILED);
     });
+
+

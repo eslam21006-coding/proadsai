@@ -1,4 +1,4 @@
-// functions/src/__tests__/patternSummaries.creativeHash.test.ts — T029c fix: distinct-creative count (Batch 14)
+﻿// functions/src/__tests__/patternSummaries.creativeHash.test.ts — T029c fix: distinct-creative count (Batch 14)
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 // Phase 969, Batch 14 — the T029c verification + fix.
 //
@@ -232,6 +232,122 @@ test("USER-SPEC FIXTURE: 3 distinct creatives regenerated → creativeCount = 3,
     assert.equal(all.length, 4, "four NRecs total");
     assert.equal(new Set(all).size, 3,
         "USER-SPEC FIXTURE: 3 distinct creatives (one regenerated twice) → creativeCount = 3, not 4");
+});
+
+
+// BATCH 20 — Item 3 (CR-M18 hashless fallback uniqueness, behavioural)
+//
+// The audit (`coderabbit-round-01-audit.md` §4) confirmed a real
+// collision: `patternSummaries.ts` (the bucket's `add()`) used
+// `b.creativeHashes.add(r.creativeHash ?? ` + "`" + `__legacy_${r.userId}_${b.n}` + "`" + `)`.
+// Two distinct hashless rows from the same user in the same angle
+// bucket collapse to one Set entry, undercounting `creativeCount`.
+//
+// Batch 19's source-text assertion was retired (it read the source
+// file and asserted the literal string was present; the category was
+// deliberately removed across Batches 03-16). The behavioural test
+// below drives the actual `add()` and `newBucket()` through the test
+// seam (`__bucketForTests`) and asserts the bucket-level invariant.
+
+interface NRecTestInput {
+    userId: string;
+    niche: string | null;
+    offerType: string | null;
+    funnelStage: string | null;
+    language: string | null;
+    aspectRatio: string | null;
+    pairId: string | null;
+    templateId: string | null;
+    universeFamily: string;
+    hookAngle: string | null;
+    isUsed: boolean;
+    isFavorite: boolean;
+    isPositive: boolean;
+    isNegative: boolean;
+    negativeTags: string[];
+    isDeployed: boolean;
+    isSpendBacked: boolean;
+    hasConversion: boolean;
+    spend: number;
+    impressions: number;
+    clicks: number;
+    creativeHash: string | null;
+    adId: string;
+}
+
+function makeNRec(overrides: Partial<NRecTestInput> & { userId: string; adId: string }): NRecTestInput {
+    return {
+        niche: null,
+        offerType: null,
+        funnelStage: null,
+        language: null,
+        aspectRatio: null,
+        pairId: "standard_hero_value_stack",
+        templateId: "cta_card",
+        universeFamily: "office",
+        hookAngle: "urgency",
+        isUsed: false,
+        isFavorite: false,
+        isPositive: false,
+        isNegative: false,
+        negativeTags: [],
+        isDeployed: true,
+        isSpendBacked: true,
+        hasConversion: true,
+        spend: 100,
+        impressions: 1000,
+        clicks: 10,
+        creativeHash: null,
+        ...overrides,
+    };
+}
+
+test("BATCH 20: two distinct hashless rows from one user in one bucket are TWO creatives (Item 3 / CR-M18)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { __bucketForTests } = require("../patternSummaries.js");
+    const bucket = __bucketForTests.newBucket();
+    __bucketForTests.add(bucket, makeNRec({
+        userId: "act_995888422231015",
+        adId: "gen-distinct-a",
+        creativeHash: null,
+        hookAngle: "urgency",
+    }));
+    __bucketForTests.add(bucket, makeNRec({
+        userId: "act_995888422231015",
+        adId: "gen-distinct-b",
+        creativeHash: null,
+        hookAngle: "urgency",
+    }));
+    assert.equal(bucket.n, 2, "two rows were added");
+    assert.equal(bucket.creativeHashes.size, 2,
+        "BATCH 20 / Item 3: two distinct hashless rows for one user in one bucket must produce two creatives (got creativeHashes.size=" + bucket.creativeHashes.size + ")");
+});
+
+test("BATCH 20: same creativeHash on two rows collapses to ONE creative (T029c regression guard)", () => {
+    // Sanity / negative control: the existing dedup mechanism (by
+    // creativeHash) still works. Two rows with the same creativeHash
+    // must collapse to one creative — this is what T029c (Batch 14)
+    // fixed and what the fix here must NOT break. The legacy fallback
+    // path is a separate code branch (creativeHash: null); the
+    // creativeHash: non-null path is the dominant case in production.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { __bucketForTests } = require("../patternSummaries.js");
+    const bucket = __bucketForTests.newBucket();
+    __bucketForTests.add(bucket, makeNRec({
+        userId: "act_995888422231015",
+        adId: "gen-same-hash-a",
+        creativeHash: "shared-hash",
+        hookAngle: "urgency",
+    }));
+    __bucketForTests.add(bucket, makeNRec({
+        userId: "act_995888422231015",
+        adId: "gen-same-hash-b",
+        creativeHash: "shared-hash",
+        hookAngle: "urgency",
+    }));
+    assert.equal(bucket.n, 2, "two rows were added");
+    assert.equal(bucket.creativeHashes.size, 1,
+        "BATCH 20 / Item 3 negative: two rows with the same creativeHash must still dedupe to one creative (got " + bucket.creativeHashes.size + ")");
 });
 
 // ─── Runner ─────────────────────────────────────────────────────
