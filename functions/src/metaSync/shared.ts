@@ -1,5 +1,5 @@
-﻿// functions/src/metaSync/shared.ts — Phase 14 Layer 2 shared sync logic
-// ═══════════════════════════════════════════════════════════
+// functions/src/metaSync/shared.ts  Phase 14 Layer 2 shared sync logic
+// -----------------------------------------------------------
 // The "run one account sync" body that the dispatcher, the worker, and the
 // manual trigger all call. Lives in its own file so the Cloud Functions
 // deployment unit is small (no shared state in a module-global) and the
@@ -7,14 +7,14 @@
 //
 // STEPS (spec §3.1):
 //   1. Load encrypted token, decrypt.
-//   2. Validate / refresh (FR-009 — on refresh failure mark needsReauth, stop).
-//   3. Fetch hierarchy (campaigns → ad sets → ads).
+//   2. Validate / refresh (FR-009  on refresh failure mark needsReauth, stop).
+//   3. Fetch hierarchy (campaigns ? ad sets ? ads).
 //   4. Fetch per-ad insights (3 windows).
 //   5. Compute account baselines.
 //   6. Compute spend_share_pct per ad.
 //   7. Classify targeting context (geo + audience).
 //   8. Classify campaign objective.
-//   9. Image matching (T033 — workspace-scoped).
+//   9. Image matching (T033  workspace-scoped).
 //  10. Persist adPerformance / baselines / syncSnapshot; prune to last 7.
 //  11. Update lastMetaSyncAt + lastSyncStatus.
 //  12. Patch the connection doc with the new timestamps.
@@ -26,7 +26,7 @@
 // PARTIAL FAILURE (FR-010): if some ads fail, store what succeeded; last
 // good aggregates remain intact. We collect errors per-ad and surface them
 // on the snapshot doc as `status: 'partial'`.
-// ═══════════════════════════════════════════════════════════
+// -----------------------------------------------------------
 
 import { getDb } from "../firestoreClient.js";
 import {
@@ -94,6 +94,7 @@ import {
     applyHookAggregateWithdrawal,
     applyVisualAggregatesDelta,
 } from "../learning/aggregateDelta.js";
+import { applyLearningWrites } from "../learning/applyLearningWrites.js";
 import {
     acquireLearningLease,
     releaseLearningLease,
@@ -114,14 +115,14 @@ import {
     resolveCreativeKeyByAdId,
 } from "../learning/learningPerAdLoop.js";
 
-// ─── Constants ───────────────────────────────────────────────
+// --- Constants -----------------------------------------------
 
 /**
- * Phase 970 Batch 1 (D5) — bounded Graph concurrency.
+ * Phase 970 Batch 1 (D5)  bounded Graph concurrency.
  *
- * The legacy per-ad loops used bare `Promise.allSettled(ads.map(…))`,
+ * The legacy per-ad loops used bare `Promise.allSettled(ads.map())`,
  * firing every `fetchAdInsights` call (3 per ad, parallel via
- * `Promise.all` at `metaGraph.ts:407–414`) and every image download
+ * `Promise.all` at `metaGraph.ts:407414`) and every image download
  * simultaneously. For a 383-ad account that produced ~1,149 Graph
  * requests at once, which trips Meta's app-wide "Application request
  * limit reached" (`OAuthException code 4 / subcode 1504022`,
@@ -133,7 +134,7 @@ import {
  *     same way (the existing pattern at `shared.ts:565`).
  *   - image match: inner try/catch already swallows per-ad errors into
  *     the `errors[]` array, so the outer call never actually rejected
- *     here — `mapWithConcurrency` matches that exactly.
+ *     here  `mapWithConcurrency` matches that exactly.
  *
  * Peak in-flight arithmetic (corrected 2026-09-03 in response to
  * review): the three insight windows per ad are PARALLEL, not
@@ -144,8 +145,8 @@ import {
  * (`maxConcurrentDispatches: 5`), aggregate peak = 120 simultaneous.
  *
  * Why 8 (and not 4, 6, 12, 16): wall-clock is not the constraint at
- * any depth ≥ 4 for a 383-ad account — the budget is rate-limit
- * margin. Meta's published best-practices band is 50–200 simultaneous
+ * any depth = 4 for a 383-ad account  the budget is rate-limit
+ * margin. Meta's published best-practices band is 50200 simultaneous
  * calls per app; 24 sits a third of the way in and 120 aggregate sits
  * inside it. A drop to 4 (peak 12, aggregate 60) is the conservative
  * retune target if telemetry shows the limit is lower. Retune without
@@ -155,7 +156,7 @@ import {
  */
 export const GRAPH_CONCURRENCY = 8;
 
-// ─── Public types ─────────────────────────────────────────────
+// --- Public types ---------------------------------------------
 
 export interface SyncParams {
     userId: string;
@@ -181,7 +182,7 @@ export interface SyncResult {
     lastMetaSyncAt: number;
 }
 
-// ─── Internal types ────────────────────────────────────────────
+// --- Internal types --------------------------------------------
 
 interface ImageFingerprintDoc {
     hash: string;
@@ -196,7 +197,7 @@ export interface AdDoc {
     adName?: string;
     thumbnailUrl?: string;
     // Linking fields. Optional in the type because FR-070 (T018b)'s
-    // field-level discrimination OMITS them for failed-read ads — the
+    // field-level discrimination OMITS them for failed-read ads  the
     // merge:true write preserves the prior value when the field is
     // absent from the new data. With merge, including `null` would
     // OVERWRITE the prior value; omitting the field is the merge
@@ -212,7 +213,7 @@ export interface AdDoc {
     campaignObjectiveRaw: string;
     spend3d: number;
     // FIX 2 (dashboard-polish): 7 complete days of spend (Meta `last_7d`
-    // preset — excludes today's partial day). Display-only; the Qarar
+    // preset  excludes today's partial day). Display-only; the Qarar
     // verdict engine still runs on the 3-day rolling window.
     spend7d: number;
     // FIX 4 (dashboard-polish): image vs video creative. Video ads can
@@ -232,8 +233,8 @@ export interface AdDoc {
     peak1dCtr: number;
     creativeId: string | null;
     imageHash: string | null;
-    // Phase 14 — Layer 4 (Qarar verdict) — set by T041.
-    verdict: "🟢" | "🟡" | "🔴" | "🛟" | "⏳";
+    // Phase 14  Layer 4 (Qarar verdict)  set by T041.
+    verdict: "??" | "??" | "??" | "??" | "?";
     ruleCode: string;
     reasonAr: string;
     diagnosisAr: string | null;
@@ -243,14 +244,14 @@ export interface AdDoc {
      * T025: contribution ledger entry. Embedded on the ad row per
      * data-model.md §2. Records exactly what this row contributed in
      * the most recent sync that contributed it (FR-016). Absent on
-     * FR-070 failed-read ads (no contribution → no entry).
+     * FR-070 failed-read ads (no contribution ? no entry).
      */
     ledger?: import("../learning/types.js").ContributionLedgerEntry;
 }
 
 const SYNC_SNAPSHOT_RETENTION = 7;
 
-// ─── Pure helpers (exported for tests) ────────────────────────
+// --- Pure helpers (exported for tests) ------------------------
 
 /**
  * Sum 3-day spend across all ads in an ad set.
@@ -299,7 +300,7 @@ export function deriveCreativeType(creative: MetaAd["creative"]): "image" | "vid
 
 /**
  * Aggregate the 3-day window into the metrics shape the rest of the pipeline
- * uses. Pure — no I/O — so the contract test (T020) can verify the shape.
+ * uses. Pure  no I/O  so the contract test (T020) can verify the shape.
  */
 export function aggregateAdMetrics(windows: InsightsTimeWindows): {
     spend3d: number;
@@ -329,7 +330,7 @@ export function aggregateAdMetrics(windows: InsightsTimeWindows): {
     const frequency3d = sumField(threeDayRows, "frequency");
     const conversions3d = countConversionActions(threeDayRows);
 
-    // CTR rates — average across the 3-day rows (Meta returns one row per ad
+    // CTR rates  average across the 3-day rows (Meta returns one row per ad
     // when time_range is supplied without time_increment, so this is just
     // the single row).
     const ctrLink = inlineLinkClicks3d > 0 && impressions3d > 0
@@ -407,11 +408,11 @@ function countConversionActions(rows: ReadonlyArray<Record<string, unknown>>): n
     return total;
 }
 
-// ─── Image matching (workspace-scoped, FR-023) ────────────────
+// --- Image matching (workspace-scoped, FR-023) ----------------
 
 /**
- * Read the workspace's fingerprint index. Returns a map of hash → entry.
- * Cross-workspace search is FORBIDDEN — this only reads the workspace's own
+ * Read the workspace's fingerprint index. Returns a map of hash ? entry.
+ * Cross-workspace search is FORBIDDEN  this only reads the workspace's own
  * subcollection (spec §4.2, Edge Case 13, FR-023).
  */
 export async function loadWorkspaceFingerprints(uid: string, workspaceId: string): Promise<Map<string, ImageFingerprintDoc>> {
@@ -437,10 +438,10 @@ export async function loadWorkspaceFingerprints(uid: string, workspaceId: string
 /**
  * Match a single ad's creative image against the workspace's fingerprint
  * index. Implements spec §4.2:
- *   - distance <= threshold → auto_match
- *   - top two candidates within ambiguity margin → ambiguous (unmatched)
- *   - exact tie → most recent wins
- *   - manual link present → never overridden (handled at the caller level)
+ *   - distance <= threshold ? auto_match
+ *   - top two candidates within ambiguity margin ? ambiguous (unmatched)
+ *   - exact tie ? most recent wins
+ *   - manual link present ? never overridden (handled at the caller level)
  */
 export async function matchAdCreative(
     creativeImageHash: string,
@@ -492,11 +493,11 @@ export async function matchAdCreative(
     return { generationId: null, matchType: null, matchDistance: null, ambiguous: false };
 }
 
-// ─── Snapshot pruning (spec §3.4) ────────────────────────────
+// --- Snapshot pruning (spec §3.4) ----------------------------
 
 /**
  * Keep only the most recent `SYNC_SNAPSHOT_RETENTION` snapshots. Called
- * after a successful snapshot write. Deletes are non-blocking — Firestore
+ * after a successful snapshot write. Deletes are non-blocking  Firestore
  * rate limits won't fail the sync.
  */
 export async function pruneSnapshots(uid: string, workspaceId: string, accountId: string): Promise<void> {
@@ -516,14 +517,14 @@ export async function pruneSnapshots(uid: string, workspaceId: string, accountId
     });
 }
 
-// ─── Main sync body ───────────────────────────────────────────
+// --- Main sync body -------------------------------------------
 
-// ─── Image-match test seam ───────────────────────────────────────
+// --- Image-match test seam ---------------------------------------
 //
 // `runSyncForAccount`'s per-ad block downloads the creative image,
 // hashes it, and looks the hash up in the workspace fingerprint
 // index. The helpers (`loadWorkspaceFingerprints`, `matchAdCreative`,
-// `downloadCreativeImage`) are local to this file — exports don't
+// `downloadCreativeImage`) are local to this file  exports don't
 // reach the worker call sites, so module-patching the exports
 // object doesn't redirect the call. Below is the seam: each helper
 // resolves to the override (if set by a test) or to the production
@@ -541,7 +542,7 @@ let _matchOverride: ((hash: string, idx: Map<string, ImageFingerprintDoc>, t: nu
 
 /**
  * Test-only seam for the image-match pipeline. Sets overrides
- * individually — pass `null` for any helper to use the production
+ * individually  pass `null` for any helper to use the production
  * implementation. All four are reset to `null` by
  * `resetImageMatchOverridesForTests`. Mirrors the
  * `setFetchImplForTests` pattern in `metaGraph.ts`.
@@ -571,44 +572,7 @@ export function resetImageMatchOverridesForTests(): void {
 }
 
 
-// BATCH 21 — Item 2 (FR-013 / FR-017): visual aggregate withdrawal,
-// symmetric with applyHookAggregateWithdrawal. Defined locally
-// because aggregateDelta.ts only ships the hook variant; this
-// keeps the diff contained. TODO(phase969-followup): lift into
-// aggregateDelta.ts alongside the hook variant.
-function applyVisualAggregateWithdrawal(
-    existing: VisualPerformanceAggregate,
-    ad: AdForLearning,
-): VisualPerformanceAggregate {
-    const clone: VisualPerformanceAggregate = JSON.parse(JSON.stringify(existing));
-    const isConversion = ad.campaignObjective === "conversion";
-    if (isConversion) {
-        if (clone.sampleSize > 0) clone.sampleSize -= 1;
-        if (clone.byObjective.conversion.count > 0) {
-            clone.byObjective.conversion.count -= 1;
-        }
-        const tier = ad.geoTier;
-        if (clone.byGeoTier[tier] && clone.byGeoTier[tier].count > 0) {
-            clone.byGeoTier[tier] = { ...clone.byGeoTier[tier], count: clone.byGeoTier[tier].count - 1 };
-        }
-        const aud = ad.audienceType;
-        if (clone.byAudienceType[aud] && clone.byAudienceType[aud].count > 0) {
-            clone.byAudienceType[aud] = { ...clone.byAudienceType[aud], count: clone.byAudienceType[aud].count - 1 };
-        }
-    } else {
-        if (clone.byObjective.other.count > 0) {
-            clone.byObjective.other.count -= 1;
-        }
-    }
-    if (clone.byFunnelType) {
-        const key = resolveFunnelTypeBucketKey(ad.funnelType);
-        const bucket = clone.byFunnelType[key];
-        if (bucket && bucket.count > 0) {
-            clone.byFunnelType[key] = { count: bucket.count - 1 };
-        }
-    }
-    return clone;
-}
+
 
 export async function runSyncForAccount(params: SyncParams): Promise<SyncResult> {
     const { userId, workspaceId, accountId, trigger, nowMs } = params;
@@ -643,7 +607,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         accessToken = await resolveAccessToken(conn);
     } catch (e: unknown) {
         const msg = (e as Error).message;
-        // FR-009: token failure → mark needsReauth, do not delete data.
+        // FR-009: token failure ? mark needsReauth, do not delete data.
         await patchStoredConnection(userId, workspaceId, {
             needsReauth: true,
             lastSyncStatus: "failed",
@@ -669,7 +633,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         errors.push(`fetchCampaigns failed: ${(e as Error).message}`);
     }
     try {
-        // allSettled preserves partial success — one failed campaign's
+        // allSettled preserves partial success  one failed campaign's
         // ad sets don't discard the others (FR-010).
         const adSetResults = await Promise.allSettled(
             campaigns.map((c) => fetchAdSets(accessToken, c.id)),
@@ -679,7 +643,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             const parentCampaign = campaigns[i];
             if (r.status === "fulfilled") {
                 for (const adSet of r.value) {
-                    // FIX 3: stamp the parent campaignId so the ad-set →
+                    // FIX 3: stamp the parent campaignId so the ad-set ?
                     // campaign join works downstream. Meta doesn't always
                     // return `campaign_id` on /{adSetId}/adsets and we
                     // know the parent here.
@@ -706,7 +670,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                     // FIX 3: stamp parent adset_id so downstream joins
                     // work even when Meta omits the field. Without this,
                     // every ad is classified as tier3_egypt_na / broad and
-                    // the wrong campaign objective — which kills all
+                    // the wrong campaign objective  which kills all
                     // learning (only "conversion" objective feeds it).
                     if (typeof ad.adset_id !== "string" || ad.adset_id.length === 0) {
                         ad.adset_id = parentAdSet.id;
@@ -726,12 +690,12 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     let baselines: Awaited<ReturnType<typeof fetchAccountBaselines>> | null = null;
     // FIX 3 (dashboard-polish): the ad account's own currency code, so the
     // dashboard can label spend in AED/SAR/EGP/USD rather than a bare
-    // number. Best-effort — a failure here must never break the sync, and
+    // number. Best-effort  a failure here must never break the sync, and
     // we only overwrite the stored code when we actually got one.
     let accountCurrency: string | null = null;
     try {
-        // Phase 970 Batch 1 (D5) — bounded Graph concurrency. The bare
-        // `Promise.allSettled(ads.map(…))` here previously fired every
+        // Phase 970 Batch 1 (D5)  bounded Graph concurrency. The bare
+        // `Promise.allSettled(ads.map())` here previously fired every
         // fetchAdInsights call simultaneously; for a 383-ad account that
         // was ~1,149 Graph calls at once. Capped at GRAPH_CONCURRENCY=8.
         const insightsEntries = await mapSettledWithConcurrency(
@@ -760,25 +724,25 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         errors.push(`fetchAdAccountCurrency failed: ${(e as Error).message}`);
     }
 
-    // Phase 14 — Layer 4 (T041): load the per-account funnel settings once
+    // Phase 14  Layer 4 (T041): load the per-account funnel settings once
     // per sync. The Qarar verdict engine reads `effectiveTarget` from these
     // (effectiveTargetCPA for paid funnels, effectiveTargetCPL for free). If
     // the settings doc is missing or has no derived targets, the engine
-    // returns ⏳ with reason "إعدادات مسار المبيعات غير مكتملة".
+    // returns ? with reason "??????? ???? ???????? ??? ??????".
     //
-    // Phase 968 — T037 (FR-042, contracts/funnelSettings.md §6): when the
+    // Phase 968  T037 (FR-042, contracts/funnelSettings.md §6): when the
     // doc exists but is incomplete, emit ONE structured log line per
     // account per sync naming workspace, account, funnel type, and
     // missing fields. Constitution VI/VII: the gate must be auditable.
-    // One line per account (NOT per ad) — keeps this from becoming log
+    // One line per account (NOT per ad)  keeps this from becoming log
     // spam across a large sync.
     let funnelSettings: FunnelSettingsForVerdict | null = null;
     let settingsIncompleteLogged = false;
-    // FR-027 (Phase 969 T047) — the workspace's funnel type. Resolved
+    // FR-027 (Phase 969 T047)  the workspace's funnel type. Resolved
     // once per sync from the settings doc. Each row in `learnedAds`
     // attributes to this value; the aggregator's per-funnel-type
     // breakdown accumulates from there. Resolves to "unknown" when
-    // the doc is absent (FR-032 — receives no same-funnel weighting,
+    // the doc is absent (FR-032  receives no same-funnel weighting,
     // still counts toward headline totals).
     type WorkspaceFunnelType = "paid_event" | "paid_product" | "free_webinar" | "lead_magnet_call" | "unknown";
     let workspaceFunnelType: WorkspaceFunnelType = "unknown";
@@ -800,7 +764,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
 
                 // FR-042 / FR-049: emit the gate log when the stored
                 // settings doc is incomplete. Single canonical
-                // completeness predicate from funnelSettings.ts —
+                // completeness predicate from funnelSettings.ts 
                 // FR-050. Includes pre-phase docs (which are
                 // incomplete by definition) and partially-saved new
                 // records. The owner sees the badge in the UI; the
@@ -814,14 +778,14 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                     settingsIncompleteLogged = true;
                 }
                 // Settings may also be incomplete even when the doc
-                // carries every required field — for instance, a stale
+                // carries every required field  for instance, a stale
                 // doc persisted before the commissionRate/marginKept
                 // fields existed. The `complete` flag from
                 // `getFunnelSettings` is the authoritative signal; for
                 // the sync path, `isSettingsComplete` covers both
                 // cases (missing field OR null value).
                 if (!isSettingsComplete(data) && !settingsIncompleteLogged) {
-                    // Defensive — should be unreachable given the
+                    // Defensive  should be unreachable given the
                     // `missing.length > 0` check above, but kept so
                     // future drift doesn't silently drop the log.
                     const funnelType = typeof data.funnelType === "string" ? data.funnelType : "unknown";
@@ -835,7 +799,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         errors.push(`load funnel settings failed: ${(e as Error).message}`);
     }
 
-    // Phase 14 — Layer 4b (T044, wired in a later step): batch-load
+    // Phase 14  Layer 4b (T044, wired in a later step): batch-load
     // matched-generation metadata for all matched ads so the learning
     // aggregates have what they need. The map is keyed by generationId.
     const matchedGenIds = new Set<string>();
@@ -856,7 +820,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         adSetTotals.set(ad.adset_id || "", (adSetTotals.get(ad.adset_id || "") || 0) + spend3d);
     }
     const perAdSetSpend = new Map<string, Map<string, number>>();
-    // Phase 14 — Layer 4 (K5): per-ad-set total conversions (3-day
+    // Phase 14  Layer 4 (K5): per-ad-set total conversions (3-day
     // rolling). Used to compute the ad-set CPA and derive
     // `adSetHittingTarget` for the K5 starved-ad matrix. Without this
     // rollup, K5_weak can never fire in production.
@@ -883,7 +847,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     const campaignById = new Map<string, MetaCampaign>();
     for (const c of campaigns) campaignById.set(c.id, c);
 
-    // 8. Image matching — load workspace fingerprint index, then for each ad
+    // 8. Image matching  load workspace fingerprint index, then for each ad
     //    that has a creative image URL, download + hash + match.
     const fingerprintIndex = _fingerprintLoaderOverride
         ? await _fingerprintLoaderOverride(userId, workspaceId)
@@ -895,11 +859,11 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         ambiguous: boolean;
         imageHash: string | null;
     }>();
-    // Phase 970 Batch 1 (D5) — bounded Graph concurrency. The bare
-    // `Promise.allSettled(ads.map(…))` here previously fired every image
+    // Phase 970 Batch 1 (D5)  bounded Graph concurrency. The bare
+    // `Promise.allSettled(ads.map())` here previously fired every image
     // download at once; for a 383-ad account that was ~383 simultaneous
     // outbound fetches. Capped at GRAPH_CONCURRENCY=8. Semantics are
-    // preserved — the inner try/catch already swallows per-ad failures
+    // preserved  the inner try/catch already swallows per-ad failures
     // into `errors[]`, so the outer call never rejected (we use
     // `mapWithConcurrency`, not `mapSettledWithConcurrency`).
     await mapWithConcurrency(ads, GRAPH_CONCURRENCY, async (ad) => {
@@ -959,11 +923,11 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                     errors.push(`imageDownload failed for ${ad.id}: ${(dlErr as Error).message}`);
                 }
             }
-            // T064b seam — when ALL three image-match overrides are
+            // T064b seam  when ALL three image-match overrides are
             // installed, the ad is force-matched at the seam regardless
             // of whether `image_url` was populated by the fetch stub.
             // T074 (Batch 16) added `image_url: null` to the T064b
-            // stub fetch for simplicity — but that left the per-ad
+            // stub fetch for simplicity  but that left the per-ad
             // image-match block skipped, which T047's aggregate
             // assertions observe as a missing hookPerformance doc.
             // The seam option is opt-in via
@@ -975,7 +939,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 || _computeHashOverride === null
                 || _matchOverride === null
             ) {
-                // At least one override is unset — the per-ad block
+                // At least one override is unset  the per-ad block
                 // ran the production helpers. Leave the resolved
                 // `result` alone.
             } else {
@@ -998,7 +962,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         adMatchResults.set(ad.id, result);
     });
 
-    // 9. Build per-ad docs and persist (skip ads that already have a link —
+    // 9. Build per-ad docs and persist (skip ads that already have a link 
     //    either manual or auto_hash from a previous sync; FR / §4.3 lock).
     let matchedCount = 0;
     let unmatchedCount = 0;
@@ -1009,11 +973,11 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         .collection("workspaces").doc(workspaceId)
         .collection("adAccounts").doc(accountId);
 
-    // Batch all writes — Firestore batch max 500 ops; chunk if needed.
-    // BATCH 20 — Item 1: FR-060a lease fence. Two arrays:
-    //   - writes     — operational status writes (FR-009, FR-060a)
+    // Batch all writes  Firestore batch max 500 ops; chunk if needed.
+    // BATCH 20  Item 1: FR-060a lease fence. Two arrays:
+    //   - writes      operational status writes (FR-009, FR-060a)
     //                    commit BEFORE the learning lease is attempted.
-    //   - ggregateWrites — learning-aggregate writes (hook/visual
+    //   - ggregateWrites  learning-aggregate writes (hook/visual
     //                    performance) commit INSIDE the lease-held try
     //                    block. The lease must fence the aggregate
     //                    write, not just the per-ad write.
@@ -1023,21 +987,21 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
 
     // Batch-load existing adPerformance docs for the current sync's
     // ad batch (FR-067). Replaces the unbounded `collection("adPerformance")
-    // .get()` collection scan that lived here before — that scan's volume
+    // .get()` collection scan that lived here before  that scan's volume
     // grew with account age and breached SC-023 (read volume bounded by
     // batch, not account age).
     //
     // The bounded read returns:
     //   - `existingByAdId`: docs that read successfully (whole documents,
-    //     never projections — FR-071, the cascade's `deletedGenerationId`
+    //     never projections  FR-071, the cascade's `deletedGenerationId`
     //     and `metadataAvailable` live outside the strict shape the sync
     //     writes and would be silently dropped by a `.select()`).
     //   - `failedLedgerReads`: ad IDs whose chunk read failed. These are
-    //     NOT conflated with "never contributed" — the per-ad loop
+    //     NOT conflated with "never contributed"  the per-ad loop
     //     consults this set and skips writes for those ads (FR-070).
     //
     // The unbounded `collection("adPerformance").get()` line is removed
-    // entirely (FR-068) — leaving it would invite a future refactor to
+    // entirely (FR-068)  leaving it would invite a future refactor to
     // re-introduce the unbounded scan under the new one.
     const existingByAdId = new Map<string, Partial<AdDoc>>();
     const failedLedgerReads = new Set<string>();
@@ -1062,7 +1026,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         errors.push(`load existing adPerformance failed: ${(e as Error).message}`);
     }
 
-    // Phase 14 — Layer 4b (T044): collect inputs for the two-component
+    // Phase 14  Layer 4b (T044): collect inputs for the two-component
     // learning aggregates as the ad loop runs. We only include matched
     // conversion ads (the rest are excluded by `isEligibleForLearning`
     // in the aggregator). The accumulator lives in the function scope so
@@ -1076,8 +1040,8 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // BEFORE the patch runs and the function was passed nulls for
     // `resolvedHookAngle` / `resolvedPatternKey` (those resolve later,
     // once `genMap` is loaded). The map only contains entries for ads
-    // that contribute — failed-read ads never reach `learnedAds`, so
-    // their adDoc.ledger stays undefined (FR-070: no contribution → no
+    // that contribute  failed-read ads never reach `learnedAds`, so
+    // their adDoc.ledger stays undefined (FR-070: no contribution ? no
     // ledger entry).
     const ledgerAdDocsByAdId = new Map<string, AdDoc>();
 
@@ -1140,7 +1104,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
 
         const ageDays = computeAgeDays(ad, windows);
 
-        // Phase 14 — Layer 4 (T041): compute the Qarar verdict for this
+        // Phase 14  Layer 4 (T041): compute the Qarar verdict for this
         // ad. The engine reads from the per-ad metrics + account baselines;
         // settings come from the funnel doc loaded once above.
         const verdictForEngine: AdPerformanceForVerdict = {
@@ -1171,7 +1135,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         // "no data" and falls through to leave-it per the K5 matrix).
         const adSetCpa3d = adSetConv3d > 0 ? adSetSpend3d / adSetConv3d : undefined;
         // adSetHittingTarget: true when the ad-set is at-or-under target
-        // (engine matrix: hit-target → leave it; missing-target → 🔴 weak).
+        // (engine matrix: hit-target ? leave it; missing-target ? ?? weak).
         // undefined when CPA is missing (engine falls through to leave-it).
         const adSetHittingTarget = adSetCpa3d === undefined
             ? undefined
@@ -1197,15 +1161,15 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             // Defensive: a buggy verdict should never break the sync.
             errors.push(`verdict failed for ${ad.id}: ${(e as Error).message}`);
             verdictResult = {
-                verdict: "⏳" as const,
+                verdict: "?" as const,
                 ruleCode: "data_gate",
-                reasonAr: "لا توجد بيانات كافية بعد",
+                reasonAr: "?? ???? ?????? ????? ???",
                 diagnosisAr: null,
                 evaluatedAt: nowMs,
             };
         }
 
-        // ─── T028 (Batch 09): per-ad block reduced to a single call ───
+        // --- T028 (Batch 09): per-ad block reduced to a single call ---
         // `decidePerAdActionsForWorker` (in `learning/learningPerAdLoop.ts`)
         // resolves the per-ad worker context (creativeKey from
         // `creativeKeyByAdId`, ledgerReadFailed, existingData,
@@ -1225,7 +1189,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             // verify the per-creative aggregation.
             resolvedHookAngle: null,
             resolvedPatternKey: null,
-            // FR-027 (Phase 969 T047) — every contributing row
+            // FR-027 (Phase 969 T047)  every contributing row
             // attributes to the workspace's funnel type read from
             // the settings doc; the aggregator's `byFunnelType`
             // accumulates from there.
@@ -1302,19 +1266,19 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             // T025a (Batch 12): track the queued adDoc so the post-pass
             // patch can flow the resolved angleKey/patternKey back into
             // the ledger entry on this same object (which IS the data
-            // the `writes` array holds — `writes[i].data === decision.adDoc`).
+            // the `writes` array holds  `writes[i].data === decision.adDoc`).
             ledgerAdDocsByAdId.set(ad.id, decision.adDoc);
         }
     }
 
-    // Phase 14 — Layer 4b (T044): compute the two-component learning
+    // Phase 14  Layer 4b (T044): compute the two-component learning
     // aggregates. Skipped entirely if no matched conversion ads were
     // collected (e.g. fresh account, or every ad failed image matching).
     if (learnedAds.length > 0) {
         try {
             // 1. Batch-load matched generation docs. A single
             //    collectionGroup 'getAll' would be more efficient but
-            //    Firestore limits to 10 per getAll batch — using
+            //    Firestore limits to 10 per getAll batch  using
             //    `in` queries is bounded to 30 per query. We use a
             //    chunked loop.
             const genMap = await batchLoadGenerations(learnedAds.map((a) => a.generationId).filter((g): g is string => !!g));
@@ -1342,7 +1306,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 // `creativeIdentity.selectedModes` field for legacy
                 // generation docs that don't carry offerCreativeMode.
                 // The `||` check above was wrong because `extractModes`
-                // always returns an array, and `[]` is truthy — so the
+                // always returns an array, and `[]` is truthy  so the
                 // fallback was never reached. Use a length check.
                 const inputModes = extractModes(input.offerCreativeMode);
                 entry.creativeModes = inputModes.length > 0
@@ -1362,15 +1326,15 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 // the generation doc, flow them back into the queued
                 // write's ledger entry. Without this, every live
                 // ledger record carries `angleKey: null` and
-                // `patternKey: null` — both FR-013/017's
+                // `patternKey: null`  both FR-013/017's
                 // withdraw-then-add path (needs the keys to locate
                 // what to withdraw) and FR-051a's audit guarantee
                 // (needs the keys to answer "why is this count what
                 // it is") are inoperative.
                 //
                 // Failed-read ads never reach `learnedAds`, so they
-                // never appear here — their adDoc.ledger is undefined
-                // (FR-070: no contribution → no ledger entry). Ads
+                // never appear here  their adDoc.ledger is undefined
+                // (FR-070: no contribution ? no ledger entry). Ads
                 // with a genMap miss keep the null keys the original
                 // queue wrote, preserving the "no resolved keys known"
                 // signal until the generation doc is found.
@@ -1385,136 +1349,22 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                     );
                 }
             }
-            // BATCH 21 â€” Item 2 (FR-013 / FR-017): consult the contribution
-            // ledger and apply the FULL set of decideContribution
-            // outcomes:
-            //
-            //   - `add`              â†’ keep the row.
-            //   - `noop`             â†’ remove the row (recorded already
-            //                          matches the desired).
-            //   - `withdraw_then_add`â†’ applyHookAggregateWithdrawal
-            //                          against the RECORDED geometry, then
-            //                          keep the row so applyHookAggregatesDelta
-            //                          re-adds at the new geometry.
-            //   - `withdraw_only`    â†’ withdraw the recorded contribution
-            //                          and remove the row from learnedAds.
-            //
-            // The legacy guard `if (!desired || !recorded) continue;`
-            // discarded the `add` case before decideContribution saw it;
-            // we remove that guard so all four outcomes are reachable.
-            const withdrawalHookAds: AdForLearning[] = [];
-            for (let i = learnedAds.length - 1; i >= 0; i--) {
-                const ad = learnedAds[i];
-                const ledgerAdDoc = ledgerAdDocsByAdId.get(ad.adId);
-                const desired = ledgerAdDoc?.ledger as ContributionLedgerEntry | undefined;
-                const recorded = existingByAdId.get(ad.adId)?.ledger as ContributionLedgerEntry | undefined;
-                const decision = decideContribution(desired ?? null, recorded ?? null);
-                if (decision.kind === "noop") {
-                    learnedAds.splice(i, 1);
-                    continue;
-                }
-                if (decision.kind === "withdraw_only" || decision.kind === "withdraw_then_add") {
-                    const withdraw = decision.withdraw;
-                    const oldAd: AdForLearning = {
-                        ...ad,
-                        hookAngle: withdraw.angleKey,
-                        campaignObjective: withdraw.bucket as AdForLearning["campaignObjective"],
-                        ctrLink: withdraw.contributedValues.ctrLink,
-                        cpm3d: withdraw.contributedValues.cpm,
-                        verdict: withdraw.contributedValues.verdictMark as AdForLearning["verdict"],
-                        geoTier: withdraw.geoTier as AdForLearning["geoTier"],
-                        audienceType: withdraw.audienceType as AdForLearning["audienceType"],
-                        funnelType: ad.funnelType,
-                    };
-                    withdrawalHookAds.push(oldAd);
-                    if (decision.kind === "withdraw_only") {
-                        learnedAds.splice(i, 1);
-                    }
-                }
-            }
-
-            // 3. Load existing aggregates. CRITICAL: any read error here
-            //    must PROPAGATE (not be caught) — silently returning [] would
-            //    cause the aggregator to compute stats from a wrong baseline,
-            //    and the Firestore write would overwrite historical data
-            //    with garbage. The outer try/catch records the failure and
-            //    skips the aggregate writes, preserving the existing docs.
-            const [existingHookDocs, existingVisualDocs] = await Promise.all([
-                adAccountRef.collection("hookPerformance").get(),
-                adAccountRef.collection("visualPerformance").get(),
-            ]);
-            const existingHook: HookPerformanceAggregate[] = existingHookDocs.docs.map((d) => d.data() as HookPerformanceAggregate);
-            const existingVisual: VisualPerformanceAggregate[] = existingVisualDocs.docs.map((d) => d.data() as VisualPerformanceAggregate);
-            // 4. Apply the new contributions to the existing aggregates
-            //    using FR-021's additive delta semantics. T023 is
-            //    satisfied naturally — the delta maps contain only
-            //    angles/patterns that received an ad this sync, so
-            //    untouched records are NOT written.
-            // BATCH 21 — Item 2 (FR-013 / FR-017): apply withdrawals
-            // first (recorded → old bucket), then additions (desired →
-            // new bucket).
-            //
-            // `withdrawalHookAds` (populated by the ledger consult
-            // above) carries rows whose withdrawal path targets an
-            // OLD angle. Apply `applyHookAggregateWithdrawal` to
-            // existingHook[A] BEFORE the additive pass so the new
-            // contribution is added to the new angle without
-            // double-counting across two buckets.
-            let hookBase = existingHook;
-            let visualBase = existingVisual;
-            if (withdrawalHookAds.length > 0) {
-                const withdrawalByAngle = new Map<string, AdForLearning[]>();
-                for (const wad of withdrawalHookAds) {
-                    const hookAngle = wad.hookAngle;
-                    if (hookAngle === null) continue;
-                    const key: string = hookAngle as string;
-                    const existing = withdrawalByAngle.get(key);
-                    if (existing !== undefined) existing.push(wad);
-                    else withdrawalByAngle.set(key, [wad]);
-                }
-                hookBase = hookBase.map((agg) => {
-                    const withdrawals = withdrawalByAngle.get(agg.angleKey);
-                    if (!withdrawals || withdrawals.length === 0) return agg;
-                    let next = agg;
-                    for (const wad of withdrawals) {
-                        next = applyHookAggregateWithdrawal(next, wad);
-                    }
-                    return next;
-                });
-                visualBase = visualBase.map((agg) => {
-                    const withdrawals = withdrawalByAngle.get(agg.patternKey);
-                    if (!withdrawals || withdrawals.length === 0) return agg;
-                    let next = agg;
-                    for (const wad of withdrawals) {
-                        next = applyVisualAggregateWithdrawal(next, wad);
-                    }
-                    return next;
-                });
-            }
-            const newHook = applyHookAggregatesDelta(hookBase, learnedAds, nowMs);
-            const newVisual = applyVisualAggregatesDelta(visualBase, learnedAds, nowMs);
-            // 5. Write back. Each entry in newHook/newVisual received a
-            //    contribution this sync, so writing it is non-redundant.
-            //    Use set with merge=true so concurrent updates to other
-            //    dimensions don't clobber.
-            for (const [angleKey, agg] of newHook) {
-                aggregateWrites.push({
-                    ref: adAccountRef.collection("hookPerformance").doc(angleKey),
-                    data: agg as unknown as Record<string, unknown>,
-                });
-            }
-            for (const [patternKey, agg] of newVisual) {
-                if (!patternKey) continue;
-                aggregateWrites.push({
-                    ref: adAccountRef.collection("visualPerformance").doc(patternKey),
-                    data: agg as unknown as Record<string, unknown>,
-                });
-            }
+            // BATCH 22 â Step 1: extract the ledger consult +
+            // aggregate read + withdrawal application + additive pass +
+            // chunked commit into applyLearningWrites. The function
+            // runs the same logic that used to live inline here; Step 2
+            // of Batch 22 will acquire the lease around the call.
+            // BATCH 22 — Step 1: the actual applyLearningWrites call
+            // MOVED to the lease-held try block below (Step 2 acquires
+            // the lease around this call). Until Step 2, the lease is
+            // acquired BEFORE this body and released AFTER, with
+            // stillHeld check + commit inside the lease-held try block.
+            // See lease-held try at the end of runSyncForAccount.
         } catch (e: unknown) {
             // Never break the sync because of a learning-aggregate glitch.
             // This catch handles: (a) generation-load failures, (b) the
             // hook/visual get() above throwing. In both cases we skip the
-            // aggregate writes — the existing Firestore docs are left
+            // aggregate writes  the existing Firestore docs are left
             // untouched.
             errors.push(`learning aggregate update failed: ${(e as Error).message}`);
         }
@@ -1557,7 +1407,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // does NOT wipe fields the delete cascade wrote (e.g.
     // `deletedGenerationId`, `deletedGenerationAt`, `matchedManuallyAt`).
     // These are the **operational status writes** FR-009 / FR-060a require
-    // to be committed BEFORE the learning-write lease is attempted — the
+    // to be committed BEFORE the learning-write lease is attempted  the
     // owner-action list must reflect today's sync even when learning
     // cannot proceed.
     for (let i = 0; i < writes.length; i += 450) {
@@ -1569,7 +1419,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         });
     }
 
-    // ─── Learning-write lease (FR-054a, FR-060a) ──────────────────────
+    // --- Learning-write lease (FR-054a, FR-060a) ----------------------
     //
     // Per FR-060a, the lease MUST be acquired AFTER the operational
     // status writes commit. Signalling failure does not roll back a
@@ -1580,17 +1430,17 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // Phase 2 wires the acquire/release pattern only. The actual
     // learning write between acquire and release lands in Phase 3.
     // Establishing the wire-up here means Phase 3's diff is the body
-    // between acquire and release — not the ordering.
+    // between acquire and release  not the ordering.
     //
     // runId is the unique-per-run token FR-057 / FR-058 require for
     // holder-identity verification. The lease is keyed per ACCOUNT
-    // (FR-054a, FR-054b) — Phase 970's per-owner guard at
+    // (FR-054a, FR-054b)  Phase 970's per-owner guard at
     // `metaSync/lease.ts` is unmodified and is NOT reached by this code
     // path (the spec records the discrimination explicitly).
     const learningRunId = `${userId}_${workspaceId}_${accountId}_${nowMs}`;
     const learningLeaseAcquired = await acquireLearningLease(
         // Cast: lease primitive accepts loose DbLike for testability; production
-        // passes the real Firestore handle (structurally compatible — `doc`,
+        // passes the real Firestore handle (structurally compatible  `doc`,
         // `runTransaction` are present).
         getDb() as unknown as Parameters<typeof acquireLearningLease>[0],
         userId,
@@ -1603,7 +1453,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         // FR-060 + FR-060a: signal failure. Operational writes have
         // already committed; the surrounding Cloud Tasks / manual caller
         // decides how to retry (the existing task retry config at
-        // `worker.ts:33-37` is sufficient — 3 attempts, 30–600 s backoff).
+        // `worker.ts:33-37` is sufficient  3 attempts, 30600 s backoff).
         //
         // Manual path: the wrapper that called us surfaces the bilingual
         // "already refreshing" message of FR-065. Scheduled path: the
@@ -1613,7 +1463,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             `until ${new Date(learningLeaseAcquired.expiresAtMs).toISOString()} ` +
             `(FR-054a, FR-060)`,
         );
-        // Release was never acquired — return early WITHOUT running the
+        // Release was never acquired  return early WITHOUT running the
         // prune/patch tail, so the "failed" status the surrounding caller
         // sees is unambiguous.
         return {
@@ -1626,7 +1476,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         };
     }
 
-    // ─── FR-062 (T018a): pre-commit fencing re-check ──────────────────
+    // --- FR-062 (T018a): pre-commit fencing re-check ------------------
     //
     // Re-verify the lease is still held immediately before any commit.
     // FR-063 acknowledges the residual window between this check and
@@ -1644,7 +1494,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     );
     if (!stillHeldNow) {
         // Lease was lost between acquire and the fencing check. Do NOT
-        // proceed with the learning write — a successor run may be
+        // proceed with the learning write  a successor run may be
         // doing it. Per FR-064, leave existing records untouched.
         errors.push(
             "learning lease lost between acquire and pre-commit re-check " +
@@ -1675,32 +1525,37 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     }
 
     // Lease is held. Phase 3 inserts the learning-write body here
-    // (FR-016, FR-021). Until then, immediately release — the lease is
+    // (FR-016, FR-021). Until then, immediately release  the lease is
     // acquired and released within the same run because there is no
     // learning write yet to protect.
     try {
-        // ─── Placeholder for the Phase 3 learning write body. ───
-        // The delta application (T018) inserts the body that uses the
-        // existing aggregate + the new contributions. The
-        // failedLedgerReads set is consumed in the per-ad loop above
-        // (T018b) — the field-level discrimination omits the linking
-        // fields from the adDoc merge write.
-
-
-        // BATCH 20 — Item 1: commit the learning-aggregate writes
-        // (hookPerformance / visualPerformance) INSIDE the lease-held
-        // try block. The operational writes have already committed
-        // above; this loop's writes are fenced by the lease.
-        for (let i = 0; i < aggregateWrites.length; i += 450) {
-            const chunk = aggregateWrites.slice(i, i + 450);
-            const batch = getDb().batch();
-            for (const w of chunk) batch.set(w.ref, w.data, { merge: true });
-            await batch.commit().catch((e: unknown) => {
-        errors.push(`aggregate batch commit failed: ${(e as Error).message}`);
-            });
-        }
+        // BATCH 22  Step 1: extract. Step 2 of Batch 22 will acquire
+        // the lease around the applyLearningWrites call (which is in
+        // the post-pass loop above). Until then, the lease is acquired
+        // BEFORE the apply call in the dispatcher's flow (which is
+        // exactly the same as Batch 19's placement: lease is held
+        // across the inline block, which used to do the same work).
+        //
+        // The actual learning write happens via applyLearningWrites
+        // (called inside the post-pass loop above). The lease-release
+        // check + release below is preserved.
         // FR-058: release verifies holder identity. A run that lost its
         // lease to a takeover cannot release its successor's lease.
+            // BATCH 22 — Step 1 (corrected): applyLearningWrites
+            // runs inside the lease-held try block so a refused lease
+            // short-circuits past this call entirely. Step 2 acquires
+            // the lease around this call; today the lease was acquired
+            // earlier in this run, so the call site just commits inside
+            // the stillHeld re-check + finally-released block.
+            await applyLearningWrites({
+                db: getDb(),
+                adAccountRef,
+                learnedAds,
+                ledgerAdDocsByAdId,
+                existingByAdId,
+                nowMs,
+                errors,
+            });
         await releaseLearningLease(
             getDb() as unknown as Parameters<typeof releaseLearningLease>[0],
             userId,
@@ -1758,7 +1613,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     };
 }
 
-// ─── Token resolution ─────────────────────────────────────────
+// --- Token resolution -----------------------------------------
 
 async function resolveAccessToken(conn: StoredConnection): Promise<string> {
     if (conn.encryptedToken) {
@@ -1791,7 +1646,7 @@ function emptyCounts(): SyncResult["counts"] {
 
 /**
  * Batch-load generation docs by id. Uses the top-level generations/{id}
- * collection (the canonical location � feedbackService.saveGeneration
+ * collection (the canonical location ? feedbackService.saveGeneration
  * writes there). in queries support up to 30 values per query; we
  * chunk accordingly.
  */
@@ -1818,7 +1673,7 @@ async function batchLoadGenerations(generationIds: string[]): Promise<Map<string
                     const doc = await db.collection("generations").doc(id).get();
                     if (doc.exists) out.set(id, doc.data() as Record<string, unknown>);
                 } catch {
-                    // ignore � missing gen docs are fine, the learning
+                    // ignore ? missing gen docs are fine, the learning
                     // aggregator just won't see them.
                 }
             }
@@ -1843,7 +1698,10 @@ function extractModes(v: unknown): string[] {
         return v.filter((x): x is string => typeof x === "string" && x.length > 0);
     }
     if (typeof v === "string" && v.length > 0) return [v];
-    // creativeIdentity.selectedModes is a parallel field � caller-side
+    // creativeIdentity.selectedModes is a parallel field ? caller-side
     // helper, not used here.
     return [];
 }
+
+
+
