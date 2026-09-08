@@ -83,12 +83,15 @@ import {
 } from "../funnelSettings.js";
 import {
     computePatternKey,
+    EMPTY_BY_FUNNEL_TYPE,
+    resolveFunnelTypeBucketKey,
     type AdForLearning,
     type HookPerformanceAggregate,
     type VisualPerformanceAggregate,
 } from "../learningAggregates.js";
 import {
     applyHookAggregatesDelta,
+    applyHookAggregateWithdrawal,
     applyVisualAggregatesDelta,
 } from "../learning/aggregateDelta.js";
 import {
@@ -104,6 +107,7 @@ import {
     decideAdWriteActions,
 } from "../learning/decideAdWriteActions.js";
 import { decideContribution } from "../learning/contributionLedger.js";
+import type { ContributionDecision } from "../learning/contributionLedger.js";
 import type { ContributionLedgerEntry } from "../learning/types.js";
 import {
     decidePerAdActionsForWorker,
@@ -564,6 +568,46 @@ export function resetImageMatchOverridesForTests(): void {
     _downloadImageOverride = null;
     _computeHashOverride = null;
     _matchOverride = null;
+}
+
+
+// BATCH 21 — Item 2 (FR-013 / FR-017): visual aggregate withdrawal,
+// symmetric with applyHookAggregateWithdrawal. Defined locally
+// because aggregateDelta.ts only ships the hook variant; this
+// keeps the diff contained. TODO(phase969-followup): lift into
+// aggregateDelta.ts alongside the hook variant.
+function applyVisualAggregateWithdrawal(
+    existing: VisualPerformanceAggregate,
+    ad: AdForLearning,
+): VisualPerformanceAggregate {
+    const clone: VisualPerformanceAggregate = JSON.parse(JSON.stringify(existing));
+    const isConversion = ad.campaignObjective === "conversion";
+    if (isConversion) {
+        if (clone.sampleSize > 0) clone.sampleSize -= 1;
+        if (clone.byObjective.conversion.count > 0) {
+            clone.byObjective.conversion.count -= 1;
+        }
+        const tier = ad.geoTier;
+        if (clone.byGeoTier[tier] && clone.byGeoTier[tier].count > 0) {
+            clone.byGeoTier[tier] = { ...clone.byGeoTier[tier], count: clone.byGeoTier[tier].count - 1 };
+        }
+        const aud = ad.audienceType;
+        if (clone.byAudienceType[aud] && clone.byAudienceType[aud].count > 0) {
+            clone.byAudienceType[aud] = { ...clone.byAudienceType[aud], count: clone.byAudienceType[aud].count - 1 };
+        }
+    } else {
+        if (clone.byObjective.other.count > 0) {
+            clone.byObjective.other.count -= 1;
+        }
+    }
+    if (clone.byFunnelType) {
+        const key = resolveFunnelTypeBucketKey(ad.funnelType);
+        const bucket = clone.byFunnelType[key];
+        if (bucket && bucket.count > 0) {
+            clone.byFunnelType[key] = { count: bucket.count - 1 };
+        }
+    }
+    return clone;
 }
 
 export async function runSyncForAccount(params: SyncParams): Promise<SyncResult> {
@@ -1341,25 +1385,51 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                     );
                 }
             }
-            // would be a noop against the recorded entry. The per-ad
-            // block queued the adDoc with `angleKey: null, patternKey:
-            // null`; the post-pass patch above has flowed the resolved
-            // keys into `ledgerAdDoc.ledger`. We compare the patched
-            // `ledgerAdDoc.ledger` (desired) against
-            // `existingByAdId.get(adId)?.ledger` (recorded, from the
-            // bounded read). When they match, the row is a noop and
-            // must be removed from `learnedAds` before the aggregator
-            // runs. Otherwise a second sync over the same input would
-            // double-count the per-row sums (FR-018).
+            // BATCH 21 â€” Item 2 (FR-013 / FR-017): consult the contribution
+            // ledger and apply the FULL set of decideContribution
+            // outcomes:
+            //
+            //   - `add`              â†’ keep the row.
+            //   - `noop`             â†’ remove the row (recorded already
+            //                          matches the desired).
+            //   - `withdraw_then_add`â†’ applyHookAggregateWithdrawal
+            //                          against the RECORDED geometry, then
+            //                          keep the row so applyHookAggregatesDelta
+            //                          re-adds at the new geometry.
+            //   - `withdraw_only`    â†’ withdraw the recorded contribution
+            //                          and remove the row from learnedAds.
+            //
+            // The legacy guard `if (!desired || !recorded) continue;`
+            // discarded the `add` case before decideContribution saw it;
+            // we remove that guard so all four outcomes are reachable.
+            const withdrawalHookAds: AdForLearning[] = [];
             for (let i = learnedAds.length - 1; i >= 0; i--) {
                 const ad = learnedAds[i];
                 const ledgerAdDoc = ledgerAdDocsByAdId.get(ad.adId);
                 const desired = ledgerAdDoc?.ledger as ContributionLedgerEntry | undefined;
                 const recorded = existingByAdId.get(ad.adId)?.ledger as ContributionLedgerEntry | undefined;
-                if (!desired || !recorded) continue;
-                const decision = decideContribution(desired, recorded ?? null);
+                const decision = decideContribution(desired ?? null, recorded ?? null);
                 if (decision.kind === "noop") {
                     learnedAds.splice(i, 1);
+                    continue;
+                }
+                if (decision.kind === "withdraw_only" || decision.kind === "withdraw_then_add") {
+                    const withdraw = decision.withdraw;
+                    const oldAd: AdForLearning = {
+                        ...ad,
+                        hookAngle: withdraw.angleKey,
+                        campaignObjective: withdraw.bucket as AdForLearning["campaignObjective"],
+                        ctrLink: withdraw.contributedValues.ctrLink,
+                        cpm3d: withdraw.contributedValues.cpm,
+                        verdict: withdraw.contributedValues.verdictMark as AdForLearning["verdict"],
+                        geoTier: withdraw.geoTier as AdForLearning["geoTier"],
+                        audienceType: withdraw.audienceType as AdForLearning["audienceType"],
+                        funnelType: ad.funnelType,
+                    };
+                    withdrawalHookAds.push(oldAd);
+                    if (decision.kind === "withdraw_only") {
+                        learnedAds.splice(i, 1);
+                    }
                 }
             }
 
@@ -1380,8 +1450,49 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             //    satisfied naturally — the delta maps contain only
             //    angles/patterns that received an ad this sync, so
             //    untouched records are NOT written.
-            const newHook = applyHookAggregatesDelta(existingHook, learnedAds, nowMs);
-            const newVisual = applyVisualAggregatesDelta(existingVisual, learnedAds, nowMs);
+            // BATCH 21 — Item 2 (FR-013 / FR-017): apply withdrawals
+            // first (recorded → old bucket), then additions (desired →
+            // new bucket).
+            //
+            // `withdrawalHookAds` (populated by the ledger consult
+            // above) carries rows whose withdrawal path targets an
+            // OLD angle. Apply `applyHookAggregateWithdrawal` to
+            // existingHook[A] BEFORE the additive pass so the new
+            // contribution is added to the new angle without
+            // double-counting across two buckets.
+            let hookBase = existingHook;
+            let visualBase = existingVisual;
+            if (withdrawalHookAds.length > 0) {
+                const withdrawalByAngle = new Map<string, AdForLearning[]>();
+                for (const wad of withdrawalHookAds) {
+                    const hookAngle = wad.hookAngle;
+                    if (hookAngle === null) continue;
+                    const key: string = hookAngle as string;
+                    const existing = withdrawalByAngle.get(key);
+                    if (existing !== undefined) existing.push(wad);
+                    else withdrawalByAngle.set(key, [wad]);
+                }
+                hookBase = hookBase.map((agg) => {
+                    const withdrawals = withdrawalByAngle.get(agg.angleKey);
+                    if (!withdrawals || withdrawals.length === 0) return agg;
+                    let next = agg;
+                    for (const wad of withdrawals) {
+                        next = applyHookAggregateWithdrawal(next, wad);
+                    }
+                    return next;
+                });
+                visualBase = visualBase.map((agg) => {
+                    const withdrawals = withdrawalByAngle.get(agg.patternKey);
+                    if (!withdrawals || withdrawals.length === 0) return agg;
+                    let next = agg;
+                    for (const wad of withdrawals) {
+                        next = applyVisualAggregateWithdrawal(next, wad);
+                    }
+                    return next;
+                });
+            }
+            const newHook = applyHookAggregatesDelta(hookBase, learnedAds, nowMs);
+            const newVisual = applyVisualAggregatesDelta(visualBase, learnedAds, nowMs);
             // 5. Write back. Each entry in newHook/newVisual received a
             //    contribution this sync, so writing it is non-redundant.
             //    Use set with merge=true so concurrent updates to other

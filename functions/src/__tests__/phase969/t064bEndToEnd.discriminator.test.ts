@@ -740,6 +740,83 @@ await test("BATCH 19: twice-over-same-input leaves the aggregate unchanged on th
         `Batch 19 item 2: distinct-creative count must be idempotent across runs (first=${firstHook.creativeCount}, second=${secondHook.creativeCount})`);
 });
 
+// BATCH 21 - Item 2: angle-change withdraw-then-add (FR-013 / FR-017).
+// An ad that contributed under angle A, then has its resolved angle
+// change to B and syncs again, must:
+//   - leave angle A's count at the value it had BEFORE the first sync
+//     (the contribution to A is withdrawn), and
+//   - increment angle B by 1 (the contribution is added to B).
+//
+// Against pre-fix code the contribution to A stays (the legacy guard
+// skipped withdraw_then_add), so A's count rises from 0 → 1 → 2 and
+// B's stays at 0; the assertion fails. With the BATCH 21 fix the
+// withdrawal is applied via applyHookAggregateWithdrawal before the
+// additive pass.
+await test("BATCH 21 item 2: ad angle change A→B leaves A's count at prior and increments B", async () => {
+    resetStub();
+    seedConnection();
+    // Seed generation with hookAngle = "urgency" so the FIRST sync
+    // contributes to angle A ("urgency").
+    seedGenerationMatch({});
+    bucket("learningLeases").delete(`${OWNER}_${ACCT_A}`);
+    seedImageMatchStubs();
+    metaGraph.setFetchImplForTests(seedFetchOneAd());
+    seedFunnelSettings("resolve", "paid_event");
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runSyncForAccount } = require("../../metaSync/shared.js");
+
+    const first = await runSyncForAccount({
+        userId: OWNER,
+        workspaceId: WS_A,
+        accountId: ACCT_A,
+        trigger: "manual",
+        nowMs: Date.now(),
+    });
+    assert.equal(first.ok, true,
+        `BATCH 21 item 2: first sync must succeed (got ok=${first.ok}, errors=${JSON.stringify(first.errors)})`);
+
+    const hookPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/hookPerformance`;
+    const firstUrgency = bucket(hookPath).get("urgency");
+    assert.ok(firstUrgency, "BATCH 21 item 2: first sync must write a hook aggregate for 'urgency'");
+    const firstUrgencyCount = (firstUrgency.byObjective?.conversion?.count) ?? 0;
+    assert.equal(firstUrgencyCount, 1,
+        `BATCH 21 item 2: first sync must contribute 1 to angle urgency (got count=${firstUrgencyCount})`);
+
+    // Now mutate the seed generation's creativeIdentity.hookAngle so the
+    // SECOND sync resolves the ad under a DIFFERENT angle ("statistics").
+    // `seedGenerationMatch` resets the doc on each call; mutate the bucket
+    // directly to simulate a mid-flight generation update.
+    const genDoc = bucket("generations").get("gen_1") as Record<string, any>;
+    bucket("generations").set("gen_1", {
+        ...genDoc,
+        creativeIdentity: { ...(genDoc.creativeIdentity ?? {}), hookAngle: "statistics" },
+    });
+
+    // Run the second sync — same input ad, different resolved angle.
+    const second = await runSyncForAccount({
+        userId: OWNER,
+        workspaceId: WS_A,
+        accountId: ACCT_A,
+        trigger: "manual",
+        nowMs: Date.now() + 1_000,
+    });
+    assert.equal(second.ok, true,
+        `BATCH 21 item 2: second sync must succeed (got ok=${second.ok}, errors=${JSON.stringify(second.errors)})`);
+
+    // After the BATCH 21 fix: urgency's count returns to its prior
+    // value (1 → withdrawn → 0), statistics gains 1.
+    const secondUrgency = bucket(hookPath).get("urgency");
+    const secondUrgencyCount = (secondUrgency?.byObjective?.conversion?.count) ?? 0;
+    assert.equal(secondUrgencyCount, 0,
+        `BATCH 21 item 2: angle-change must withdraw from OLD bucket (urgency count returned to 0, got ${secondUrgencyCount}; the FR-013 withdraw-then-add path failed)`);
+
+    const secondStatistics = bucket(hookPath).get("statistics");
+    const secondStatisticsCount = (secondStatistics?.byObjective?.conversion?.count) ?? 0;
+    assert.equal(secondStatisticsCount, 1,
+        `BATCH 21 item 2: angle-change must add to NEW bucket (statistics count=1, got ${secondStatisticsCount})`);
+});
+
 // ΓöÇΓöÇΓöÇ T021a worker-output: per-ad ledger.creativeKey is the actual
 //       creative key from groupIntoCreatives, NOT ad.id ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
