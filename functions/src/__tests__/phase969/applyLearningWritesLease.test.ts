@@ -1,6 +1,8 @@
 // functions/src/__tests__/phase969/applyLearningWritesLease.test.ts
 // ───────────────────────────────────────────────────────────────────
-// BATCH 24 — Step 3: the runSyncForAccount end-to-end tests in
+// BATCH 24/25 — Step 3: function-level tests for `applyLearningWrites`.
+//
+// The runSyncForAccount end-to-end tests in
 // `t064bEndToEnd.discriminator.test.ts` already prove the
 // lease-fencing property at the system level:
 //   - `BATCH 20: lease-refused run writes operational state and NO aggregate document`
@@ -9,25 +11,42 @@
 // on the second pass (FR-018)` proves the idempotency.
 //
 // This file exercises `applyLearningWrites` in ISOLATION to
-// document what the function's read-modify-write does:
+// document what the function's read-modify-write does. Three
+// within-call invariants pin the function-level regressions:
 //
 //   1. The same creative appears twice in `learnedAds` (single
 //      sync, before commit). The function should count it ONCE
 //      (per-creative Set deduplication within one call's working
 //      state — see `aggregateDelta.ts:107`).
 //   2. Two DIFFERENT creatives. The function should count both.
-//   3. A withdrawal is applied before the additive pass.
+//   3. The function computes a weighted `avgLinkCtr` over its
+//      input rows.
 //
-// T064b proves these at the system level. This file proves them
-// at the function level so a regression in the function itself
-// fails fast without driving the full sync body.
+// Tests 4 and 5 are the Batch 25 correcting pair: the
+// fence-vs-no-fence discriminator that Batch 24 could not express.
+// The discriminator is `avgLinkCtr`, a scalar that `merge: true`
+// REPLACES rather than averages. Two consecutive calls on the
+// SAME stale baseline each commit their own scalar, and the stored
+// value reflects ONLY the second call's contribution (the first
+// is "lost"). Two consecutive calls on FRESH baselines (where
+// the second sees the first's commit) reflect BOTH contributions
+// via the weighted-average formula.
 //
-// What this file does NOT do: discriminate the fenced vs unfenced
-// arrangements. That discrimination requires reading the
-// post-first-commit baseline mid-flight, which the function does
-// not expose. The fence is enforced by `shared.ts`'s caller, not
-// the function. The end-to-end `t064b` is the right place for that
-// property.
+// The reviewer put it this way:
+//
+// > An average is not an increment. It is computed from the
+// > baseline plus the new rows and written as a **whole value**.
+// > Firestore's `merge: true` replaces a scalar field, it does
+// > not average it. So two runs that both read the same stale
+// > baseline and both write in turn produce a final
+// > `avgLinkCtr` reflecting only the second run's rows — the
+// > first run's contribution is gone from it.
+//
+// To simulate the unfenced shape (both reads see the same
+// baseline), the test snapshots the pre-call-1 stub state,
+// runs call 1, restores the snapshot, then runs call 2 against
+// the restored baseline. The stored result reflects only the
+// last writer's scalar — the discriminator we want.
 
 import assert from "node:assert/strict";
 
@@ -356,6 +375,126 @@ async function test3_ctrLinkAverage() {
     console.log(`     avgLinkCtr=${storedAvgLinkCtr.toFixed(4)}`);
 }
 
+// ─── Test 4: UNFENCED — both reads see same baseline → avgLinkCtr reflects only second row ─
+
+async function test4_unfenced_losesFirstRowInAvg() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    // Snapshot the baseline BEFORE call 1 runs.
+    const baselineKey = docKey([ACCT_PATH, "hookPerformance", "urgency"]);
+    const baselineSnapshot = JSON.parse(JSON.stringify(docStore.get(baselineKey)));
+
+    const ad1 = makeAd("ad_1", "urgency", "creative_A", 0.02);
+    const ad2 = makeAd("ad_2", "urgency", "creative_B", 0.04);
+
+    // Call 1: reads baseline {avgLinkCtr:0, count:0} → computes
+    // avgLinkCtr=0.02, count=1. Commits a scalar write. Stub
+    // `merge:true` merges onto the stored doc, putting the
+    // function's avgLinkCtr=0.02 into the document.
+    await applyLearningWrites({
+        db: { batch: () => new StubBatch() },
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad1],
+        ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_A")]]),
+        existingByAdId: new Map(),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    // Simulate the unfenced shape: restore the baseline so call 2
+    // reads the SAME baseline call 1 read. In a true concurrent
+    // setting both reads happen before either commits.
+    docStore.set(baselineKey, baselineSnapshot);
+
+    // Call 2: reads baseline {avgLinkCtr:0, count:0} → computes
+    // avgLinkCtr=0.04, count=1. Commits a scalar write. Stub
+    // `merge:true` REPLACES the scalar avgLinkCtr with 0.04.
+    await applyLearningWrites({
+        db: { batch: () => new StubBatch() },
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad2],
+        ledgerAdDocsByAdId: new Map([["ad_2", makeLedger("ad_2", "creative_B")]]),
+        existingByAdId: new Map(),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const stored = docStore.get(baselineKey);
+    const storedAvgLinkCtr = stored?.byObjective?.conversion?.avgLinkCtr ?? -1;
+
+    // Unfenced: the first row's `ctrLink = 0.02` is lost from the
+    // average. The stored avgLinkCtr reflects ONLY the second
+    // row's contribution (0.04). This is the lost-update the
+    // reviewer named — a scalar recomputed from a stale baseline
+    // and committed with `set(ref, data, { merge: true })`
+    // REPLACES the field rather than aggregating it.
+    assert.ok(Math.abs(storedAvgLinkCtr - 0.04) < 0.001,
+        `BATCH 25 unfenced: storedAvgLinkCtr expected=0.04 (only second row's contribution survives), got ${storedAvgLinkCtr}`);
+
+    console.log(`     storedAvgLinkCtr=${storedAvgLinkCtr.toFixed(4)} (only the second row's 0.04 — first row's 0.02 lost)`);
+}
+
+// ─── Test 5: FENCED — second call reads post-first-commit → avgLinkCtr reflects both ─
+
+async function test5_fenced_retainsBothInAvg() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    const ad1 = makeAd("ad_1", "urgency", "creative_A", 0.02);
+    const ad2 = makeAd("ad_2", "urgency", "creative_B", 0.04);
+
+    // Call 1: reads baseline {0,0} → writes {avgLinkCtr:0.02, count:1}.
+    await applyLearningWrites({
+        db: { batch: () => new StubBatch() },
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad1],
+        ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_A")]]),
+        existingByAdId: new Map(),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    // Fenced: DO NOT restore the baseline. The second call reads
+    // the post-first-commit baseline {avgLinkCtr:0.02, count:1},
+    // adds its row (ctrLink=0.04), and computes the weighted
+    // average (0.02*1 + 0.04) / 2 = 0.03, count=2.
+    await applyLearningWrites({
+        db: { batch: () => new StubBatch() },
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad2],
+        ledgerAdDocsByAdId: new Map([["ad_2", makeLedger("ad_2", "creative_B")]]),
+        existingByAdId: new Map(),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const stored = docStore.get(docKey([ACCT_PATH, "hookPerformance", "urgency"]));
+    const storedAvgLinkCtr = stored?.byObjective?.conversion?.avgLinkCtr ?? -1;
+    const storedCount = stored?.byObjective?.conversion?.count ?? -1;
+
+    // Fenced: the second row's addition is folded into the
+    // existing average; the stored value reflects BOTH rows.
+    assert.ok(Math.abs(storedAvgLinkCtr - 0.03) < 0.001,
+        `BATCH 25 fenced: storedAvgLinkCtr expected=0.03 (weighted mean of 0.02 and 0.04), got ${storedAvgLinkCtr}`);
+    assert.equal(storedCount, 2,
+        `BATCH 25 fenced: storedCount expected=2 (both rows counted), got ${storedCount}`);
+
+    console.log(`     storedAvgLinkCtr=${storedAvgLinkCtr.toFixed(4)} (weighted mean of both rows), storedCount=${storedCount}`);
+}
+
 // ─── Runner ───────────────────────────────────────────────────
 
 declare const test: (name: string, fn: () => Promise<void> | void) => Promise<void>;
@@ -381,7 +520,7 @@ let failed = 0;
 
 function runner() {
     console.log("");
-    console.log("=== BATCH 24 \u2014 applyLearningWrites function-level (Step 3) ===");
+    console.log("=== BATCH 24/25 \u2014 applyLearningWrites function-level (Step 3) ===");
     console.log(`Passed: ${passed}, Failed: ${failed}`);
     if (failed > 0) process.exit(FAILED);
     process.exit(PASSED);
@@ -391,6 +530,8 @@ async function main() {
     await test("BATCH 24 dedup: same creative twice in one call is counted ONCE", test1_creativeDedupedWithinCall);
     await test("BATCH 24 unique: two different creatives are counted BOTH", test2_differentCreatives);
     await test("BATCH 24 avg: average ctrLink is computed from BOTH rows (0.03)", test3_ctrLinkAverage);
+    await test("BATCH 25 unfenced: two reads same baseline → avgLinkCtr=0.04 (first row LOST)", test4_unfenced_losesFirstRowInAvg);
+    await test("BATCH 25 fenced: second reads post-first-commit → avgLinkCtr=0.03 (both RETAINED)", test5_fenced_retainsBothInAvg);
 }
 
 main()
