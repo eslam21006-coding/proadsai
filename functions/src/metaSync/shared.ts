@@ -971,7 +971,6 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     //                    block. The lease must fence the aggregate
     //                    write, not just the per-ad write.
     const writes: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
-    const aggregateWrites: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
 
 
     // Batch-load existing adPerformance docs for the current sync's
@@ -1338,31 +1337,6 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                     );
                 }
             }
-            // BATCH 22 — Step 1: applyLearningWrites now owns the ledger
-            // consult (all four decideContribution outcomes), the
-            // existingHookDocs / existingVisualDocs read, the withdrawal
-            // application, the additive pass, and building aggregateWrites.
-            // Behaviour-preserving extraction from the inline block that
-            // sat here in commit 5fd8471: the function returns its writes
-            // (it does NOT commit) so the caller can push them into the
-            // local `aggregateWrites` array and commit them inside the
-            // lease-held try block below. The lease-refused invariant
-            // (FR-054a: 0 aggregate commits on lease refusal) is preserved
-            // because the commit still happens only after `acquireLearningLease`
-            // returns ok.
-            const learningResult = await applyLearningWrites({
-                adAccountRef,
-                learnedAds,
-                ledgerAdDocsByAdId,
-                existingByAdId,
-                nowMs,
-                errors,
-            });
-            if (learningResult.ran) {
-                for (const w of learningResult.writes) {
-                    aggregateWrites.push(w as { ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> });
-                }
-            }
         } catch (e: unknown) {
             // Never break the sync because of a learning-aggregate glitch.
             // This catch handles: (a) generation-load failures, (b) the
@@ -1540,18 +1514,23 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         // fields from the adDoc merge write.
 
 
-        // BATCH 20 — Item 1: commit the learning-aggregate writes
-        // (hookPerformance / visualPerformance) INSIDE the lease-held
-        // try block. The operational writes have already committed
-        // above; this loop's writes are fenced by the lease.
-        for (let i = 0; i < aggregateWrites.length; i += 450) {
-            const chunk = aggregateWrites.slice(i, i + 450);
-            const batch = getDb().batch();
-            for (const w of chunk) batch.set(w.ref, w.data, { merge: true });
-            await batch.commit().catch((e: unknown) => {
-        errors.push(`aggregate batch commit failed: ${(e as Error).message}`);
-            });
-        }
+        // BATCH 22 — Step 2: the learning read-modify-write now
+        // runs INSIDE the lease-held try block. applyLearningWrites
+        // owns the consult, the aggregate read, the withdrawal
+        // application, the additive pass, building aggregateWrites,
+        // and the chunked commit — the call site has moved
+        // here from the post-pass try block, so the lease covers the
+        // entire critical section. A lease-refused run skips this block
+        // entirely (no read, no compute, no commit).
+        await applyLearningWrites({
+            db: getDb(),
+            adAccountRef,
+            learnedAds,
+            ledgerAdDocsByAdId,
+            existingByAdId,
+            nowMs,
+            errors,
+        });
         // FR-058: release verifies holder identity. A run that lost its
         // lease to a takeover cannot release its successor's lease.
         await releaseLearningLease(

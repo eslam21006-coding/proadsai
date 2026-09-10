@@ -1,7 +1,7 @@
-// functions/src/learning/applyLearningWrites.ts — read-modify-write of the
-// learning aggregates, extracted from `metaSync/shared.ts` so the lease
-// can span the entire critical section (Item 1 of the Batch 21/22
-// review-of-review).
+// functions/src/learning/applyLearningWrites.ts — read-modify-write and
+// commit of the learning aggregates, extracted from `metaSync/shared.ts`
+// so the lease spans the entire critical section (Item 1 of the Batch
+// 21/22 review-of-review).
 //
 // This module owns:
 //   - the per-row contribution consult against the recorded ledger
@@ -15,20 +15,17 @@
 //   - building the aggregate writes (hookPerformance / visualPerformance
 //     per-aggregate entries ready for `db.batch().set(w.ref, w.data,
 //     { merge: true })`)
+//   - the chunked commit of those writes
 //
 // It does NOT own:
-//   - the chunked commit. The caller commits the returned writes
-//     INSIDE its lease-held `try` block, so a lease-refused run
-//     never commits aggregate state (FR-054a, FR-060a).
 //   - the bounded adPerformance read (caller passes `existingByAdId`)
 //   - the lease acquire/release (caller wraps the call)
 //
-// Step 1 of the Batch 22 work — extract without behavioural change.
-// The chunked commit stays in `metaSync/shared.ts` inside the
-// lease-held `try` block; this function builds the writes and
-// hands them back. Step 2 will move the call site itself into
-// the lease-held block so this function can take over the commit
-// too. Until then, the caller commits.
+// The function MUST be called inside a lease-held `try` block: the
+// caller has already acquired the lease and re-checked `stillHeld`,
+// and the `finally` releases it. The lease covers both the read and
+// the commit, so a concurrent run cannot see an interim baseline and
+// commit a stale write against it.
 
 import {
     applyHookAggregatesDelta,
@@ -46,7 +43,8 @@ import {
 import { resolveFunnelTypeBucketKey } from "../learningAggregates.js";
 
 // `DbLike` is the same loose contract the lease acquire accepts.
-// Kept as `unknown` here to avoid the chain pulling in firestore types.
+// Kept loose here because the consumer-cast to `Parameters<...>` is what
+// makes the chain typecheck against the real Firestore handle in tests.
 type DbLike = unknown;
 
 // `AdDoc` is the per-ad document shape (subset used by the bounded
@@ -59,12 +57,6 @@ interface AdDocLike {
 type ExistingByAdId = Map<string, AdDocLike>;
 
 type DecideContributionOutcome = ContributionDecision;
-
-// One aggregate write ready for `db.batch().set(w.ref, w.data, { merge: true })`.
-export interface AggregateWrite {
-    ref: { id: string };
-    data: Record<string, unknown>;
-}
 
 // `applyVisualAggregateWithdrawal` is the visual aggregate's
 // symmetric counterpart to the hook variant. The hook variant is
@@ -106,6 +98,8 @@ function applyVisualAggregateWithdrawal(
 }
 
 export interface ApplyLearningWritesParams {
+    /** Firestore handle (DbLike). Used only for `db.batch().set/.commit()`. */
+    db: DbLike;
     /** Workspace-scoped ad-account reference (`metaSync/shared.ts` builds it). */
     adAccountRef: { collection(name: string): { doc(id?: string): { id: string }; get(): Promise<{ docs: Array<{ data(): unknown; id: string }> }> } };
     /** Per-ad rows the worker has decided will contribute. Mutated in place: rows whose contribution is a `noop` are removed. */
@@ -118,40 +112,45 @@ export interface ApplyLearningWritesParams {
     nowMs: number;
     /** Error sink — populated on non-fatal failures. Mirrors the `errors[]` array in `shared.ts`. */
     errors: string[];
+    /** Optional chunk size override (production passes nothing; tests pass small values). */
+    chunkSize?: number;
 }
 
 export interface ApplyLearningWritesResult {
-    /** Whether the function ran the consult + read + compute. False when `learnedAds` was empty. */
+    /** Whether the function ran the consult + read + compute + commit. False when `learnedAds` was empty. */
     ran: boolean;
-    /** Aggregate writes ready for `db.batch().set(w.ref, w.data, { merge: true })` — caller chunks and commits INSIDE its lease-held try block. Empty when `ran === false`. */
-    writes: AggregateWrite[];
-    /** Counts of hook and visual writes produced (for test assertions). */
+    /** Counts of hook and visual writes committed (for test assertions). */
     hookWrites: number;
     visualWrites: number;
 }
 
+const DEFAULT_CHUNK_SIZE = 450;
+
 /**
- * Apply learning writes end-to-end (without committing):
+ * Apply learning writes end-to-end:
  *   1. Consult the contribution ledger for each row in `learnedAds`
  *      (handles all four `decideContribution` outcomes — see comment
  *      in BATCH 21 of `metaSync/shared.ts`).
  *   2. Apply withdrawals against the recorded geometry (the
  *      `existingHook` / `existingVisual` baseline).
  *   3. Run the additive pass against the post-withdrawal baseline.
- *   4. Build the `aggregateWrites` array.
+ *   4. Chunked commit of the writes INSIDE the lease held by the caller.
  *
- * The caller is responsible for chunked-commit inside its lease-held
- * `try` block — this function does NOT call `db.batch().commit()`.
- * Returning the writes instead of committing is what keeps the
- * lease-refused invariant intact (FR-054a: a lease-refused run
- * must not commit aggregate state).
+ * The caller is responsible for:
+ *   - Acquiring the lease (`acquireLearningLease`) BEFORE this call.
+ *   - Re-checking `stillHeld` immediately before this call (FR-062).
+ *   - Releasing the lease in `finally`.
+ *
+ * The `applyLearningWrites` invocation is the entire critical section
+ * for FR-060a (lease covers read-modify-write end-to-end). A lease-
+ * refused run never calls this function — its caller returns earlier
+ * with `status='failed'` and 0 aggregate writes.
  */
 export async function applyLearningWrites(
     params: ApplyLearningWritesParams,
 ): Promise<ApplyLearningWritesResult> {
     const emptyResult: ApplyLearningWritesResult = {
         ran: false,
-        writes: [],
         hookWrites: 0,
         visualWrites: 0,
     };
@@ -271,13 +270,12 @@ export async function applyLearningWrites(
         const newHook = applyHookAggregatesDelta(hookBase, params.learnedAds, params.nowMs);
         const newVisual = applyVisualAggregatesDelta(visualBase, params.learnedAds, params.nowMs);
 
-        // 5. Build the writes. The caller commits them INSIDE its
-        // lease-held try block; this function does NOT commit.
-        const writes: AggregateWrite[] = [];
+        // 5. Build the writes.
+        const aggregateWrites: Array<{ ref: { id: string }; data: Record<string, unknown> }> = [];
         let hookWrites = 0;
         let visualWrites = 0;
         for (const [angleKey, agg] of newHook) {
-            writes.push({
+            aggregateWrites.push({
                 ref: params.adAccountRef.collection("hookPerformance").doc(angleKey),
                 data: agg as unknown as Record<string, unknown>,
             });
@@ -285,25 +283,44 @@ export async function applyLearningWrites(
         }
         for (const [patternKey, agg] of newVisual) {
             if (!patternKey) continue;
-            writes.push({
+            aggregateWrites.push({
                 ref: params.adAccountRef.collection("visualPerformance").doc(patternKey),
                 data: agg as unknown as Record<string, unknown>,
             });
             visualWrites++;
         }
 
+        // 6. Chunked commit. The caller already holds the lease, so this
+        // commit is fenced against any concurrent run that might be
+        // racing to commit the same aggregates.
+        const chunkSize = params.chunkSize ?? DEFAULT_CHUNK_SIZE;
+        const dbLike = params.db as {
+            batch(): {
+                set(ref: unknown, data: Record<string, unknown>, opts?: { merge?: boolean }): unknown;
+                commit(): Promise<void>;
+            };
+        };
+        for (let i = 0; i < aggregateWrites.length; i += chunkSize) {
+            const chunk = aggregateWrites.slice(i, i + chunkSize);
+            const batch = dbLike.batch();
+            for (const w of chunk) batch.set(w.ref, w.data, { merge: true });
+            await batch.commit().catch((e: unknown) => {
+                params.errors.push(`aggregate batch commit failed: ${(e as Error).message}`);
+            });
+        }
+
         return {
             ran: true,
-            writes,
             hookWrites,
             visualWrites,
         };
     } catch (e: unknown) {
         // Never break the sync because of a learning-aggregate glitch.
         // This catch handles: (a) generation-load failures, (b) the
-        // hook/visual get() above throwing. In both cases we skip the
-        // aggregate writes — the existing Firestore docs are left
-        // untouched.
+        // hook/visual get() above throwing, (c) any commit failure not
+        // caught by the per-chunk handler above. In all cases we skip
+        // the aggregate writes — the existing Firestore docs are left
+        // untouched (FR-060a's "leave existing records untouched" rule).
         params.errors.push(`learning aggregate update failed: ${(e as Error).message}`);
         return emptyResult;
     }
