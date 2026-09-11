@@ -13,21 +13,34 @@ The only writes are this report.
 The gap is **larger than three phases, and it is not only at the end.**
 
 Phases 4, 5 and 6 are substantially unbuilt, as expected. But the audit also found
-**three defects inside the shipped Phase 3 MVP**, one of which corrupts the very
-signal the feature exists to accumulate:
+**four defects inside the shipped Phase 3 MVP**, two of which fire nightly on the
+modal path and corrupt the very numbers the feature exists to produce:
 
 1. **The withdrawal path does not withdraw the measure it withdraws.**
    `applyHookAggregateWithdrawal` decrements the count and **leaves `avgLinkCtr`
    unchanged**, by its own admission in a comment deferring the fix to a phase that
-   was skipped. Because withdraw-then-add is the **common** path — it fires on every
-   sync where an ad's click-through moved — the stored average drifts toward the
-   account mean on every sync, compressing exactly the spread that ranking depends
-   on. No test covers it, because the accumulation tests drive **identical** reruns,
-   which take the no-op path.
-2. **FR-074g's all-rows aggregation is inverted**, and FR-074d's persistence is
+   was skipped. Because withdraw-then-add is the **modal** path — it fires on every
+   sync where an ad's click-through moved — the angle's stored average is dragged
+   **toward the value of whichever of its ads cycle**, geometrically, by
+   `(A − M)/n` per sync. No test covers it, because the accumulation tests drive
+   **identical** reruns, which take the no-op path.
+2. **`creativeCount` counts creative-sync-observations, not distinct creatives.**
+   Its dedup `Set` is stripped before persisting (`aggregateDelta.ts:125`) and
+   re-initialised **empty** on read (`:378`), and withdrawal never decrements it.
+   It therefore grows by **+1 per creative per sync, without bound**. This is the
+   number the **owner-locked FR-034 gate of 10 distinct creatives** reads
+   (`ragContext.ts:167`), and the number the dashboard shows as a sample size.
+   Amendment 1's fan-out fix is defeated at the gate — not by row counting, which
+   was genuinely fixed, but by **sync counting**. Also self-documented and deferred
+   to a batch that never came (`:379-387`).
+3. **FR-074g's all-rows aggregation is inverted**, and FR-074d's persistence is
    missing. Together these mean **propagation achieves nothing** — which is the
    precise outcome FR-074g was written to forbid, in those words.
-3. **FR-019 is not implemented**: every existing aggregate is rewritten every sync.
+4. **FR-019 is not implemented**: every existing aggregate is rewritten every sync.
+
+Defects 1 and 2 were each found by reading code against a requirement. Both are
+**self-documented in the code as deferred**, which is what made them read as
+intentional for twenty-seven batches.
 
 None of these is visible from `tasks.md`, whose checkboxes were never maintained and
 are not used as evidence anywhere in this audit.
@@ -209,22 +222,148 @@ compares `contributedValues`, which is `{ctrLink, cpm, verdictMark}`
 (`decideAdWriteActions.ts:215-219`). Those move whenever spend moves — so a live ad
 takes `withdraw_then_add` on essentially every sync, not only on re-attribution.
 
-**Third, the arithmetic biases toward the mean.** With aggregate count `n`, mean `M`,
-the ad's recorded value `A` and its new value `B`:
+**Third, the arithmetic is wrong by exactly `(A − M)/n`.** With aggregate count `n`,
+mean `M`, the ad's recorded value `A` and its new value `B`:
 
 - correct: `(M·n − A + B) / n`
 - code: withdraw → `count = n−1`, `avg = M`; add → `(M·(n−1) + B) / n = (M·n − M + B) / n`
 
-The code subtracts **the mean** instead of **the ad's own value**. Every cycle pulls
-the angle's average toward the account mean, compressing the spread between angles —
-which is precisely the quantity `ragContext.ts:305` sorts on
-(`.sort((a, b) => b.avgLinkCtr - a.avgLinkCtr)`). It is correct only when `A == M`.
+The code subtracts **the mean** instead of **the ad's own value**. It is correct only
+when `A == M`.
+
+**The direction of the drift — corrected 2026-09-11.** An earlier draft of this report
+said the error pulls each angle's average *toward the account mean, compressing the
+spread between angles*. **That is backwards.** Work the repeated case for a stable ad
+(`A ≈ B`):
+
+```
+M' = (M·n − M + A)/n = M + (A − M)/n
+M' − A = (M − A) + (A − M)/n = (M − A)(1 − 1/n)
+```
+
+`|M' − A| < |M − A|`. The mean moves **toward `A`**, geometrically, by a factor of
+`(1 − 1/n)` per sync. It **amplifies** rather than compresses: each angle's average is
+dragged toward the value of whichever of its ads cycle, weighted by how often they
+cycle. Three consequences follow that the compression reading would have hidden:
+
+- **The production signature is different.** Look for an angle's average converging on
+  its busiest ad's number — **not** for angles bunching together.
+- **The severity profile is different.** Compression toward a common mean degrades
+  ranking slowly and symmetrically. Convergence means an angle carrying one
+  long-running ad and several short-lived ones ends up reporting **that one ad's
+  number** as the angle's average, with a sample size that says otherwise.
+- **The `1/n` divisor means the fewer creatives an angle has, the faster it drifts.**
+  Combined with FR-034a's floor of 3, angles sitting at exactly the threshold drift
+  **fastest** — and they are the ones nearest the recommendation boundary.
+
+**Verified empirically** against the compiled `applyHookAggregatesDelta` /
+`applyHookAggregateWithdrawal`, not by derivation alone. An angle seeded with four
+creatives at {0.01, 0.01, 0.01, 0.09} — true average **0.0300**, which should never
+move — with only the 0.09 ad cycling each sync at a stable value:
+
+```
+after seed sync            avg=0.0300  count=4  sampleSize=4  creativeCount=4
+after sync 2 (a4 cycles)   avg=0.0500  count=4  sampleSize=4  creativeCount=5
+after sync 3 (a4 cycles)   avg=0.0600  count=4  sampleSize=4  creativeCount=6
+after sync 4 (a4 cycles)   avg=0.0700  count=4  sampleSize=4  creativeCount=7
+after sync 5 (a4 cycles)   avg=0.0800  count=4  sampleSize=4  creativeCount=8
+after sync 6 (a4 cycles)   avg=0.0800  count=4  sampleSize=4  creativeCount=9
+```
+
+The average climbs from 0.0300 toward the cycling ad's own 0.09 and pins at 0.08 once
+`round2` swallows the remaining step. Each step matches `M + (A − M)/n` exactly
+(0.03 + 0.06/4 = 0.045 → 0.05; 0.05 + 0.04/4 = 0.06; 0.06 + 0.03/4 = 0.0675 → 0.07).
+
+**One refinement the derivation adds.** When **every** ad in the angle cycles in the
+same sync, `Ā = M` and the error vanishes — the second run of the simulation holds at
+0.0300 across four syncs. The general per-sync error is `k(Ā − M)/n` for `k` cycling
+ads with mean recorded value `Ā`. So the defect fires hardest in the realistic mixed
+case — some ads changed, some no-op, some new, some stopped — and not in the
+all-or-nothing cases. `ragContext.ts:305` sorts on exactly this quantity
+(`.sort((a, b) => b.avgLinkCtr - a.avgLinkCtr)`).
 
 **Why the green suite does not catch it.** SC-002 drives **ten identical runs**, which
 take the `noop` branch — no withdrawal occurs. No test in `functions/src/__tests__`
 asserts `avgLinkCtr` after withdrawing a row whose value differs from the running
 mean. The two-row fixtures in `applyLearningWritesLease.test.ts:369-373` assert a
 fresh mean (0.03 from 0.02 and 0.04), not a post-withdrawal one.
+
+#### The counter defect — FR-036, and why the owner-locked gate does not hold
+
+`creativeCount` is incremented once per creative per angle, guarded by a `Set`:
+
+```
+aggregateDelta.ts:107   if (!agg.contributedCreatives.has(creativeKey)) {
+aggregateDelta.ts:108       agg.contributedCreatives.add(creativeKey);
+aggregateDelta.ts:109       agg.creativeCount = (agg.creativeCount ?? 0) + 1;
+```
+
+**The Set does not survive the sync.** It is stripped before the aggregate is returned
+for persisting (`:121-125`, `const { contributedCreatives: _omit, ...publicAgg } = agg`)
+and re-initialised **empty** when the stored aggregate is read back (`:378`,
+`contributedCreatives: new Set()`). So on the next sync `has(creativeKey)` is false for
+a creative that already contributed, and the count increments again. **Withdrawal never
+decrements it** — `applyHookAggregateWithdrawal` (`:260-298`) touches `sampleSize`, the
+objective counts, the verdict counts, geo, audience and funnel, and not `creativeCount`.
+
+The code says so itself, `:379-387`:
+
+```
+        // Existing aggregates from before T021 carry no
+        // contributedCreatives. The next sync with the same creative
+        // will add the creative to the Set, incrementing creativeCount
+        // — which is wrong for a creative that contributed historically
+        // (its prior contribution should count). Per T021's spec
+        // resolution, this is acceptable as long as the integrator
+        // carries the Set forward across syncs. For Phase 3 close-out
+        // this means we either serialise the Set or re-derive it from
+        // the per-row ledger entries. Defer to the follow-up batch.
+```
+
+Nothing carries the Set forward. Nothing serialises it. Nothing re-derives it from the
+ledger. The follow-up batch never came.
+
+**Measured, not derived** — same simulation as above, four creatives, all cycling each
+night:
+
+```
+after seed sync            creativeCount=4
+after sync 2 (all cycle)   creativeCount=8
+after sync 3 (all cycle)   creativeCount=12
+after sync 4 (all cycle)   creativeCount=16
+```
+
+Four creatives report **16** after four nights. Growth is unbounded and linear in
+elapsed syncs.
+
+**Why this is as consequential as the withdrawal defect.** This is the number the
+**owner-locked FR-034 gate** reads (`ragContext.ts:167` → `RAG_MIN_SAMPLE_SIZE = 10`),
+and the number the dashboard presents as a sample size and gates its tier icons on
+(`whatsWorkingDashboard.ts:585`, `:787`, `:996` `HOOK_ICON_DATA_GATE`, `:1001`, `:1021`).
+The locked decision was **10 distinct creatives**. What the code enforces is **10
+creative-sync-observations** — so an account with two creatives opens the guidance gate
+on its fifth night, and one creative opens it on its tenth. Amendment 1's whole purpose
+was that evidence should not be manufacturable by repetition; row multiplicity was
+genuinely closed, and **repeated observation across syncs was left open**, which FR-036
+forbids in the same sentence.
+
+**One boundary worth stating precisely, because it limits the blast radius.** There are
+**two different `creativeCount` fields** in this codebase and only one is affected:
+
+| Field | Producer | Affected? |
+|---|---|---|
+| `HookPerformanceAggregate.creativeCount` | `aggregateDelta.ts:109` — a **persisted accumulator** whose dedup Set is discarded | **YES** — feeds `ragContext.ts:167` (FR-034's 10) and the five dashboard sites |
+| `PatternSummary.creativeCount` | `patternSummaries.ts:463` — `b.creativeHashes.size`, a Set built **fresh in memory** per `summarizeAccount` call | **No** — feeds `rankingEngine.ts:179` / `:406` (FR-034a's floor of 3). Correct as written |
+
+So FR-034a's 3-creative floor in the ranking engine is sound; FR-034's 10-creative
+activation gate is not.
+
+**No test covers it**, for the same structural reason as the withdrawal defect: the
+accumulation tests drive a single `applyHookAggregatesDelta` call, within which the Set
+*is* live and *does* dedupe. The defect only appears across a **persist-and-reload
+boundary**, which no unit test crosses. `learningAccumulation.test.ts`'s SC-008 case
+("55 rows in one creative contribute 1, not 55") passes and will continue to pass —
+it tests row multiplicity within one call, which is the half that works.
 
 ### D. Preserved Measures — FR-024, FR-025 **S** · FR-026 **S**
 
@@ -245,7 +384,8 @@ partitions are unchanged.
 | | Verdict | Evidence |
 |---|---|---|
 | **FR-033** | **N** | the guidance retrieval path is `getTopWinners.ts` — untouched. It still selects per **ad row** (`.collection(adAccountPath).where("campaignObjective","==","conversion").where("verdict","==","🟢")`, `:157-161`), so one creative spanning 55 rows can occupy all five winner slots |
-| FR-034, FR-036 | **S** | the activation gate is `RAG_MIN_SAMPLE_SIZE = 10` (`ragContext.ts:126`) tested at `:315`, fed by `sampleSize: a.creativeCount ?? 0` (`:167`) — **10 distinct creatives**, as locked |
+| FR-034 | **P** | the gate is `RAG_MIN_SAMPLE_SIZE = 10` (`ragContext.ts:126`) tested at `:315`, fed by `a.creativeCount` (`:167`) — the right **field**, but see FR-036: that field does not hold distinct creatives |
+| **FR-036** | **N — the counter inflates** | see below. `creativeCount` counts creative-**sync-observations**. FR-036's own words: *"Neither repeated observation across syncs nor multiplicity of ad rows may inflate the count."* Row multiplicity was fixed; repeated observation was not |
 | FR-034a, FR-037 | **P** | the **3-creative** floor is enforced in `rankingEngine.ts:177-181` and `:406`, and on the dashboard (`whatsWorkingDashboard.ts:996`). FR-037's *efficiency* half cannot be enforced — there is no sealed figure |
 | **FR-035** | **N** | no latch exists. `grep -rniE "latch\|guidanceActive\|activationLatch\|activatedAt"` over live code returns only unrelated Phase-14/saved-project latches. A partial sync that drops the creative count below 10 switches guidance back off |
 | FR-036a, FR-036b | **N** | both are statements about PROVISIONAL/SEALED creatives; neither state exists |
@@ -458,9 +598,12 @@ change to that file is the `creativeCount` gate migration.
 reliably and over a longer history than before. It does not learn what gets sales.**
 Making it do so is Phase 4, and Phase 4 is the part that was not built.
 
-And the finding in §4/C qualifies even the click half: because withdrawals leave the
+And two findings in §4/C qualify even the click half. Because withdrawals leave the
 average untouched while decrementing the count, the click-through figure the AI ranks
-on drifts toward the account mean on every sync in which an ad's numbers moved.
+on is dragged toward the value of whichever ads cycle, on every sync in which an ad's
+numbers moved. And because `creativeCount` counts observations rather than creatives,
+the "have we seen enough yet" gate opens on elapsed nights as much as on evidence —
+so the guidance can switch on for an account that has two creatives and five nights.
 
 ---
 
@@ -533,7 +676,15 @@ of Phase 5 only. The weighting half (FR-030/FR-031) does not depend on Phase 4 a
 ```
 0. FIX-FIRST (defects in shipped Phase 3 — do these before any new phase)
    0a. FR-021 withdrawal: use the ledger's recorded ctrLink, which is already
-       passed in. aggregateDelta.ts:260-298. Smallest change, largest effect.
+       passed in. aggregateDelta.ts:260-298. Recompute as (M*n - A)/(n-1),
+       guarding n-1 == 0 by resetting the average rather than dividing by zero.
+       Same for applyVisualAggregateWithdrawal and for cpm wherever averaged.
+       DELETE the comment at :271-275 — it records a constraint that does not
+       exist, and it is what made this look intentional for 27 batches.
+   0a'. FR-036 creativeCount: either persist the contributed-creative set or
+       re-derive it from the per-row ledger entries (the ledger already carries
+       creativeKey), and decrement on withdrawal. aggregateDelta.ts:107-109,
+       :121-125, :378, :260-298. Fires nightly, like 0a.
    0b. FR-074d + FR-074g: return the resolved generationId and provenance from
        resolveCreativeKeyByAdId, persist both, and aggregate ALL rows.
        learningPerAdLoop.ts:59-75, shared.ts:1046-1054, aggregateDelta.ts:84-92,:210.
@@ -624,26 +775,43 @@ Holding buys correctness-on-arrival at the price of an ever-staler spec and a
 seventy-three-commit merge that gets riskier weekly. Merging buys a stable base and an
 honest history at the price of `main` carrying a known, bounded, documented gap.
 
-**What tips it to merge is that the gap is documentable and the drift is fixable in
-one function.** `applyHookAggregateWithdrawal`'s fix is to use a value that is already
-computed, already stored on the ledger, and already passed into the function — it is
-a small, well-isolated change, not a phase. Fix 0a, then merge; the remaining gap is
-then *absence*, which a commit message can state truthfully, rather than *incorrect
-behaviour*, which it cannot.
+**What tips it to merge is that the remaining gap is *absence*, which a commit message
+can state truthfully — whereas *incorrect behaviour* cannot be stated away.** Both
+nightly defects are fixed with values the code already computes and already has in
+hand: the withdrawal needs a number already passed into the function, and the counter
+needs a set the ledger can already reconstruct. Neither is a phase. Fix them, and what
+`main` inherits is a feature that does less than the spec, accurately — instead of one
+that does the wrong thing, quietly, every night.
 
-**Three conditions on merging:**
+**Four conditions on merging** — one more than the first draft of this report carried,
+because the counter defect was found after it was written:
 
-1. **Fix 0a first** (`aggregateDelta.ts:260-298`), with a test that withdraws a row
-   whose value differs from the running mean — the case no current test drives.
-2. **Correct the squash message.** The draft in
+1. **Fix 0a** (`aggregateDelta.ts:260-298`), with the test described below.
+2. **Fix 0a'** (`creativeCount`), with a test that crosses a persist-and-reload
+   boundary — round-trip an aggregate through the public shape and re-apply the same
+   creative, asserting `creativeCount` is unchanged. No current test crosses that
+   boundary, which is why the defect survived.
+3. **Correct the squash message.** The draft in
    `reports/squash-commit-message.txt` already removes the conversion-accrual claim,
    but on this audit's evidence it should also not imply that funnel weighting or the
    creative-counted retrieval path shipped. FR-030 and FR-033 did not.
-3. **T056's owner review is still outstanding.** The Arabic string is in `main`'s path
+4. **T056's owner review is still outstanding.** The Arabic string is in `main`'s path
    with the plan's Constitution V verdict resting on a review that has not happened.
 
-If any of the three cannot be met, hold — because then the argument for merging (an
-honest, bounded gap) no longer holds.
+If 1 or 2 cannot be met, **hold**. The argument for merging rests entirely on the gap
+being honest absence; two defects that fire nightly on the modal path are not absence,
+and no commit message can describe them into it.
+
+**The test that must come with the withdrawal fix**, and which nothing currently
+resembles: withdraw a row whose value **differs** from the running mean and assert the
+result equals `(M·n − A)/(n − 1)` exactly; then cycle the same ad through
+withdraw-then-add ten times at a stable value and assert the angle's average is
+**unchanged**. Against the current code that drifts by `(A − M)/n` per cycle and fails
+on the first iteration. The existing two-row fixtures at
+`applyLearningWritesLease.test.ts:369-373` assert a **fresh** mean (0.03 from 0.02 and
+0.04) and cannot see this — write the post-withdrawal case **separately** rather than
+extending them, so the distinction between a fresh mean and a post-withdrawal mean
+stays visible in the suite.
 
 ---
 
@@ -652,15 +820,15 @@ honest, bounded gap) no longer holds.
 | Area | State |
 |---|---|
 | Phases 1, 2 | Shipped whole |
-| Phase 3 (MVP) | Shipped with **three defects** — FR-021 withdrawal drift, FR-074d/g propagation inert, FR-019 absent |
+| Phase 3 (MVP) | Shipped with **four defects** — FR-021 withdrawal drift, FR-036 `creativeCount` inflation (both fire nightly), FR-074d/g propagation inert, FR-019 absent |
 | Phase 4 (Amendment 2) | **Not implemented.** Both modules commented out; types dead |
 | Phase 5 | Breakdown shipped; **weighting absent** |
 | Phase 6 | One string + gates shipped; **retrieval path and latch absent** |
 | Phase 7 | Gates and tests shipped; **all six observability tasks absent** |
-| Requirements | 123 FRs — roughly 55 shipped, 12 partial, 49 absent, 7 NA |
+| Requirements | 123 FRs — roughly 53 shipped, 13 partial, 50 absent, 7 NA |
 | Criteria | **26 of 56** SCs covered by a phase-969 test |
 | Test chain | **EXIT=0**, reaches final entry, **424 pass / 0 fail** |
 | Spec freshness | **28 of 63** citations stale; 3 of them load-bearing |
-| Recommendation | **Merge after fixing 0a**, remainder as a second PR |
+| Recommendation | **Merge after fixing 0a AND 0a'** (both fire nightly), remainder as a second PR; if either fix is refused, **hold** |
 
 No implementation code written. No phase started. Nothing merged.
