@@ -495,6 +495,288 @@ async function test5_fenced_retainsBothInAvg() {
     console.log(`     storedAvgLinkCtr=${storedAvgLinkCtr.toFixed(4)} (weighted mean of both rows), storedCount=${storedCount}`);
 }
 
+// ─── Test 6 (BATCH 26 / Bug 1+2): visual withdrawal targets the OLD pattern the creative moved FROM ─
+
+async function test6_visualPatternWithdrawal() {
+    docStore.clear();
+
+    // The visual aggregate's map key in the additive pass is
+    // `computePatternKeyLocal(ad.layoutTemplate, ad.creativeModes,
+    // ad.artDirection, ad.universe)` — derived from the CURRENT ad's
+    // geometry, not from `ledger.patternKey`. The OLD visual
+    // withdrawal is keyed by `recorded.patternKey` from the ledger.
+    //
+    // Set the ad's geometry so the additive-pass patternKey is
+    // computable by the test, and set the recorded patternKey to a
+    // different value — that's the visual withdrawal's target.
+    //
+    // `computePatternKey` (the public one) and the local version
+    // are the same djb2 hash. We use the public one to compute the
+    // expected key.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { computePatternKey } = require("../../learningAggregates.js");
+    const ad = makeAd("ad_1", "urgency", "creative_X", 0.02);
+    const NEW_PATTERN = computePatternKey(ad.layoutTemplate, ad.creativeModes, ad.artDirection, ad.universe);
+    // Pick an OLD_PATTERN distinct from NEW_PATTERN. The withdrawal
+    // must target OLD_PATTERN, NOT NEW_PATTERN — that is the fix.
+    const OLD_PATTERN = "oldP_zzz";
+
+    // Seed the OLD visual aggregate with one prior contribution. Do
+    // NOT seed a NEW_PATTERN aggregate; the additive pass will
+    // create it (this is the production shape: a creative's first
+    // contribution to a pattern creates the aggregate).
+    docStore.set(
+        docKey([ACCT_PATH, "visualPerformance", OLD_PATTERN]),
+        emptyVisualAggregate(OLD_PATTERN),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    // Recorded ledger (prior sync): patternKey=OLD_PATTERN.
+    // Desired ledger (this sync): patternKey=NEW_PATTERN.
+    // Same creative, hook angle unchanged ("urgency"). The decision
+    // is `withdraw_then_add` because `contributionsEqual` compares
+    // patternKey field by field.
+    const recordedLedger = makeContributionFor("creative_X", "urgency", OLD_PATTERN);
+    const desiredLedger = makeContributionFor("creative_X", "urgency", NEW_PATTERN);
+
+    const ledgerAdDocsByAdId = new Map([
+        ["ad_1", { ledger: desiredLedger as ContributionLedgerEntry }],
+    ]);
+    const existingByAdId = new Map([
+        ["ad_1", { ledger: recordedLedger as ContributionLedgerEntry }],
+    ]);
+
+    const errors: string[] = [];
+    const result = await applyLearningWrites({
+        db: { batch: () => new StubBatch() },
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad],
+        ledgerAdDocsByAdId,
+        existingByAdId,
+        nowMs: Date.now(),
+        errors,
+    });
+
+    assert.equal(result.ran, true,
+        `BATCH 26 visual withdrawal: function must run (got ran=${result.ran}, errors=${JSON.stringify(errors)})`);
+
+    // After withdrawal: the OLD pattern's count returns to its prior
+    // value (1 → 0). The NEW pattern's count increments by 1 (0 → 1).
+    //
+    // Before Batch 26's Bug 1 fix this assertion FAILED: visual
+    // withdrawal never ran (the map was keyed on hookAngle and
+    // looked up by patternKey), so the OLD visual kept count=1
+    // (double-counted against the NEW pattern).
+    const oldVisual = docStore.get(docKey([ACCT_PATH, "visualPerformance", OLD_PATTERN]));
+    const oldCount = (oldVisual?.byObjective?.conversion?.count ?? -1);
+    assert.equal(oldCount, 0,
+        `BATCH 26 visual withdrawal: OLD pattern count must return to 0 (got ${oldCount})`);
+
+    // The NEW pattern's docStore entry was created by the additive
+    // pass and committed by the function.
+    const newVisual = docStore.get(docKey([ACCT_PATH, "visualPerformance", NEW_PATTERN]));
+    const newCount = (newVisual?.byObjective?.conversion?.count ?? -1);
+    assert.equal(newCount, 1,
+        `BATCH 26 visual withdrawal: NEW pattern count must be 1 (got ${newCount})`);
+
+    // Hook count: 1 (urgency). Hook side has no withdrawal (same
+    // angle), so it's purely additive.
+    const hookPath = docKey([ACCT_PATH, "hookPerformance", "urgency"]);
+    const hookCount = docStore.get(hookPath)?.byObjective?.conversion?.count ?? -1;
+    assert.equal(hookCount, 1,
+        `BATCH 26 visual withdrawal: hook count must be 1 (got ${hookCount})`);
+
+    console.log(`     OLD(${OLD_PATTERN}).count=${oldCount}, NEW(${NEW_PATTERN.slice(0, 7)}).count=${newCount}, hook(urgency).count=${hookCount}`);
+}
+
+// ─── Test 7 (BATCH 26 / Bug 1 invariant): hook change WITHOUT pattern change → no over-withdraw ─
+//
+// A creative changing its hook angle (urgency → statistics) but
+// keeping the same pattern geometry. The visual aggregate for that
+// (unchanged) pattern should NOT be double-removed and not
+// double-added. With only hook-side withdrawal, the visual
+// contribution is preserved through the additive pass.
+
+async function test7_visualStaysWhenHookChanges() {
+    docStore.clear();
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { computePatternKey } = require("../../learningAggregates.js");
+    // The ad's geometry computes the patternKey via djb2.
+    // For the test to be meaningful, the visual aggregate's
+    // patternKey must equal the ad's computed patternKey — that's
+    // the only way the additive pass touches this aggregate.
+    const ad = makeAd("ad_1", "statistics", "creative_X", 0.02);
+    const SHARED_PATTERN = computePatternKey(ad.layoutTemplate, ad.creativeModes, ad.artDirection, ad.universe);
+
+    // Seed with one prior contribution (count=1, sampleSize=1).
+    // The hook changes but the pattern doesn't. After the fix:
+    //   - visual withdraws 1 (count: 1 → 0)
+    //   - additive adds 1 (count: 0 → 1)
+    // Net count = 1, same as the prior state.
+    // Before the fix: visual withdraw NEVER runs (Bug 1), additive
+    // adds 1 → count would be 2 (double-counted across hook swap).
+    const seed = emptyVisualAggregate(SHARED_PATTERN);
+    seed.byObjective.conversion.count = 1;
+    seed.byObjective.conversion.avgLinkCtr = 0.02;
+    seed.sampleSize = 1;
+    docStore.set(
+        docKey([ACCT_PATH, "visualPerformance", SHARED_PATTERN]),
+        seed,
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    // Recorded: hookAngle was "urgency", pattern unchanged. The
+    // creative's geometry is the same; only the hook angle moved.
+    const recordedLedger = makeContributionFor("creative_X", "urgency", SHARED_PATTERN);
+    const desiredLedger = makeContributionFor("creative_X", "statistics", SHARED_PATTERN);
+
+    const ledgerAdDocsByAdId = new Map([
+        ["ad_1", { ledger: desiredLedger as ContributionLedgerEntry }],
+    ]);
+    const existingByAdId = new Map([
+        ["ad_1", { ledger: recordedLedger as ContributionLedgerEntry }],
+    ]);
+
+    const errors: string[] = [];
+    const result = await applyLearningWrites({
+        db: { batch: () => new StubBatch() },
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad],
+        ledgerAdDocsByAdId,
+        existingByAdId,
+        nowMs: Date.now(),
+        errors,
+    });
+
+    assert.equal(result.ran, true,
+        `BATCH 26 hook-only change: function must run (got ran=${result.ran}, errors=${JSON.stringify(errors)})`);
+
+    // Visual count MUST be 1, not 0 (over-withdrawn) and not 2
+    // (double-added because withdrawal never ran). Only the hook
+    // aggregate changed; the visual aggregate is preserved through
+    // the additive pass. With Bug 1 the withdrawal never ran, so
+    // count went 1 → 2.
+    const visual = docStore.get(docKey([ACCT_PATH, "visualPerformance", SHARED_PATTERN]));
+    const visualCount = (visual?.byObjective?.conversion?.count ?? -1);
+    assert.equal(visualCount, 1,
+        `BATCH 26 hook-only change: visual count must be 1 (preserved through additive; got ${visualCount})`);
+
+    console.log(`     visual(${SHARED_PATTERN.slice(0, 7)}).count=${visualCount}`);
+}
+
+// ─── Test 8 (BATCH 26 / Bug 3): commit failure → `ran: false` ─
+
+async function test8_commitFailureReturnsNotRan() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    const ad = makeAd("ad_1", "urgency", "creative_A", 0.02);
+    const errors: string[] = [];
+
+    // StubBatch whose commit() rejects. Before Batch 26 the
+    // per-chunk handler swallowed the failure into `errors` and
+    // the function returned `ran: true` with `hookWrites = 1` (the
+    // write BUILT, not COMMITTED). The reviewer named this Bug 3.
+    // The fix: throw on commit, the outer try/catch records the
+    // error in `errors` and returns emptyResult (`ran: false`).
+    const result = await applyLearningWrites({
+        db: {
+            batch(): unknown {
+                return {
+                    set(): unknown { return undefined; },
+                    commit: async () => { throw new Error("simulated commit failure"); },
+                };
+            },
+        },
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad],
+        ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_A")]]),
+        existingByAdId: new Map(),
+        nowMs: Date.now(),
+        errors,
+    });
+
+    assert.equal(result.ran, false,
+        `BATCH 26 commit failure: ran must be false on failed commit (got ran=${result.ran}, errors=${JSON.stringify(errors)})`);
+    assert.ok(errors.length >= 1 && /commit failure|learning aggregate update failed/i.test(errors[0]),
+        `BATCH 26 commit failure: errors[] must record the failure (got ${JSON.stringify(errors)})`);
+
+    // The document was NOT committed (the stub rejected the commit).
+    // Confirms the previous counter-storing ran:true was wrong.
+    const stored = docStore.get(docKey([ACCT_PATH, "hookPerformance", "urgency"]));
+    const storedCount = stored?.byObjective?.conversion?.count ?? -1;
+    assert.equal(storedCount, 0,
+        `BATCH 26 commit failure: stored count must be 0 (commit rejected; got ${storedCount})`);
+
+    console.log(`     ran=${result.ran}, errors=${JSON.stringify(errors)}`);
+}
+
+// ─── helpers for tests 6-8 ────────────────────────────────────────────────────────
+
+import type { ContributionLedgerEntry } from "../../learning/types.js";
+
+function makeContributionFor(creativeKey: string, angleKey: string, patternKey: string) {
+    return {
+        creativeKey,
+        angleKey,
+        patternKey,
+        bucket: "conversion" as const,
+        geoTier: "tier1_gulf",
+        audienceType: "broad",
+        contributedValues: {
+            ctrLink: 0.02,
+            cpm: 5,
+            verdictMark: "🟢",
+        },
+        measurementInputs: {},
+        efficiencyContributed: false,
+        efficiencyValue: null,
+        schemaVersion: 1,
+    };
+}
+
+function emptyVisualAggregate(patternKey: string): any {
+    return {
+        patternKey,
+        schemaVersion: 1,
+        sampleSize: 0,
+        lastUpdated: 1_000_000,
+        byObjective: {
+            conversion: { avgCpm: 0, avgLinkCtr: 0, count: 0, bestVerdictCount: 0, worstVerdictCount: 0 },
+            other: { count: 0 },
+        },
+        byFunnelType: {
+            paid_event: { count: 0 },
+            lead_magnet: { count: 0 },
+            webinar: { count: 0 },
+            unknown: { count: 0 },
+        },
+        byGeoTier: {
+            tier1_gulf: { avgCpm: 0, avgCtr: 0, count: 0 },
+            tier2_diaspora: { avgCpm: 0, avgCtr: 0, count: 0 },
+            tier3_egypt_na: { avgCpm: 0, avgCtr: 0, count: 0 },
+        },
+        byAudienceType: {
+            broad: { avgCpm: 0, avgCtr: 0, count: 0 },
+            interest: { avgCpm: 0, avgCtr: 0, count: 0 },
+            lookalike: { avgCpm: 0, avgCtr: 0, count: 0 },
+            retargeting: { avgCpm: 0, avgCtr: 0, count: 0 },
+            advantage_plus: { avgCpm: 0, avgCtr: 0, count: 0 },
+        },
+    };
+}
+
 // ─── Runner ───────────────────────────────────────────────────
 
 declare const test: (name: string, fn: () => Promise<void> | void) => Promise<void>;
@@ -520,7 +802,7 @@ let failed = 0;
 
 function runner() {
     console.log("");
-    console.log("=== BATCH 24/25 \u2014 applyLearningWrites function-level (Step 3) ===");
+    console.log("=== BATCH 24/25/26 \u2014 applyLearningWrites function-level (Step 3) ===");
     console.log(`Passed: ${passed}, Failed: ${failed}`);
     if (failed > 0) process.exit(FAILED);
     process.exit(PASSED);
@@ -532,6 +814,9 @@ async function main() {
     await test("BATCH 24 avg: average ctrLink is computed from BOTH rows (0.03)", test3_ctrLinkAverage);
     await test("BATCH 25 unfenced: two reads same baseline → avgLinkCtr=0.04 (first row LOST)", test4_unfenced_losesFirstRowInAvg);
     await test("BATCH 25 fenced: second reads post-first-commit → avgLinkCtr=0.03 (both RETAINED)", test5_fenced_retainsBothInAvg);
+    await test("BATCH 26 visual withdrawal: pattern P1→P2 withdraws OLD visual, adds NEW visual", test6_visualPatternWithdrawal);
+    await test("BATCH 26 hook-only change: visual count preserved (no over-withdraw)", test7_visualStaysWhenHookChanges);
+    await test("BATCH 26 commit failure: ran=false, errors[] populated, no commit landed", test8_commitFailureReturnsNotRan);
 }
 
 main()

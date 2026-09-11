@@ -8,14 +8,22 @@
 //     (all four `decideContribution` outcomes: `add`, `noop`,
 //     `withdraw_then_add`, `withdraw_only`)
 //   - the `existingHookDocs` / `existingVisualDocs` aggregate read
-//   - the withdrawal application (`applyHookAggregateWithdrawal`,
-//     `applyVisualAggregateWithdrawal`)
+//   - the withdrawal application against the RECORDED geometry
+//     (FR-013 / FR-017):
+//       - hook withdrawals are keyed by `angleKey`
+//         (a canonical hook id such as "urgency" or "statistics")
+//       - visual withdrawals are keyed by `patternKey`
+//         (a composite produced by `computePatternKey` — layout,
+//         modes, art direction, universe)
+//     The two key spaces never intersect. Conflating them produces
+//     a visual withdrawal that silently never runs (Batch 26, bug 1).
 //   - the additive pass (`applyHookAggregatesDelta`,
 //     `applyVisualAggregatesDelta`)
-//   - building the aggregate writes (hookPerformance / visualPerformance
-//     per-aggregate entries ready for `db.batch().set(w.ref, w.data,
-//     { merge: true })`)
-//   - the chunked commit of those writes
+//   - building the aggregate writes (hookPerformance /
+//     visualPerformance per-aggregate entries ready for
+//     `db.batch().set(w.ref, w.data, { merge: true })`)
+//   - the chunked commit of those writes (a commit failure is a
+//     hard error and propagates to the outer catch — see §6)
 //
 // It does NOT own:
 //   - the bounded adPerformance read (caller passes `existingByAdId`)
@@ -63,6 +71,12 @@ type DecideContributionOutcome = ContributionDecision;
 // exported from `aggregateDelta.ts`; the visual variant is local
 // to this module until it can be lifted into `aggregateDelta.ts`
 // in a follow-up (TODO).
+//
+// Note: this function is now REACHABLE for the first time as of
+// Batch 26. The Batch 23/24 commits built `withdrawalByAngle` keyed
+// on `agg.hookAngle` and looked it up against `agg.patternKey` —
+// a key-space mismatch that returned undefined for every visual
+// aggregate and silently skipped all visual withdrawals.
 function applyVisualAggregateWithdrawal(
     existing: VisualPerformanceAggregate,
     ad: AdForLearning,
@@ -117,7 +131,7 @@ export interface ApplyLearningWritesParams {
 }
 
 export interface ApplyLearningWritesResult {
-    /** Whether the function ran the consult + read + compute + commit. False when `learnedAds` was empty. */
+    /** Whether the function ran the consult + read + compute + commit. False when `learnedAds` was empty or any commit failed. */
     ran: boolean;
     /** Counts of hook and visual writes committed (for test assertions). */
     hookWrites: number;
@@ -131,8 +145,9 @@ const DEFAULT_CHUNK_SIZE = 450;
  *   1. Consult the contribution ledger for each row in `learnedAds`
  *      (handles all four `decideContribution` outcomes — see comment
  *      in BATCH 21 of `metaSync/shared.ts`).
- *   2. Apply withdrawals against the recorded geometry (the
- *      `existingHook` / `existingVisual` baseline).
+ *   2. Apply withdrawals against the recorded geometry, keyed
+ *      correctly per aggregate (hook by `angleKey`, visual by
+ *      `patternKey`).
  *   3. Run the additive pass against the post-withdrawal baseline.
  *   4. Chunked commit of the writes INSIDE the lease held by the caller.
  *
@@ -145,6 +160,15 @@ const DEFAULT_CHUNK_SIZE = 450;
  * for FR-060a (lease covers read-modify-write end-to-end). A lease-
  * refused run never calls this function — its caller returns earlier
  * with `status='failed'` and 0 aggregate writes.
+ *
+ * Failure semantics: a commit failure throws and is caught by the
+ * outer try/catch, which records the error and returns `ran: false`.
+ * A `ran: true` result implies every chunk's commit resolved; the
+ * caller can rely on the stored documents reflecting the writes it
+ * built. (Batch 26: previously a commit failure was swallowed into
+ * `errors[]` while the function still returned `ran: true` — the
+ * caller had no way to distinguish a run whose every chunk failed
+ * from a successful run.)
  */
 export async function applyLearningWrites(
     params: ApplyLearningWritesParams,
@@ -178,6 +202,21 @@ export async function applyLearningWrites(
         // The legacy guard `if (!desired || !recorded) continue;`
         // discarded the `add` case before decideContribution saw it;
         // we remove that guard so all four outcomes are reachable.
+        //
+        // The reconstructed `oldAd` carries the RECORDED geometry
+        // for the fields the withdrawal functions consume
+        // (`campaignObjective` from `withdraw.bucket`, `geoTier`,
+        // `audienceType`). `hookAngle` is `withdraw.angleKey` so the
+        // hook map lookup lands in the OLD bucket. `layoutTemplate`,
+        // `creativeModes`, `artDirection`, `universe` flow through
+        // from the current ad by `...ad` — the withdrawal paths do
+        // NOT consume them, and reconstructing them would require
+        // keeping them on the ledger entry (a follow-up schema
+        // change, out of scope here). The visual withdrawal's map
+        // key (`withdraw.patternKey`) is taken from the recorded
+        // entry directly — not from the current ad — so the OLD
+        // pattern is the authority even when the geometry spreads
+        // through from `...ad`.
         const withdrawalHookAds: AdForLearning[] = [];
         for (let i = params.learnedAds.length - 1; i >= 0; i--) {
             const ad = params.learnedAds[i];
@@ -201,6 +240,12 @@ export async function applyLearningWrites(
                     geoTier: withdraw.geoTier as AdForLearning["geoTier"],
                     audienceType: withdraw.audienceType as AdForLearning["audienceType"],
                     funnelType: ad.funnelType,
+                    // The OLD patternKey is recorded on the ledger;
+                    // we let it flow through as part of the same AdForLearning
+                    // — but we only USE it for visual-aggregate map lookups
+                    // below. The visual-withdrawal map is keyed on
+                    // `withdraw.patternKey` directly, not on anything we
+                    // computed from the current ad.
                 };
                 withdrawalHookAds.push(oldAd);
                 if (decision.kind === "withdraw_only") {
@@ -224,23 +269,59 @@ export async function applyLearningWrites(
         const existingHook: HookPerformanceAggregate[] = existingHookDocs.docs.map((d) => d.data() as HookPerformanceAggregate);
         const existingVisual: VisualPerformanceAggregate[] = existingVisualDocs.docs.map((d) => d.data() as VisualPerformanceAggregate);
 
-        // 3. Withdrawal application.
-        //
-        // Group withdrawals by angle/pattern, apply each one against
-        // the existing aggregate, THEN run the additive pass against
-        // the post-withdrawal baseline.
+        // 3. Withdrawal application — TWO separate maps with TWO
+        // distinct key spaces. Conflating them is the bug Batch 26
+        // names `Bug 1`.
         let hookBase = existingHook;
         let visualBase = existingVisual;
         if (withdrawalHookAds.length > 0) {
+            // ─── Hook-withdrawal map: keyed by `angleKey` (canonical
+            // hook id such as "urgency" or "statistics"). Hook
+            // aggregates expose their key on `agg.angleKey`.
             const withdrawalByAngle = new Map<string, AdForLearning[]>();
-            for (const wad of withdrawalHookAds) {
-                const hookAngle = wad.hookAngle;
-                if (hookAngle === null) continue;
-                const key: string = hookAngle as string;
-                const existing = withdrawalByAngle.get(key);
-                if (existing !== undefined) existing.push(wad);
-                else withdrawalByAngle.set(key, [wad]);
+            // ─── Visual-withdrawal map: keyed by `patternKey` (the
+            // composite from `computePatternKey`). Visual aggregates
+            // expose their key on `agg.patternKey`. `withdraw.patternKey`
+            // is recorded on the ledger entry — we use it directly, so
+            // the visual withdrawal targets the OLD pattern the
+            // creative moved FROM, not the one it moved TO.
+            //
+            // Note: the OLD patternKey on the ledger is the authority
+            // for the map key. We do NOT recompute the patternKey
+            // from the current ad's geometry — the spread on line
+            // ("oldAd = { ...ad, hookAngle: withdraw.angleKey, ...")
+            // already overrides the fields `applyVisualAggregateWithdrawal`
+            // consumes (campaignObjective, geoTier, audienceType),
+            // and funnelType flows through. The patternKey derived
+            // from `...ad` would be the CURRENT pattern, which is
+            // precisely what the reviewer named Bug 2 — that path
+            // is not taken here. The visual map key comes from the
+            // recorded ledger entry.
+            const withdrawalByPattern = new Map<string, AdForLearning[]>();
+
+            // Re-extract the recorded entries alongside the wad so we
+            // can pull `patternKey` straight from the ledger. (The wad
+            // carries the spread geometry; the recorded entry carries
+            // the OLD patternKey.)
+            for (let i = 0; i < withdrawalHookAds.length; i++) {
+                const wad = withdrawalHookAds[i];
+                const recorded = params.existingByAdId.get(wad.adId)?.ledger as ContributionLedgerEntry | undefined;
+                if (!recorded) continue;
+                const oldAngleKey = recorded.angleKey;
+                const oldPatternKey = recorded.patternKey;
+
+                if (oldAngleKey !== null) {
+                    const existingA = withdrawalByAngle.get(oldAngleKey);
+                    if (existingA !== undefined) existingA.push(wad);
+                    else withdrawalByAngle.set(oldAngleKey, [wad]);
+                }
+                if (oldPatternKey !== null) {
+                    const existingP = withdrawalByPattern.get(oldPatternKey);
+                    if (existingP !== undefined) existingP.push(wad);
+                    else withdrawalByPattern.set(oldPatternKey, [wad]);
+                }
             }
+
             hookBase = hookBase.map((agg) => {
                 const withdrawals = withdrawalByAngle.get(agg.angleKey);
                 if (!withdrawals || withdrawals.length === 0) return agg;
@@ -251,7 +332,14 @@ export async function applyLearningWrites(
                 return next;
             });
             visualBase = visualBase.map((agg) => {
-                const withdrawals = withdrawalByAngle.get(agg.patternKey);
+                // Look up the visual-withdrawal map by `agg.patternKey`.
+                // The map is keyed on the RECORDED patternKey, so this
+                // matches precisely the OLD pattern the visual
+                // aggregate represents. (Before Batch 26 this lookup
+                // was `withdrawalByAngle.get(agg.patternKey)` — a
+                // map keyed on hookAngle, never matching patternKey,
+                // and silently returning undefined.)
+                const withdrawals = withdrawalByPattern.get(agg.patternKey);
                 if (!withdrawals || withdrawals.length === 0) return agg;
                 let next = agg;
                 for (const wad of withdrawals) {
@@ -293,6 +381,20 @@ export async function applyLearningWrites(
         // 6. Chunked commit. The caller already holds the lease, so this
         // commit is fenced against any concurrent run that might be
         // racing to commit the same aggregates.
+        //
+        // Failure semantics: a commit failure throws. The outer
+        // try/catch records the error and returns emptyResult
+        // (`ran: false`). Previously (Batch 22's `602788d` and the
+        // extraction at 706935f) the per-chunk handler swallowed
+        // the failure into `errors` and the function returned
+        // `ran: true` with `hookWrites`/`visualWrites` counting
+        // writes BUILT, not writes COMMITTED — a run whose every
+        // chunk failed reported full success. The reviewer named
+        // this Bug 3 in Batch 26. Throwing is closer to what the
+        // surrounding comments claim the function does ("leave
+        // existing records untouched", FR-060a). The caller can
+        // now distinguish success from failure by the `ran` field
+        // and the populated `errors` array.
         const chunkSize = params.chunkSize ?? DEFAULT_CHUNK_SIZE;
         const dbLike = params.db as {
             batch(): {
@@ -304,9 +406,7 @@ export async function applyLearningWrites(
             const chunk = aggregateWrites.slice(i, i + chunkSize);
             const batch = dbLike.batch();
             for (const w of chunk) batch.set(w.ref, w.data, { merge: true });
-            await batch.commit().catch((e: unknown) => {
-                params.errors.push(`aggregate batch commit failed: ${(e as Error).message}`);
-            });
+            await batch.commit();
         }
 
         return {
@@ -317,10 +417,11 @@ export async function applyLearningWrites(
     } catch (e: unknown) {
         // Never break the sync because of a learning-aggregate glitch.
         // This catch handles: (a) generation-load failures, (b) the
-        // hook/visual get() above throwing, (c) any commit failure not
-        // caught by the per-chunk handler above. In all cases we skip
-        // the aggregate writes — the existing Firestore docs are left
-        // untouched (FR-060a's "leave existing records untouched" rule).
+        // hook/visual get() above throwing, (c) commit failures. In
+        // all cases we skip the aggregate writes — the existing
+        // Firestore docs are left untouched (FR-060a's "leave
+        // existing records untouched" rule). The caller sees
+        // `ran: false` and an error message in `errors`.
         params.errors.push(`learning aggregate update failed: ${(e as Error).message}`);
         return emptyResult;
     }
