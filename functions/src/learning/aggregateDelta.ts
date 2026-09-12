@@ -206,12 +206,20 @@ export function applyVisualAggregatesDelta(
     ads: ReadonlyArray<AdForLearning>,
     syncAt: number,
 ): Map<string, VisualPerformanceAggregate> {
-    const byPatternKey = new Map<string, VisualPerformanceAggregate>();
+    const byPatternKey = new Map<string, VisualWorkingAggregate>();
     for (const agg of existing) byPatternKey.set(agg.patternKey, cloneVisual(agg));
 
     // T021/T022: same any-row / all-rows logic as the hook aggregator.
+    //
+    // Batch 30 (FR-036, FR-073): the creative key is no longer discarded by
+    // this loop. One creative is ONE count per PATTERN, however many rows
+    // carry it and however many syncs observe it — the same rule the hook
+    // aggregator has applied since Batch 28. A creative contributing to two
+    // patterns counts once in EACH, because the patterns are separate
+    // records and the question each answers is "how many creatives back
+    // this pattern".
     const groups = groupAdsByCreative(ads);
-    for (const [, rows] of groups) {
+    for (const [creativeKey, rows] of groups) {
         const eligibleRows = rows.filter(isAdEligible);
         if (eligibleRows.length === 0) continue;
         for (const ad of eligibleRows) {
@@ -224,13 +232,28 @@ export function applyVisualAggregatesDelta(
             if (patternKey === "") continue;
             const existing_agg = byPatternKey.get(patternKey);
             const agg = existing_agg ?? emptyVisual(patternKey);
+            agg.contributedCreatives.add(creativeKey);
             applyAdToVisual(agg, ad);
             agg.lastUpdated = syncAt;
             byPatternKey.set(patternKey, agg);
         }
     }
 
-    return byPatternKey;
+    // Batch 30: the Set is working state and cannot be stored (Firestore
+    // holds JSON — a Set serialises to `{}`, which is exactly how the hook
+    // equivalent was lost before Batch 28). Written out as
+    // `contributedCreativeKeys`, read back by `cloneVisual`, with
+    // `creativeCount` DERIVED from the set's size.
+    const out = new Map<string, VisualPerformanceAggregate>();
+    for (const [patternKey, agg] of byPatternKey) {
+        const { contributedCreatives, ...rest } = agg;
+        out.set(patternKey, {
+            ...rest,
+            contributedCreativeKeys: [...contributedCreatives],
+            creativeCount: contributedCreatives.size,
+        });
+    }
+    return out;
 }
 
 function applyAdToVisual(agg: VisualPerformanceAggregate, ad: AdForLearning): void {
@@ -527,10 +550,28 @@ interface HookWorkingAggregate extends HookPerformanceAggregate {
     contributedCreatives: Set<string>;
 }
 
-function cloneVisual(a: VisualPerformanceAggregate): VisualPerformanceAggregate {
+/** Batch 30 — the visual counterpart. Same contract, same lifecycle:
+ * hydrated from the persisted key array on read, stripped to that array
+ * on write, and `creativeCount` derived from its size so the two cannot
+ * disagree. Kept structurally identical to `HookWorkingAggregate` so the
+ * two aggregators stay readable side by side.
+ */
+interface VisualWorkingAggregate extends VisualPerformanceAggregate {
+    contributedCreatives: Set<string>;
+}
+
+function cloneVisual(a: VisualPerformanceAggregate): VisualWorkingAggregate {
     return {
         patternKey: a.patternKey,
         schemaVersion: a.schemaVersion ?? 1,
+        // Batch 30: hydrate the dedup set from the PERSISTED key list, so a
+        // creative that already contributed is not counted again on the next
+        // sync. An absent array means "no creative recorded yet", which is
+        // correct for every record written before this field existed —
+        // `creativeCount` is new in Phase 969 on both aggregates and no
+        // production record carries either field.
+        contributedCreatives: new Set(a.contributedCreativeKeys ?? []),
+        creativeCount: a.creativeCount ?? 0,
         sampleSize: a.sampleSize,
         lastUpdated: a.lastUpdated,
         byObjective: {
@@ -582,10 +623,13 @@ function emptyHook(angleKey: string): HookWorkingAggregate {
     };
 }
 
-function emptyVisual(patternKey: string): VisualPerformanceAggregate {
+function emptyVisual(patternKey: string): VisualWorkingAggregate {
     return {
         patternKey,
         schemaVersion: 1,
+        contributedCreatives: new Set(),
+        creativeCount: 0,
+        contributedCreativeKeys: [],
         sampleSize: 0,
         lastUpdated: 0,
         byObjective: {

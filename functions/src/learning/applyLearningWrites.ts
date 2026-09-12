@@ -170,6 +170,18 @@ export function applyVisualAggregateWithdrawal(
             clone.byFunnelType[key] = { count: bucket.count - 1 };
         }
     }
+
+    // Batch 30 — ADD/WITHDRAW INVARIANT. `applyVisualAggregatesDelta` adds
+    // the creative key; the withdrawal drops it and re-derives
+    // `creativeCount` from what remains, so the count and the key list can
+    // never disagree. As on the hook side, a partial withdrawal is
+    // self-correcting: the additive pass always follows the withdrawals in
+    // this module and re-adds the key from any surviving row.
+    const remaining = new Set(clone.contributedCreativeKeys ?? []);
+    remaining.delete(ad.creativeKey ?? ad.adId);
+    clone.contributedCreativeKeys = [...remaining];
+    clone.creativeCount = remaining.size;
+
     return clone;
 }
 

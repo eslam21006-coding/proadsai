@@ -195,6 +195,26 @@ export interface VisualPerformanceAggregate {
      */
     schemaVersion?: number;
     patternKey: string;
+    /**
+     * Batch 30 (FR-036, FR-073) — distinct creatives contributing to this
+     * VISUAL pattern. The hook aggregate has carried this since Batch 28;
+     * the visual one did not, while the dashboard read it regardless
+     * (`whatsWorkingDashboard.ts:787`, `sampleSize: v.creativeCount ?? 0`)
+     * and fed it to `pickHotAngle` against a gate of 3 — so `visualHotKey`
+     * was always null and no visual pattern could ever be awarded the icon.
+     *
+     * DERIVED from {@link contributedCreativeKeys}.length, never incremented
+     * independently, so the two cannot disagree.
+     */
+    creativeCount?: number;
+    /**
+     * Batch 30 — the creative keys behind {@link creativeCount}. Persisted
+     * for the same reason as the hook equivalent: reconstructing the set from
+     * per-row ledger entries would mean re-reading every ad row per sync,
+     * which is the unbounded scan FR-068 removed. Bounded by distinct
+     * creatives per pattern — not rows, not syncs.
+     */
+    contributedCreativeKeys?: string[];
     sampleSize: number;
     lastUpdated: number;
     byObjective: {
