@@ -77,7 +77,24 @@ type DecideContributionOutcome = ContributionDecision;
 // on `agg.hookAngle` and looked it up against `agg.patternKey` —
 // a key-space mismatch that returned undefined for every visual
 // aggregate and silently skipped all visual withdrawals.
-export /**
+export // ══ ADD/WITHDRAW INVARIANT (Batch 29) ══
+//
+//   EVERY counter or average `applyVisualAggregateWithdrawal` changes MUST
+//   be one `applyAdToVisual` changes, in the SAME BRANCH, by the inverse
+//   amount — and vice versa.
+//
+// This function breached it in BOTH directions at once: it decremented
+// `sampleSize`, `byGeoTier` and `byAudienceType`, which the addition never
+// incremented, while never decrementing `bestVerdictCount` /
+// `worstVerdictCount`, which the addition does increment. The first kind
+// floors silently at zero; the second inflates on every sync, because
+// withdraw-then-add is the modal path. Both are closed in Batch 29.
+//
+// The canonical statement of the invariant, with the reasoning and the
+// full pair-by-pair audit, lives above `applyHookAggregateWithdrawal` in
+// `aggregateDelta.ts`. Keep the two in step.
+
+/**
  * Batch 28 (Fix A, FR-021) — the visual counterpart of `withdrawAvg` in
  * `aggregateDelta.ts`. Duplicated rather than imported only because this
  * function is still local to this module; both move together when the
@@ -112,13 +129,34 @@ export function applyVisualAggregateWithdrawal(
         if (clone.byObjective.conversion.count > 0) {
             clone.byObjective.conversion.count -= 1;
         }
+        // Batch 29 — ADD/WITHDRAW INVARIANT. `applyAdToVisual` increments
+        // these two and nothing decremented them, so a winning creative
+        // added a win on EVERY sync: five withdraw-then-add cycles of one
+        // 🟢 creative reported six wins. Both are read — `ragContext.ts:346`
+        // and `:347` build the visual ranking from them.
+        if (ad.verdict === "🟢" && clone.byObjective.conversion.bestVerdictCount > 0) {
+            clone.byObjective.conversion.bestVerdictCount -= 1;
+        }
+        if (ad.verdict === "🔴" && clone.byObjective.conversion.worstVerdictCount > 0) {
+            clone.byObjective.conversion.worstVerdictCount -= 1;
+        }
         const tier = ad.geoTier;
-        if (clone.byGeoTier[tier] && clone.byGeoTier[tier].count > 0) {
-            clone.byGeoTier[tier] = { ...clone.byGeoTier[tier], count: clone.byGeoTier[tier].count - 1 };
+        const tierBefore = clone.byGeoTier[tier];
+        if (tierBefore) {
+            clone.byGeoTier[tier] = {
+                count: tierBefore.count > 0 ? tierBefore.count - 1 : 0,
+                avgCtr: withdrawAvgLocal(tierBefore.avgCtr, tierBefore.count, ad.ctrLink),
+                avgCpm: withdrawAvgLocal(tierBefore.avgCpm, tierBefore.count, ad.cpm3d),
+            };
         }
         const aud = ad.audienceType;
-        if (clone.byAudienceType[aud] && clone.byAudienceType[aud].count > 0) {
-            clone.byAudienceType[aud] = { ...clone.byAudienceType[aud], count: clone.byAudienceType[aud].count - 1 };
+        const audBefore = clone.byAudienceType[aud];
+        if (audBefore) {
+            clone.byAudienceType[aud] = {
+                count: audBefore.count > 0 ? audBefore.count - 1 : 0,
+                avgCtr: withdrawAvgLocal(audBefore.avgCtr, audBefore.count, ad.ctrLink),
+                avgCpm: withdrawAvgLocal(audBefore.avgCpm, audBefore.count, ad.cpm3d),
+            };
         }
     } else {
         if (clone.byObjective.other.count > 0) {

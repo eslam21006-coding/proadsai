@@ -250,10 +250,38 @@ function applyAdToVisual(agg: VisualPerformanceAggregate, ad: AdForLearning): vo
         );
         if (ad.verdict === "🟢") agg.byObjective.conversion.bestVerdictCount += 1;
         if (ad.verdict === "🔴") agg.byObjective.conversion.worstVerdictCount += 1;
+        // Batch 29 — ADD/WITHDRAW INVARIANT. `sampleSize`, `byGeoTier` and
+        // `byAudienceType` were decremented by the withdrawal and incremented
+        // by nothing, so all three could only travel downward and floored at
+        // zero. They are part of the persisted shape and FR-025 preserves the
+        // geo-tier and audience-type partitions by name and meaning, so the
+        // partition is filled in rather than the withdrawal gutted. Mirrors
+        // `applyAdToHook` exactly, plus `avgCpm`, which the visual buckets
+        // carry and the hook ones do not.
+        agg.sampleSize += 1;
+        const tier = ad.geoTier;
+        const tierBefore = agg.byGeoTier[tier];
+        if (tierBefore) {
+            agg.byGeoTier[tier] = {
+                count: tierBefore.count + 1,
+                avgCtr: round2((tierBefore.avgCtr * tierBefore.count + ad.ctrLink) / (tierBefore.count + 1)),
+                avgCpm: round2((tierBefore.avgCpm * tierBefore.count + ad.cpm3d) / (tierBefore.count + 1)),
+            };
+        }
+        const aud = ad.audienceType;
+        const audBefore = agg.byAudienceType[aud];
+        if (audBefore) {
+            agg.byAudienceType[aud] = {
+                count: audBefore.count + 1,
+                avgCtr: round2((audBefore.avgCtr * audBefore.count + ad.ctrLink) / (audBefore.count + 1)),
+                avgCpm: round2((audBefore.avgCpm * audBefore.count + ad.cpm3d) / (audBefore.count + 1)),
+            };
+        }
     } else {
         agg.byObjective.other.count += 1;
     }
-    // FR-027 / T047 — applies regardless of objective bucket.
+    // FR-027 / T047 — applies regardless of objective bucket. The visual
+    // withdrawal decrements it unconditionally too, so the pair agrees.
     incrementByFunnelType(agg, ad);
 }
 
@@ -263,6 +291,29 @@ function applyAdToVisual(agg: VisualPerformanceAggregate, ad: AdForLearning): vo
 // `decideContribution` decision says WHEN to withdraw; this function
 // says HOW to apply the withdrawal symmetrically with how the
 // addition was applied.
+//
+// ══ ADD/WITHDRAW INVARIANT (Batch 29) ══
+//
+//   EVERY counter or average the withdrawal changes MUST be one the
+//   addition changes, in the SAME BRANCH, by the inverse amount.
+//
+// Both directions of breach are defects, and both are silent:
+//
+//   - Withdrawal subtracts where the addition never adds → the counter
+//     only travels downward and floors at zero. A field that is always
+//     zero reads as "no data", not as "broken".
+//   - Addition adds where the withdrawal never subtracts → the counter
+//     only travels upward. Since `contributedValues` carries `ctrLink`
+//     and `cpm`, withdraw-then-add is the MODAL path, so this inflates
+//     on EVERY sync.
+//
+// Three add/withdraw pairs disagreed across Batches 28 and 29 (FR-021's
+// averages, FR-036's creative count, and four counters here). Before
+// adding a field to either side, add it to both, and add a cycle test:
+// run withdraw-then-add five times at a stable value and assert nothing
+// moved. All three defects were invisible in one call and obvious in five.
+// The full pair-by-pair audit is in
+// `specs/969-cumulative-learning/reports/batch-29-969-report.md`.
 
 export function applyHookAggregateWithdrawal(
     existing: HookPerformanceAggregate,
@@ -320,7 +371,23 @@ export function applyHookAggregateWithdrawal(
         }
     }
     // FR-027 / T047 — withdrawal symmetric with addition.
-    decrementByFunnelType(clone, ad);
+    //
+    // Batch 29 — ADD/WITHDRAW INVARIANT. This was called unconditionally
+    // while `applyAdToHook` increments the bucket INSIDE the conversion
+    // branch only, so a non-conversion row subtracted a bucket count it had
+    // never contributed — driving the bucket to zero and silently switching
+    // off FR-041's multi-funnel indication, which reads `byFunnelType` via
+    // `isMultiFunnel` (`whatsWorkingDashboard.ts:624`, `:823`). The ADDITION
+    // is the correct side here, unlike the visual counters above: FR-025
+    // fixes the partition's meaning, and widening it to non-conversion rows
+    // would change what "evidence spans more than one funnel" means. So the
+    // withdrawal is aligned to the addition, not the other way round. (The
+    // VISUAL pair differs and is correct as it stands: `applyAdToVisual`
+    // increments unconditionally, and its withdrawal decrements
+    // unconditionally.)
+    if (isConversion) {
+        decrementByFunnelType(clone, ad);
+    }
 
     // Batch 28 (Fix B, FR-036): a withdrawn creative stops being counted.
     // The key is dropped and `creativeCount` re-derived from the set, so
