@@ -148,17 +148,24 @@ interface RankedVisual {
 }
 
 function rankHooks(
-  hookAggs: ReadonlyArray<HookPerformanceAggregate>,
+    hookAggs: ReadonlyArray<HookPerformanceAggregate>,
 ): RankedHook[] {
-  return hookAggs
-    .filter((a) => a.byObjective.conversion.count > 0)
-    .map((a) => ({
-      angleKey: a.angleKey,
-      avgLinkCtr: a.byObjective.conversion.avgLinkCtr,
-      winCount: a.byObjective.conversion.bestVerdictCount,
-      loseCount: a.byObjective.conversion.worstVerdictCount,
-      sampleSize: a.byObjective.conversion.count,
-    }));
+    return hookAggs
+        .filter((a) => a.byObjective.conversion.count > 0)
+        .map((a) => ({
+            angleKey: a.angleKey,
+            avgLinkCtr: a.byObjective.conversion.avgLinkCtr,
+            winCount: a.byObjective.conversion.bestVerdictCount,
+            loseCount: a.byObjective.conversion.worstVerdictCount,
+            // FR-034 / FR-034a / FR-037 — gate by distinct creatives
+            // (T029a). The producer (`learning/aggregateDelta.ts`)
+            // populates `a.creativeCount` on every write; absent
+            // `creativeCount` would mean the worker's pre-T025a wire-up
+            // wrote the aggregate, which `learningAccumulation.test.ts`
+            // already guards against. Sum fields (avgLinkCtr) keep
+            // using the row-level `count`.
+            sampleSize: a.creativeCount ?? 0,
+        }));
 }
 
 /**

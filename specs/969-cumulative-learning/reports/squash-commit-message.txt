@@ -1,0 +1,49 @@
+feat(969): cumulative learning — accumulate across syncs and funnels
+
+Learning aggregates no longer overwrite on every sync; evidence
+accumulates all-time and carries across funnel types.
+
+The unit of evidence changes from the Meta ad row to the creative.
+Meta gives each placement of one image its own ad id; production
+shows 1008 rows resolving to 146 creatives, one image spanning 55
+rows. Grouping is by imageHash with generation links propagated
+across the group, groups sharing a generationId merged, and manual
+attribution taking precedence over automatic.
+
+Activation gates FR-034 / FR-034a / FR-037 keep 10 / 3 / 3 and now
+count creatives rather than ad rows.
+
+A per-account lease inside runSyncForAccount fences the entire
+learning read-modify-write. Phase 970's lease is keyed per owner and
+does not reach the Cloud Tasks worker, which is the path the nightly
+sync uses. Operational writes commit before the lease is attempted,
+so a refused acquisition leaves the action list current and lets
+Cloud Tasks retry.
+
+Adds one owner-visible string, in English and simple Fusha,
+indicating when an angle's evidence spans more than one funnel.
+
+Not in this change, stated so main's history does not claim it:
+
+  - The per-day conversion accrual and the write-once efficiency
+    figure (FR-002, FR-002a, FR-077 to FR-087). learning/index.ts
+    carries both modules commented out; the DayAccrual and
+    ContributionState types are defined and unused. No cost or
+    conversion-efficiency signal reaches generation as a result:
+    a contribution carries click-through, cost-per-thousand and the
+    verdict mark, and only click-through is ranked on.
+  - Funnel-type WEIGHTING (FR-030, FR-031, FR-032a). The per-funnel
+    breakdown and the multi-funnel indication ship; the retrieval
+    path does not weight toward same-funnel evidence.
+  - The creative-counted retrieval path (FR-033, FR-034a's floor in
+    getTopWinners, FR-035's activation latch). getTopWinners.ts is
+    untouched and still selects per ad row, so past-winner selection
+    is not yet creative-counted.
+
+All three are specified and tasked, not implemented.
+
+Spec: specs/969-cumulative-learning/spec.md
+Reports: specs/969-cumulative-learning/reports/
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GjTLkFn5QDKkmKDxXUS8iC

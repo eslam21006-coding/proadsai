@@ -1,22 +1,26 @@
-// functions/src/learningAggregates.ts — Phase 14 Layer 4b Two-Component Learning
+// functions/src/learningAggregates.ts — Phase 14 Layer 4b types + pattern-key helpers
 // ═══════════════════════════════════════════════════════════
-// PURE module (no Firestore / network). The worker in
-// `metaSync/shared.ts` reads the existing aggregate docs, builds a list
-// of `AdForLearning` from the ad-loop results, and calls:
-//   - `updateHookAggregates(ads, hookDocs)` → Map<canonicalAngle, HookAggregate>
-//   - `updateVisualAggregates(ads, visualDocs)` → Map<patternKey, VisualAggregate>
+// PURE module (no Firestore / network). Provides:
+//   - Type definitions for the additive hook/visual aggregate shapes
+//     (`HookPerformanceAggregate`, `VisualPerformanceAggregate`) and the
+//     per-ad input shape (`AdForLearning`) consumed by the worker in
+//     `metaSync/shared.ts`.
+//   - `computePatternKey(...)` — deterministic hash of the visual pattern
+//     components used by the worker to group rows into visual aggregate
+//     keys.
 //
-// RULES (spec §6 + §5.6):
-//   - Only CONVERSION-objective matched ads feed the byObjective.conversion
-//     bucket. "other" objective ads go in byObjective.other (display-only).
-//   - Only `matchType: "auto_hash" | "manual"` and `metadataAvailable: true`
-//     ads are eligible.
-//   - Hook angle alias resolution: shocking_stat→statistics,
-//     fear_of_missing_out→urgency, future_pacing→future_based.
-//   - patternKey = hash of sorted [layoutTemplate, modes[], artDirection, universe].
-//   - Same generationId in 2 ad sets → separate records per context.
-//   - All verdict counts (`bestVerdictCount` = 🟢, `worstVerdictCount` = 🔴) are
-//     tracked per angle / pattern.
+// History: this module originally exported two OVERWRITE-semantics
+// aggregators (`updateHookAggregates` / `updateVisualAggregates`) plus a
+// cohort of private helpers. The Batch 06 deletion table documented
+// their removal, but the code was left in place — the chain kept running
+// only because stale compiled `.js` artifacts survived in the
+// gitignored `lib/`. Batch 11 retires them properly:
+//   - `updateHookAggregates`, `updateVisualAggregates`, `HookAccumulator`,
+//     `VisualAccumulator`, `emptyHookAggregateFor`, `emptyVisualAggregateFor`,
+//     `isEligibleForLearning`, `round2` — all deleted.
+//   - The additive replacements in `learning/aggregateDelta.ts`
+//     (`applyHookAggregatesDelta`, `applyVisualAggregatesDelta`) are what
+//     the worker now calls.
 // ═══════════════════════════════════════════════════════════
 
 import { resolveCanonicalAngle } from "./canonicalAngle.js";
@@ -25,9 +29,126 @@ import { resolveCanonicalAngle } from "./canonicalAngle.js";
 
 export type LearningVerdict = "🟢" | "🟡" | "🔴" | "🛟" | "⏳";
 
+/**
+ * FR-027 (Phase 969 T047): the per-funnel-type breakdown keys. The four
+ * funnel types are the owner's funnel taxonomy
+ * (`paid_event | paid_product | free_webinar | lead_magnet_call`); the
+ * `unknown` bucket is the explicit home for rows whose funnel attribution
+ * could not be resolved (FR-032 — receives no same-funnel weighting; never
+ * matches a requested type; still counts toward headline totals).
+ */
+export type FunnelTypeBucketKey =
+    | "paid_event"
+    | "paid_product"
+    | "free_webinar"
+    | "lead_magnet_call"
+    | "unknown";
+
+/** Per-funnel-type bucket shared by hook + visual aggregates. */
+export interface FunnelTypeBucket {
+    count: number;
+}
+
+/** Whole per-funnel-type breakdown on a hook or visual aggregate. */
+export interface ByFunnelTypeBreakdown {
+    paid_event: FunnelTypeBucket;
+    paid_product: FunnelTypeBucket;
+    free_webinar: FunnelTypeBucket;
+    lead_magnet_call: FunnelTypeBucket;
+    unknown: FunnelTypeBucket;
+}
+
+export const EMPTY_BY_FUNNEL_TYPE: ByFunnelTypeBreakdown = {
+    paid_event: { count: 0 },
+    paid_product: { count: 0 },
+    free_webinar: { count: 0 },
+    lead_magnet_call: { count: 0 },
+    unknown: { count: 0 },
+};
+
+/**
+ * Per-funnel-type breakdown shared by hook + visual aggregates.
+ *
+ * **The counts are ROW counts, not creative counts.** Every contributing
+ * row attributes once to one of the four real funnel buckets or to
+ * the explicit `unknown` bucket (FR-032). The shape mirrors
+ * `byObjective.conversion.count`: non-decreasing under FR-020a's
+ * additive contract, all-rows semantics.
+ *
+ * **Why this matters for the FR-030 weighting path.** `isMultiFunnel`
+ * (Batch 17 source of truth in `whatsWorkingDashboard.ts`) only
+ * reads the >0 boolean per bucket, so row counts suffice for the
+ * FR-041 boolean indicator. The retrieval-side SAME-FUNNEL WEIGHTING
+ * that FR-030 will need is a different surface — it must weigh
+ * by **distinct creatives** per funnel (the FR-073 unit of evidence),
+ * not by raw row count. If FR-030's landing reads `byFunnelType`
+ * directly, one creative fanned across 55 rows under one funnel
+ * outweighs a creative in another funnel 55:1 in any
+ * popularity-weighted score. That is exactly the same 7.4:1 fan-out
+ * inflation Batch 06 closed with `creativeCount` and
+ * `contributedCreatives` on `byObjective`, rebuilt here per funnel.
+ *
+ * **The implementation path when FR-030 lands:** mirror
+ * `HookWorkingAggregate.contributedCreatives` (a `Set<creativeKey>`
+ * per bucket) AND expose a `byFunnelTypeCreativeCount:
+ * Partial<Record<FunnelTypeBucketKey, number>>` field — populated
+ * alongside `count` in `applyAdToHook`/`applyAdToVisual`. Do NOT
+ * consume `byFunnelType.count` directly for retrieval weighting;
+ * the dashboard's `multiFunnel` boolean is the ONLY legitimate
+ * current consumer (Batch 17 owner audit). The seam of "
+ * `count` per bucket, weighted by row count" is a known production
+ * hazard worth not repeating.
+ *
+ * FR-027 requires the field to exist; FR-030 will require the
+ * unit to change. The seam is "row counts are sufficient for the
+ * FR-041 boolean, but FR-030's retrieval weighting must not consume
+ * these directly." This note exists so the FR-030 implementer
+ * does not need to re-learn the unit mismatch.
+ */
+
 /** Mirrors the data-model §5 hookPerformance aggregate. */
 export interface HookPerformanceAggregate {
     angleKey: string;
+    /**
+     * T024: schema version. Records below the current version are
+     * read as absent by the worker (FR-042/43). Workers emit the
+     * current version on every write. Optional in the type for
+     * backward compatibility with test fixtures that pre-date T024 —
+     * readers treat a missing value as version 0 (below current).
+     */
+    schemaVersion?: number;
+    /**
+     * T021: count of distinct creatives that have contributed to
+     * this angle (FR-036, FR-073). One creative = one count, regardless
+     * of how many rows it carries. Distinct from `sampleSize` (rows)
+     * and the per-bucket `count` fields (also rows). Optional for
+     * backward compatibility with older fixtures.
+     */
+    creativeCount?: number;
+    /**
+     * Batch 28 (Fix B, FR-036) — the creative keys behind {@link creativeCount}.
+     *
+     * `creativeCount` is DERIVED from this array's length; the array is the
+     * state. It exists because the dedup set has to survive the sync: it was
+     * previously an in-memory `Set` that was stripped before persisting and
+     * re-initialised empty on read, so the same creative re-incremented the
+     * count on every sync and `creativeCount` became a count of
+     * creative-sync-OBSERVATIONS. FR-036 forbids exactly that: "Neither
+     * repeated observation across syncs nor multiplicity of ad rows may
+     * inflate the count."
+     *
+     * WHY PERSISTED RATHER THAN RE-DERIVED ON READ. Re-deriving the set from
+     * the per-row ledger entries would mean reading every ad row for the
+     * account on every sync — the unbounded collection scan FR-068 removed.
+     * Persisting is bounded by DISTINCT CREATIVES per angle (not rows, not
+     * syncs), which is the smallest quantity that can answer the question.
+     *
+     * Optional on read: absent means "no creative recorded yet", which is
+     * correct for every record written before this field existed — no
+     * production record carries `creativeCount` at all, since both it and
+     * this field are new in Phase 969 and unmerged.
+     */
+    contributedCreativeKeys?: string[];
     sampleSize: number;
     lastUpdated: number;
     byObjective: {
@@ -42,6 +163,15 @@ export interface HookPerformanceAggregate {
             count: number;
         };
     };
+    /**
+     * FR-027 (Phase 969 T047) per-funnel-type breakdown. Optional on
+     * read for forward compatibility — readers MUST default to
+     * {@link EMPTY_BY_FUNNEL_TYPE} when the field is absent (older
+     * aggregates from before T047). The dashboard's multi-funnel
+     * indication reads from this field (FR-041); see `isMultiFunnel`
+     * in `whatsWorkingDashboard.ts` for the source of truth.
+     */
+    byFunnelType?: ByFunnelTypeBreakdown;
     byGeoTier: {
         tier1_gulf: { avgCtr: number; count: number };
         tier2_diaspora: { avgCtr: number; count: number };
@@ -58,7 +188,33 @@ export interface HookPerformanceAggregate {
 
 /** Mirrors the data-model §6 visualPerformance aggregate. */
 export interface VisualPerformanceAggregate {
+    /**
+     * T024: schema version. Records below the current version are
+     * read as absent by the worker (FR-042/43). Workers emit the
+     * current version on every write. Optional in the type for backward compatibility.
+     */
+    schemaVersion?: number;
     patternKey: string;
+    /**
+     * Batch 30 (FR-036, FR-073) — distinct creatives contributing to this
+     * VISUAL pattern. The hook aggregate has carried this since Batch 28;
+     * the visual one did not, while the dashboard read it regardless
+     * (`whatsWorkingDashboard.ts:787`, `sampleSize: v.creativeCount ?? 0`)
+     * and fed it to `pickHotAngle` against a gate of 3 — so `visualHotKey`
+     * was always null and no visual pattern could ever be awarded the icon.
+     *
+     * DERIVED from {@link contributedCreativeKeys}.length, never incremented
+     * independently, so the two cannot disagree.
+     */
+    creativeCount?: number;
+    /**
+     * Batch 30 — the creative keys behind {@link creativeCount}. Persisted
+     * for the same reason as the hook equivalent: reconstructing the set from
+     * per-row ledger entries would mean re-reading every ad row per sync,
+     * which is the unbounded scan FR-068 removed. Bounded by distinct
+     * creatives per pattern — not rows, not syncs.
+     */
+    contributedCreativeKeys?: string[];
     sampleSize: number;
     lastUpdated: number;
     byObjective: {
@@ -73,6 +229,8 @@ export interface VisualPerformanceAggregate {
             count: number;
         };
     };
+    /** FR-027 per-funnel-type breakdown — see HookPerformanceAggregate. */
+    byFunnelType?: ByFunnelTypeBreakdown;
     byGeoTier: {
         tier1_gulf: { avgCpm: number; avgCtr: number; count: number };
         tier2_diaspora: { avgCpm: number; avgCtr: number; count: number };
@@ -90,6 +248,13 @@ export interface VisualPerformanceAggregate {
 /** Input shape — the worker builds this list from its ad loop. */
 export interface AdForLearning {
     adId: string;
+    /**
+     * T021: creative key. The unit of evidence for learning (FR-073).
+     * Set by the worker from `groupIntoCreatives`. When absent (older
+     * test fixtures), the aggregator falls back to per-row identity so
+     * the test surface stays compatible.
+     */
+    creativeKey?: string;
     /** Generation id (matched). Required for hook + pattern aggregates. */
     generationId: string | null;
     /** Match type from the worker — `null` ads are SKIPPED. */
@@ -98,6 +263,14 @@ export interface AdForLearning {
     metadataAvailable: boolean;
     /** "conversion" | "other" — controls the byObjective bucket. */
     campaignObjective: "conversion" | "other";
+    /**
+     * FR-027 (Phase 969 T047): the funnel type attributed to this row
+     * from the workspace's funnel settings at sync time. Required
+     * by the worker's read path; older fixtures and tests that omit
+     * it fall back to `unknown` inside the aggregator (FR-032 — the
+     * unknown bucket still counts toward headline totals).
+     */
+    funnelType?: FunnelTypeBucketKey;
     geoTier: "tier1_gulf" | "tier2_diaspora" | "tier3_egypt_na";
     audienceType: "broad" | "interest" | "lookalike" | "retargeting" | "advantage_plus";
     ctrLink: number;
@@ -114,13 +287,16 @@ export interface AdForLearning {
     universe: string | null;
 }
 
-// ─── Eligibility check (used by both aggregators) ─────────────
-
-function isEligibleForLearning(ad: AdForLearning): boolean {
-    if (ad.matchType !== "auto_hash" && ad.matchType !== "manual") return false;
-    if (!ad.metadataAvailable) return false;
-    if (!ad.generationId) return false;
-    return true;
+/**
+ * Resolve an ad row's `funnelType` to a known bucket. Falls back to
+ * `"unknown"` for any input that is absent, malformed, or outside
+ * the four funnel types. Per FR-032 unknown evidence still counts
+ * toward headline totals — receiving bucket, not disqualifying bucket.
+ */
+export function resolveFunnelTypeBucketKey(raw: unknown): FunnelTypeBucketKey {
+    if (raw === "paid_event" || raw === "paid_product"
+        || raw === "free_webinar" || raw === "lead_magnet_call") return raw;
+    return "unknown";
 }
 
 // ─── Pattern key: deterministic hash of the visual pattern ────
@@ -152,313 +328,4 @@ function djb2Hash(s: string): string {
     }
     // Force unsigned and base36 for compact string.
     return (h >>> 0).toString(36).padStart(7, "0");
-}
-
-// ─── Hook aggregate ──────────────────────────────────────────
-
-/**
- * Build / update the per-canonical-angle hook aggregates from the worker's
- * ad loop. Returns a `Map<canonicalAngleKey, HookPerformanceAggregate>`
- * containing every angle the ads touched — callers can diff this against
- * the existing Firestore docs to know which to write.
- *
- * OVERWRITE semantics: the returned aggregate is computed entirely from
- * `ads` (the current sync's contribution). The `existing` parameter is
- * used only to provide a structural template (the worker reads existing
- * aggregates from Firestore; if a particular angle is empty in `existing`
- * we still know what shape the output doc should have). The worker is
- * expected to OVERWRITE the Firestore doc with the returned value —
- * NOT merge with it — so re-running this function on the same input
- * produces an identical result (passed-back-as-existing is a no-op).
- *
- * `syncAt` is the synchronization timestamp (epoch ms). The worker
- * passes a single value for the whole sync so all aggregates carry
- * the same `lastUpdated`. This makes the function deterministic for
- * the same input — previously `Date.now()` was called per call and
- * the result drifted between calls.
- *
- * This is the CRITICAL invariant: the same ad, processed in two
- * successive syncs, must NOT be double-counted. The worker is
- * responsible for not including the same ad in two sync windows; the
- * aggregator guarantees that within a single call, the result is fully
- * determined by the input.
- */
-export function updateHookAggregates(
-    ads: ReadonlyArray<AdForLearning>,
-    existing: ReadonlyArray<HookPerformanceAggregate>,
-    syncAt: number = Date.now(),
-): Map<string, HookPerformanceAggregate> {
-    // Build a per-angle accumulator. Local to this call — does not
-    // merge with `existing`. After processing, we materialize the
-    // accumulator into the final shape using the existing doc (if
-    // present) for any structural fields we don't compute.
-    const acc = new Map<string, HookAccumulator>();
-    for (const ad of ads) {
-        if (!isEligibleForLearning(ad)) continue;
-        if (ad.hookAngle === null) continue;
-        const canonical = resolveCanonicalAngle(ad.hookAngle);
-        if (!canonical) continue;
-        const angleKey = canonical;
-        const existing_agg = acc.get(angleKey);
-        const a: HookAccumulator = existing_agg ?? {
-            angleKey,
-            conversionCount: 0,
-            conversionLinkCtrSum: 0,
-            conversionBestCount: 0,
-            conversionWorstCount: 0,
-            otherCount: 0,
-            otherLinkCtrSum: 0,
-            geoCounts: { tier1_gulf: 0, tier2_diaspora: 0, tier3_egypt_na: 0 },
-            geoCtrSum: { tier1_gulf: 0, tier2_diaspora: 0, tier3_egypt_na: 0 },
-            audCounts: { broad: 0, interest: 0, lookalike: 0, retargeting: 0, advantage_plus: 0 },
-            audCtrSum: { broad: 0, interest: 0, lookalike: 0, retargeting: 0, advantage_plus: 0 },
-        };
-        const isConversion = ad.campaignObjective === "conversion";
-        if (isConversion) {
-            a.conversionCount += 1;
-            a.conversionLinkCtrSum += ad.ctrLink;
-            if (ad.verdict === "🟢") a.conversionBestCount += 1;
-            if (ad.verdict === "🔴") a.conversionWorstCount += 1;
-            a.geoCounts[ad.geoTier] += 1;
-            a.geoCtrSum[ad.geoTier] += ad.ctrLink;
-            a.audCounts[ad.audienceType] += 1;
-            a.audCtrSum[ad.audienceType] += ad.ctrLink;
-        } else {
-            a.otherCount += 1;
-            a.otherLinkCtrSum += ad.ctrLink;
-        }
-        acc.set(angleKey, a);
-    }
-
-    // Materialize the final aggregate shape. CRITICAL: only output
-    // entries for angles that the current sync actually contributed
-    // to. Do NOT union with `existing` — that would zero-out
-    // historical data on partial syncs (the spec's invariant:
-    // "Aggregates are NOT recomputed on delete", but the same
-    // principle applies to partial-sync writes). Angles present in
-    // `existing` but not in this call's input are simply NOT in the
-    // output map; the worker only writes entries it sees, so the
-    // Firestore docs for the other angles are preserved untouched.
-    const out = new Map<string, HookPerformanceAggregate>();
-    for (const [angleKey, a] of acc) {
-        const agg: HookPerformanceAggregate = emptyHookAggregateFor(angleKey);
-        // sampleSize counts conversion ads only (spec §6.2: "byObjective
-        // .conversion is the ONLY bucket that feeds learning"). The
-        // byObjective.other bucket is display-only and is NOT added
-        // to sampleSize — a count of 10 "other" ads with 0 conversion
-        // ads would otherwise suggest the angle has 10 samples when
-        // it has zero learning-relevant data.
-        agg.sampleSize = a.conversionCount;
-        agg.lastUpdated = syncAt;
-        if (a.conversionCount > 0) {
-            agg.byObjective.conversion.count = a.conversionCount;
-            agg.byObjective.conversion.avgLinkCtr = round2(a.conversionLinkCtrSum / a.conversionCount);
-            agg.byObjective.conversion.bestVerdictCount = a.conversionBestCount;
-            agg.byObjective.conversion.worstVerdictCount = a.conversionWorstCount;
-        }
-        if (a.otherCount > 0) {
-            agg.byObjective.other.count = a.otherCount;
-            agg.byObjective.other.avgLinkCtr = round2(a.otherLinkCtrSum / a.otherCount);
-        }
-        for (const t of ["tier1_gulf", "tier2_diaspora", "tier3_egypt_na"] as const) {
-            if (a.geoCounts[t] > 0) {
-                agg.byGeoTier[t].count = a.geoCounts[t];
-                agg.byGeoTier[t].avgCtr = round2(a.geoCtrSum[t] / a.geoCounts[t]);
-            }
-        }
-        for (const au of ["broad", "interest", "lookalike", "retargeting", "advantage_plus"] as const) {
-            if (a.audCounts[au] > 0) {
-                agg.byAudienceType[au].count = a.audCounts[au];
-                agg.byAudienceType[au].avgCtr = round2(a.audCtrSum[au] / a.audCounts[au]);
-            }
-        }
-        out.set(angleKey, agg);
-    }
-    return out;
-}
-
-interface HookAccumulator {
-    angleKey: string;
-    conversionCount: number;
-    conversionLinkCtrSum: number;
-    conversionBestCount: number;
-    conversionWorstCount: number;
-    otherCount: number;
-    otherLinkCtrSum: number;
-    geoCounts: { tier1_gulf: number; tier2_diaspora: number; tier3_egypt_na: number };
-    geoCtrSum: { tier1_gulf: number; tier2_diaspora: number; tier3_egypt_na: number };
-    audCounts: { broad: number; interest: number; lookalike: number; retargeting: number; advantage_plus: number };
-    audCtrSum: { broad: number; interest: number; lookalike: number; retargeting: number; advantage_plus: number };
-}
-
-function round2(n: number): number {
-    return Math.round(n * 100) / 100;
-}
-
-function emptyHookAggregateFor(angleKey: string): HookPerformanceAggregate {
-    return {
-        angleKey,
-        sampleSize: 0,
-        lastUpdated: 0,
-        byObjective: {
-            conversion: { avgLinkCtr: 0, count: 0, bestVerdictCount: 0, worstVerdictCount: 0 },
-            other: { avgLinkCtr: 0, count: 0 },
-        },
-        byGeoTier: {
-            tier1_gulf: { avgCtr: 0, count: 0 },
-            tier2_diaspora: { avgCtr: 0, count: 0 },
-            tier3_egypt_na: { avgCtr: 0, count: 0 },
-        },
-        byAudienceType: {
-            broad: { avgCtr: 0, count: 0 },
-            interest: { avgCtr: 0, count: 0 },
-            lookalike: { avgCtr: 0, count: 0 },
-            retargeting: { avgCtr: 0, count: 0 },
-            advantage_plus: { avgCtr: 0, count: 0 },
-        },
-    };
-}
-
-// ─── Visual pattern aggregate ────────────────────────────────
-
-/**
- * Build / update the per-patternKey visual aggregates from the worker's
- * ad loop. OVERWRITE semantics — same contract as
- * `updateHookAggregates`. The result is computed entirely from `ads`;
- * the worker OVERWRITES the Firestore doc with the returned value.
- *
- * `syncAt` is the synchronization timestamp (epoch ms). See
- * `updateHookAggregates` for the determinism rationale.
- */
-export function updateVisualAggregates(
-    ads: ReadonlyArray<AdForLearning>,
-    existing: ReadonlyArray<VisualPerformanceAggregate>,
-    syncAt: number = Date.now(),
-): Map<string, VisualPerformanceAggregate> {
-    // Local per-patternKey accumulator.
-    const acc = new Map<string, VisualAccumulator>();
-    for (const ad of ads) {
-        if (!isEligibleForLearning(ad)) continue;
-        const patternKey = computePatternKey(
-            ad.layoutTemplate,
-            ad.creativeModes,
-            ad.artDirection,
-            ad.universe,
-        );
-        if (patternKey === "") continue;
-        const a: VisualAccumulator = acc.get(patternKey) ?? {
-            patternKey,
-            conversionCount: 0,
-            conversionCpmSum: 0,
-            conversionLinkCtrSum: 0,
-            conversionBestCount: 0,
-            conversionWorstCount: 0,
-            otherCount: 0,
-            geoCounts: { tier1_gulf: 0, tier2_diaspora: 0, tier3_egypt_na: 0 },
-            geoCpmSum: { tier1_gulf: 0, tier2_diaspora: 0, tier3_egypt_na: 0 },
-            geoCtrSum: { tier1_gulf: 0, tier2_diaspora: 0, tier3_egypt_na: 0 },
-            audCounts: { broad: 0, interest: 0, lookalike: 0, retargeting: 0, advantage_plus: 0 },
-            audCpmSum: { broad: 0, interest: 0, lookalike: 0, retargeting: 0, advantage_plus: 0 },
-            audCtrSum: { broad: 0, interest: 0, lookalike: 0, retargeting: 0, advantage_plus: 0 },
-        };
-        const isConversion = ad.campaignObjective === "conversion";
-        if (isConversion) {
-            a.conversionCount += 1;
-            a.conversionCpmSum += ad.cpm3d;
-            a.conversionLinkCtrSum += ad.ctrLink;
-            if (ad.verdict === "🟢") a.conversionBestCount += 1;
-            if (ad.verdict === "🔴") a.conversionWorstCount += 1;
-            a.geoCounts[ad.geoTier] += 1;
-            a.geoCpmSum[ad.geoTier] += ad.cpm3d;
-            a.geoCtrSum[ad.geoTier] += ad.ctrLink;
-            a.audCounts[ad.audienceType] += 1;
-            a.audCpmSum[ad.audienceType] += ad.cpm3d;
-            a.audCtrSum[ad.audienceType] += ad.ctrLink;
-        } else {
-            a.otherCount += 1;
-        }
-        acc.set(patternKey, a);
-    }
-
-    // Materialize. CRITICAL: only output entries for patternKeys that
-    // the current sync actually contributed to. Do NOT union with
-    // `existing` — that would zero-out historical data on partial
-    // syncs. Patterns present in `existing` but not in this call's
-    // input are simply NOT in the output map; the worker only writes
-    // entries it sees, so the Firestore docs for the other patterns
-    // are preserved untouched.
-    const out = new Map<string, VisualPerformanceAggregate>();
-    for (const [patternKey, a] of acc) {
-        if (!patternKey) continue;
-        const agg: VisualPerformanceAggregate = emptyVisualAggregateFor(patternKey);
-        // sampleSize counts conversion ads only (spec §6.2).
-        agg.sampleSize = a.conversionCount;
-        agg.lastUpdated = syncAt;
-        if (a.conversionCount > 0) {
-            agg.byObjective.conversion.count = a.conversionCount;
-            agg.byObjective.conversion.avgCpm = round2(a.conversionCpmSum / a.conversionCount);
-            agg.byObjective.conversion.avgLinkCtr = round2(a.conversionLinkCtrSum / a.conversionCount);
-            agg.byObjective.conversion.bestVerdictCount = a.conversionBestCount;
-            agg.byObjective.conversion.worstVerdictCount = a.conversionWorstCount;
-        }
-        if (a.otherCount > 0) {
-            agg.byObjective.other.count = a.otherCount;
-        }
-        for (const t of ["tier1_gulf", "tier2_diaspora", "tier3_egypt_na"] as const) {
-            if (a.geoCounts[t] > 0) {
-                agg.byGeoTier[t].count = a.geoCounts[t];
-                agg.byGeoTier[t].avgCpm = round2(a.geoCpmSum[t] / a.geoCounts[t]);
-                agg.byGeoTier[t].avgCtr = round2(a.geoCtrSum[t] / a.geoCounts[t]);
-            }
-        }
-        for (const au of ["broad", "interest", "lookalike", "retargeting", "advantage_plus"] as const) {
-            if (a.audCounts[au] > 0) {
-                agg.byAudienceType[au].count = a.audCounts[au];
-                agg.byAudienceType[au].avgCpm = round2(a.audCpmSum[au] / a.audCounts[au]);
-                agg.byAudienceType[au].avgCtr = round2(a.audCtrSum[au] / a.audCounts[au]);
-            }
-        }
-        out.set(patternKey, agg);
-    }
-    return out;
-}
-
-interface VisualAccumulator {
-    patternKey: string;
-    conversionCount: number;
-    conversionCpmSum: number;
-    conversionLinkCtrSum: number;
-    conversionBestCount: number;
-    conversionWorstCount: number;
-    otherCount: number;
-    geoCounts: { tier1_gulf: number; tier2_diaspora: number; tier3_egypt_na: number };
-    geoCpmSum: { tier1_gulf: number; tier2_diaspora: number; tier3_egypt_na: number };
-    geoCtrSum: { tier1_gulf: number; tier2_diaspora: number; tier3_egypt_na: number };
-    audCounts: { broad: number; interest: number; lookalike: number; retargeting: number; advantage_plus: number };
-    audCpmSum: { broad: number; interest: number; lookalike: number; retargeting: number; advantage_plus: number };
-    audCtrSum: { broad: number; interest: number; lookalike: number; retargeting: number; advantage_plus: number };
-}
-
-function emptyVisualAggregateFor(patternKey: string): VisualPerformanceAggregate {
-    return {
-        patternKey,
-        sampleSize: 0,
-        lastUpdated: 0,
-        byObjective: {
-            conversion: { avgCpm: 0, avgLinkCtr: 0, count: 0, bestVerdictCount: 0, worstVerdictCount: 0 },
-            other: { count: 0 },
-        },
-        byGeoTier: {
-            tier1_gulf: { avgCpm: 0, avgCtr: 0, count: 0 },
-            tier2_diaspora: { avgCpm: 0, avgCtr: 0, count: 0 },
-            tier3_egypt_na: { avgCpm: 0, avgCtr: 0, count: 0 },
-        },
-        byAudienceType: {
-            broad: { avgCpm: 0, avgCtr: 0, count: 0 },
-            interest: { avgCpm: 0, avgCtr: 0, count: 0 },
-            lookalike: { avgCpm: 0, avgCtr: 0, count: 0 },
-            retargeting: { avgCpm: 0, avgCtr: 0, count: 0 },
-            advantage_plus: { avgCpm: 0, avgCtr: 0, count: 0 },
-        },
-    };
 }

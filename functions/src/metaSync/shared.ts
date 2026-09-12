@@ -1,4 +1,4 @@
-// functions/src/metaSync/shared.ts — Phase 14 Layer 2 shared sync logic
+﻿// functions/src/metaSync/shared.ts — Phase 14 Layer 2 shared sync logic
 // ═══════════════════════════════════════════════════════════
 // The "run one account sync" body that the dispatcher, the worker, and the
 // manual trigger all call. Lives in its own file so the Cloud Functions
@@ -82,13 +82,29 @@ import {
     missingRequiredFields,
 } from "../funnelSettings.js";
 import {
-    updateHookAggregates,
-    updateVisualAggregates,
     computePatternKey,
+    EMPTY_BY_FUNNEL_TYPE,
+    resolveFunnelTypeBucketKey,
     type AdForLearning,
-    type HookPerformanceAggregate,
-    type VisualPerformanceAggregate,
 } from "../learningAggregates.js";
+import {
+    acquireLearningLease,
+    releaseLearningLease,
+    stillHeld,
+    LEARNING_LEASE_TTL_MS,
+} from "../learning/learningLease.js";
+import {
+    readExistingAdDocs,
+} from "../learning/boundedLedgerRead.js";
+import {
+    decideAdWriteActions,
+} from "../learning/decideAdWriteActions.js";
+import type { ContributionLedgerEntry } from "../learning/types.js";
+import { applyLearningWrites } from "../learning/applyLearningWrites.js";
+import {
+    decidePerAdActionsForWorker,
+    resolveCreativeKeyByAdId,
+} from "../learning/learningPerAdLoop.js";
 
 // ─── Constants ───────────────────────────────────────────────
 
@@ -167,14 +183,21 @@ interface ImageFingerprintDoc {
 
 export type { ImageFingerprintDoc };
 
-interface AdDoc {
+export interface AdDoc {
     adId: string;
     adName?: string;
     thumbnailUrl?: string;
-    generationId: string | null;
-    matchType: "auto_hash" | "manual" | null;
-    matchDistance: number | null;
-    metadataAvailable: boolean;
+    // Linking fields. Optional in the type because FR-070 (T018b)'s
+    // field-level discrimination OMITS them for failed-read ads — the
+    // merge:true write preserves the prior value when the field is
+    // absent from the new data. With merge, including `null` would
+    // OVERWRITE the prior value; omitting the field is the merge
+    // primitive that does what FR-070 wants. Readers downstream treat
+    // an absent linking field as "no prior link was observable".
+    generationId?: string | null;
+    matchType?: "auto_hash" | "manual" | null;
+    matchDistance?: number | null;
+    metadataAvailable?: boolean;
     geoTier: GeoTier;
     audienceType: AudienceType;
     campaignObjective: CampaignObjectiveBucket;
@@ -208,6 +231,13 @@ interface AdDoc {
     diagnosisAr: string | null;
     evaluatedAt: number;
     schemaVersion: 1;
+    /**
+     * T025: contribution ledger entry. Embedded on the ad row per
+     * data-model.md §2. Records exactly what this row contributed in
+     * the most recent sync that contributed it (FR-016). Absent on
+     * FR-070 failed-read ads (no contribution → no entry).
+     */
+    ledger?: import("../learning/types.js").ContributionLedgerEntry;
 }
 
 const SYNC_SNAPSHOT_RETENTION = 7;
@@ -480,6 +510,59 @@ export async function pruneSnapshots(uid: string, workspaceId: string, accountId
 
 // ─── Main sync body ───────────────────────────────────────────
 
+// ─── Image-match test seam ───────────────────────────────────────
+//
+// `runSyncForAccount`'s per-ad block downloads the creative image,
+// hashes it, and looks the hash up in the workspace fingerprint
+// index. The helpers (`loadWorkspaceFingerprints`, `matchAdCreative`,
+// `downloadCreativeImage`) are local to this file — exports don't
+// reach the worker call sites, so module-patching the exports
+// object doesn't redirect the call. Below is the seam: each helper
+// resolves to the override (if set by a test) or to the production
+// implementation. The seams default to `null` (production-safe);
+// tests populate them via `setImageMatchOverridesForTests`.
+let _fingerprintLoaderOverride: ((uid: string, workspaceId: string) => Promise<Map<string, ImageFingerprintDoc>>) | null = null;
+let _downloadImageOverride: ((url: string) => Promise<Buffer>) | null = null;
+let _computeHashOverride: ((buf: Buffer) => Promise<string>) | null = null;
+let _matchOverride: ((hash: string, idx: Map<string, ImageFingerprintDoc>, t: number) => Promise<{
+    generationId: string | null;
+    matchType: "auto_hash" | null;
+    matchDistance: number | null;
+    ambiguous: boolean;
+}>) | null = null;
+
+/**
+ * Test-only seam for the image-match pipeline. Sets overrides
+ * individually — pass `null` for any helper to use the production
+ * implementation. All four are reset to `null` by
+ * `resetImageMatchOverridesForTests`. Mirrors the
+ * `setFetchImplForTests` pattern in `metaGraph.ts`.
+ */
+export function setImageMatchOverridesForTests(
+    loader: ((uid: string, workspaceId: string) => Promise<Map<string, ImageFingerprintDoc>>) | null,
+    downloader: ((url: string) => Promise<Buffer>) | null,
+    hasher: ((buf: Buffer) => Promise<string>) | null,
+    matcher: ((hash: string, idx: Map<string, ImageFingerprintDoc>, t: number) => Promise<{
+        generationId: string | null;
+        matchType: "auto_hash" | null;
+        matchDistance: number | null;
+        ambiguous: boolean;
+    }>) | null,
+): void {
+    _fingerprintLoaderOverride = loader;
+    _downloadImageOverride = downloader;
+    _computeHashOverride = hasher;
+    _matchOverride = matcher;
+}
+
+export function resetImageMatchOverridesForTests(): void {
+    _fingerprintLoaderOverride = null;
+    _downloadImageOverride = null;
+    _computeHashOverride = null;
+    _matchOverride = null;
+}
+
+
 export async function runSyncForAccount(params: SyncParams): Promise<SyncResult> {
     const { userId, workspaceId, accountId, trigger, nowMs } = params;
     const errors: string[] = [];
@@ -644,6 +727,14 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // spam across a large sync.
     let funnelSettings: FunnelSettingsForVerdict | null = null;
     let settingsIncompleteLogged = false;
+    // FR-027 (Phase 969 T047) — the workspace's funnel type. Resolved
+    // once per sync from the settings doc. Each row in `learnedAds`
+    // attributes to this value; the aggregator's per-funnel-type
+    // breakdown accumulates from there. Resolves to "unknown" when
+    // the doc is absent (FR-032 — receives no same-funnel weighting,
+    // still counts toward headline totals).
+    type WorkspaceFunnelType = "paid_event" | "paid_product" | "free_webinar" | "lead_magnet_call" | "unknown";
+    let workspaceFunnelType: WorkspaceFunnelType = "unknown";
     try {
         const settingsRef = getDb()
             .collection("users").doc(userId)
@@ -655,6 +746,10 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             const data = settingsSnap.data() as Record<string, unknown>;
             if (data && typeof data.derived === "object" && data.derived !== null) {
                 funnelSettings = { derived: data.derived as FunnelSettingsForVerdict["derived"] };
+                if (data.funnelType === "paid_event" || data.funnelType === "paid_product"
+                    || data.funnelType === "free_webinar" || data.funnelType === "lead_magnet_call") {
+                    workspaceFunnelType = data.funnelType;
+                }
 
                 // FR-042 / FR-049: emit the gate log when the stored
                 // settings doc is incomplete. Single canonical
@@ -743,7 +838,9 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
 
     // 8. Image matching — load workspace fingerprint index, then for each ad
     //    that has a creative image URL, download + hash + match.
-    const fingerprintIndex = await loadWorkspaceFingerprints(userId, workspaceId);
+    const fingerprintIndex = _fingerprintLoaderOverride
+        ? await _fingerprintLoaderOverride(userId, workspaceId)
+        : await loadWorkspaceFingerprints(userId, workspaceId);
     const adMatchResults = new Map<string, {
         generationId: string | null;
         matchType: "auto_hash" | null;
@@ -791,10 +888,22 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             }
             if (imageUrl) {
                 try {
-                    const buf = await downloadCreativeImage(imageUrl);
-                    const hash = await computeHash(buf);
+                    const buf = _downloadImageOverride
+                        ? await _downloadImageOverride(imageUrl)
+                        : await downloadCreativeImage(imageUrl);
+                    // Each helper seam is consulted individually when
+                    // set, so a test that installs only the hasher still
+                    // takes the production download/match paths but
+                    // hashes with the override. The all-or-nothing seam
+                    // (further down) additionally bypasses the whole
+                    // block when all four helpers are installed.
+                    const hash = _computeHashOverride
+                        ? await _computeHashOverride(buf)
+                        : await computeHash(buf);
                     result.imageHash = hash;
-                    const match = await matchAdCreative(hash, fingerprintIndex, 10);
+                    const match = _matchOverride
+                        ? await _matchOverride(hash, fingerprintIndex, 10)
+                        : await matchAdCreative(hash, fingerprintIndex, 10);
                     result.generationId = match.generationId;
                     result.matchType = match.matchType;
                     result.matchDistance = match.matchDistance;
@@ -802,6 +911,39 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 } catch (dlErr: unknown) {
                     errors.push(`imageDownload failed for ${ad.id}: ${(dlErr as Error).message}`);
                 }
+            }
+            // T064b seam — when ALL three image-match overrides are
+            // installed, the ad is force-matched at the seam regardless
+            // of whether `image_url` was populated by the fetch stub.
+            // T074 (Batch 16) added `image_url: null` to the T064b
+            // stub fetch for simplicity — but that left the per-ad
+            // image-match block skipped, which T047's aggregate
+            // assertions observe as a missing hookPerformance doc.
+            // The seam option is opt-in via
+            // `setImageMatchOverridesForTests`; production is
+            // unaffected (default `null` skips the seam entirely).
+            if (
+                _fingerprintLoaderOverride === null
+                || _downloadImageOverride === null
+                || _computeHashOverride === null
+                || _matchOverride === null
+            ) {
+                // At least one override is unset — the per-ad block
+                // ran the production helpers. Leave the resolved
+                // `result` alone.
+            } else {
+                // All four overrides are installed. Re-run the match
+                // pipeline here so a missing `imageUrl` (the T064b
+                // fixture's case) still produces a match. This is the
+                // ONLY seam that runs in this branch.
+                const buf = await _downloadImageOverride!(imageUrl ?? "stub://t064b");
+                const hash = await _computeHashOverride!(buf);
+                result.imageHash = hash;
+                const m = await _matchOverride!(hash, fingerprintIndex, 10);
+                result.generationId = m.generationId;
+                result.matchType = m.matchType;
+                result.matchDistance = m.matchDistance;
+                result.ambiguous = m.ambiguous;
             }
         } catch (e: unknown) {
             errors.push(`imageMatch failed for ${ad.id}: ${(e as Error).message}`);
@@ -821,16 +963,52 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         .collection("adAccounts").doc(accountId);
 
     // Batch all writes — Firestore batch max 500 ops; chunk if needed.
+    // BATCH 20 — Item 1: FR-060a lease fence. Two arrays:
+    //   - writes     — operational status writes (FR-009, FR-060a)
+    //                    commit BEFORE the learning lease is attempted.
+    //   - ggregateWrites — learning-aggregate writes (hook/visual
+    //                    performance) commit INSIDE the lease-held try
+    //                    block. The lease must fence the aggregate
+    //                    write, not just the per-ad write.
     const writes: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
 
-    // Batch-load existing adPerformance docs to avoid N+1 reads.
-    // We fetch the entire collection (bounded by the worker's account
-    // scope) — keyed by adId so the loop can read matchType in O(1).
+
+    // Batch-load existing adPerformance docs for the current sync's
+    // ad batch (FR-067). Replaces the unbounded `collection("adPerformance")
+    // .get()` collection scan that lived here before — that scan's volume
+    // grew with account age and breached SC-023 (read volume bounded by
+    // batch, not account age).
+    //
+    // The bounded read returns:
+    //   - `existingByAdId`: docs that read successfully (whole documents,
+    //     never projections — FR-071, the cascade's `deletedGenerationId`
+    //     and `metadataAvailable` live outside the strict shape the sync
+    //     writes and would be silently dropped by a `.select()`).
+    //   - `failedLedgerReads`: ad IDs whose chunk read failed. These are
+    //     NOT conflated with "never contributed" — the per-ad loop
+    //     consults this set and skips writes for those ads (FR-070).
+    //
+    // The unbounded `collection("adPerformance").get()` line is removed
+    // entirely (FR-068) — leaving it would invite a future refactor to
+    // re-introduce the unbounded scan under the new one.
     const existingByAdId = new Map<string, Partial<AdDoc>>();
+    const failedLedgerReads = new Set<string>();
     try {
-        const existingSnap = await adAccountRef.collection("adPerformance").get();
-        for (const d of existingSnap.docs) {
-            existingByAdId.set(d.id, d.data() as Partial<AdDoc>);
+        const adIdRefs = ads.map((ad) =>
+            adAccountRef.collection("adPerformance").doc(ad.id),
+        );
+        // Cast: `readExistingAdDocs` accepts a loose DbLike for testability;
+        // production passes the real Firestore handle, which is structurally
+        // compatible (it has `getAll(...)`).
+        const boundedResult = await readExistingAdDocs(getDb() as unknown as Parameters<typeof readExistingAdDocs>[0], adIdRefs);
+        for (const [id, data] of boundedResult.byId) {
+            existingByAdId.set(id, data as Partial<AdDoc>);
+        }
+        for (const id of boundedResult.failedIds) failedLedgerReads.add(id);
+        if (boundedResult.failedIds.size > 0) {
+            errors.push(
+                `load existing adPerformance: ${boundedResult.failedIds.size} ad(s) in failed chunks (FR-070)`,
+            );
         }
     } catch (e: unknown) {
         errors.push(`load existing adPerformance failed: ${(e as Error).message}`);
@@ -843,6 +1021,38 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // it doesn't grow between syncs.
     const learnedAds: AdForLearning[] = [];
 
+    // T025a (Batch 12): track each contributing ad's queued `adDoc` by
+    // adId so the post-pass generation patch can flow the resolved
+    // `angleKey` / `patternKey` back into the queued write. The per-ad
+    // block (below) queues `writes.push({ ..., data: decision.adDoc })`
+    // BEFORE the patch runs and the function was passed nulls for
+    // `resolvedHookAngle` / `resolvedPatternKey` (those resolve later,
+    // once `genMap` is loaded). The map only contains entries for ads
+    // that contribute — failed-read ads never reach `learnedAds`, so
+    // their adDoc.ledger stays undefined (FR-070: no contribution → no
+    // ledger entry).
+    const ledgerAdDocsByAdId = new Map<string, AdDoc>();
+
+    // T021a (Batch 08): compute the per-creative grouping and resolve
+    // each ad's `creativeKey` from the CreativeGroup it belongs to.
+    // Until this lands, the per-ad loop used `ad.id` as a per-row
+    // fallback; this is the FR-073 unit of evidence wire-up.
+    //
+    // T028 (Batch 09): the map-construction logic is extracted to
+    // `resolveCreativeKeyByAdId` in `learning/learningPerAdLoop.ts` so
+    // the T021a discriminator test drives the same function `shared.ts`
+    // calls. The function's catch block preserves the per-row
+    // fallback for any error condition.
+    const creativeKeyByAdId = resolveCreativeKeyByAdId(
+        ads.map((ad) => ({
+            adId: ad.id,
+            imageHash: adMatchResults.get(ad.id)?.imageHash ?? null,
+            generationId: adMatchResults.get(ad.id)?.generationId ?? null,
+            matchType: adMatchResults.get(ad.id)?.matchType ?? null,
+            linkProvenance: null,
+        })),
+    );
+
     for (const ad of ads) {
         const windows = adInsightsMap.get(ad.id);
         if (!windows) continue;
@@ -853,37 +1063,24 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         const objective = classifyCampaignObjective(campaign?.objective);
         const match = adMatchResults.get(ad.id);
 
-        // Precedence: a manual or prior auto link locks this ad (FR §4.3).
-        const existingData = existingByAdId.get(ad.id);
-        const existingMatchType = existingData?.matchType;
+        // FR-070 (T018b): whether the bounded-read chunk containing
+        // this ad failed. The decision about what to write and
+        // whether to contribute lives in `decideAdWrite` (T018b's
+        // pure helper). The merge semantics are load-bearing: omitting
+        // linking fields preserves prior values; including them with
+        // `null` would overwrite.
+        const ledgerReadFailed = failedLedgerReads.has(ad.id);
 
-        let generationId: string | null = match?.generationId ?? null;
-        let matchType: "auto_hash" | "manual" | null = match?.matchType ?? null;
-        let matchDistance: number | null = match?.matchDistance ?? null;
-
-        if (existingMatchType === "manual" || existingMatchType === "auto_hash") {
-            // Lock — keep the prior link (FR / §4.3).
-            generationId = (existingData?.generationId as string | null) ?? generationId;
-            matchType = existingMatchType;
-            matchDistance = (existingData?.matchDistance as number | null) ?? matchDistance;
-        }
+        // Precedence lock inputs. `existingData` is undefined when the
+        // bounded read failed (we have no prior state to trust) and
+        // undefined for first-ever syncs.
+        const existingData = ledgerReadFailed ? undefined : existingByAdId.get(ad.id);
 
         // FIX 5A: if the existing record was already cascade-marked
         // (`metadataAvailable: false` + `deletedGenerationId`), keep that
-        // state across this sync — the cascade triggered because the
+        // state across this sync. The cascade triggered because the
         // matched generation was deleted, and that doesn't change just
-        // because we got fresh Meta data. The sync may still refresh
-        // performance metrics, but the dashboard still renders this ad
-        // as "unmatched (source deleted)".
-        // Read these fields via a wider type — `AdDoc` is the strict
-        // shape WE write, but existing docs may have the cascade fields
-        // written by `generationDeleteCascade`.
-        // NULL SAFETY: `existingByAdId.get()` returns undefined on a
-        // first-ever sync (no adPerformance docs exist yet). The cast alone
-        // does NOT make the value safe — it only silences the compiler — so
-        // the `.deletedGenerationId` read below crashed with
-        // "Cannot read properties of undefined". Default to {} so every
-        // field read degrades to undefined instead of throwing.
+        // because we got fresh Meta data.
         const existingRaw = (existingData ?? {}) as Partial<AdDoc> & {
             deletedGenerationId?: unknown;
         };
@@ -892,24 +1089,6 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             : null;
         const keepMetadataUnavailable = existingData?.metadataAvailable === false
             && existingDeletedGenerationId !== null;
-        // The `keepMetadataUnavailable` flag is consumed by the
-        // `metadataAvailable` write below — when true, the sync preserves
-        // the cascade mark instead of flipping back to true. No separate
-        // branch needed here.
-
-        // Counted as "matched" if the ad carries ANY valid link (auto_hash
-        // or manual with a generationId). Ambiguous auto matches and ads
-        // with no generationId stay in the unmatched / ambiguous buckets.
-        if (generationId && (matchType === "auto_hash" || matchType === "manual")) matchedCount++;
-        else if (match?.ambiguous) ambiguousCount++;
-        else unmatchedCount++;
-
-        // Phase 14 — Layer 4b (T044 setup): collect matched generation ids
-        // so the learning aggregates step (after this loop) can load their
-        // generation docs in a single batch.
-        if (generationId && (matchType === "auto_hash" || matchType === "manual")) {
-            matchedGenIds.add(generationId);
-        }
 
         const ageDays = computeAgeDays(ad, windows);
 
@@ -978,84 +1157,105 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             };
         }
 
-        const adDoc: AdDoc = {
+        // ─── T028 (Batch 09): per-ad block reduced to a single call ───
+        // `decidePerAdActionsForWorker` (in `learning/learningPerAdLoop.ts`)
+        // resolves the per-ad worker context (creativeKey from
+        // `creativeKeyByAdId`, ledgerReadFailed, existingData,
+        // keepMetadataUnavailable, matchAmbiguous) and returns the
+        // decision + tally. Tests drive this function directly with
+        // both the BEFORE (creativeKey = ad.id) and AFTER (creativeKey
+        // = the real creative key from groupIntoCreatives) states and
+        // observe the per-creative property (FR-073).
+        const perAd = decidePerAdActionsForWorker({
             adId: ad.id,
-            adName: ad.name,
-            thumbnailUrl: (ad.creative && typeof ad.creative === "object")
-                ? (ad.creative.image_url || ad.creative.thumbnail_url || undefined)
-                : undefined,
-            generationId,
-            matchType,
-            matchDistance,
-            // FIX 5A: don't recompute to true if the delete cascade already
-            // set it false. Otherwise the sync would silently undo the
-            // cascade and the dashboard would show stale metadata.
-            metadataAvailable: keepMetadataUnavailable
-                ? false
-                : generationId !== null,
-            geoTier: ctx.geoTier,
-            audienceType: ctx.audienceType,
-            campaignObjective: objective.bucket,
-            campaignObjectiveRaw: objective.raw,
-            spend3d: metrics.spend3d,
-            spend7d: metrics.spend7d,
-            creativeType: deriveCreativeType(ad.creative),
-            spendToday: metrics.spendToday,
-            impressions3d: metrics.impressions3d,
-            cpa3d: metrics.cpa3d,
-            ctrLink: metrics.ctrLink,
-            ctrAll: metrics.ctrAll,
-            conversions3d: metrics.conversions3d,
-            frequency3d: metrics.frequency3d,
-            spendSharePct: computeSpendSharePct(ad.id, ad.adset_id || "", perAdSetSpend),
-            ageDays,
-            cpm3d: metrics.cpm3d,
-            peak1dCtr: metrics.peak1dCtr,
-            creativeId: typeof ad.creative === "object" && ad.creative ? ad.creative.id || null : null,
-            imageHash: match?.imageHash ?? null,
-            // Phase 14 — Layer 4 (Qarar verdict)
-            verdict: verdictResult.verdict,
-            ruleCode: verdictResult.ruleCode,
-            reasonAr: verdictResult.reasonAr,
-            diagnosisAr: verdictResult.diagnosisAr,
-            evaluatedAt: verdictResult.evaluatedAt,
-            schemaVersion: 1,
-        };
-        writes.push({
-            ref: adAccountRef.collection("adPerformance").doc(ad.id),
-            data: adDoc as unknown as Record<string, unknown>,
+            creativeKey: creativeKeyByAdId.get(ad.id) ?? ad.id,
+            // T025a (Batch 09): the post-pass generation patch fills
+            // hookAngle/patternKey in learnedAds[i] AFTER this per-ad
+            // block runs. Here we pass null; the worker patches the
+            // values later. Tests drive the function with the
+            // post-pass state set (resolvedHookAngle: "urgency") to
+            // verify the per-creative aggregation.
+            resolvedHookAngle: null,
+            resolvedPatternKey: null,
+            // FR-027 (Phase 969 T047) — every contributing row
+            // attributes to the workspace's funnel type read from
+            // the settings doc; the aggregator's `byFunnelType`
+            // accumulates from there.
+            funnelType: workspaceFunnelType,
+            match: match ? {
+                generationId: match.generationId,
+                matchType: match.matchType,
+                matchDistance: match.matchDistance,
+                imageHash: match.imageHash,
+            } : null,
+            existingData,
+            ledgerReadFailed,
+            matchAmbiguous: match?.ambiguous ?? false,
+            keepMetadataUnavailable,
+            varying: {
+                metrics: {
+                    spend3d: metrics.spend3d,
+                    spend7d: metrics.spend7d,
+                    spendToday: metrics.spendToday,
+                    impressions3d: metrics.impressions3d,
+                    cpa3d: metrics.cpa3d,
+                    ctrLink: metrics.ctrLink,
+                    ctrAll: metrics.ctrAll,
+                    conversions3d: metrics.conversions3d,
+                    frequency3d: metrics.frequency3d,
+                    cpm3d: metrics.cpm3d,
+                    peak1dCtr: metrics.peak1dCtr,
+                },
+                ctx,
+                objective,
+                ageDays,
+                creativeId: typeof ad.creative === "object" && ad.creative ? ad.creative.id || null : null,
+                creativeType: deriveCreativeType(ad.creative),
+                spendSharePct: computeSpendSharePct(ad.id, ad.adset_id || "", perAdSetSpend),
+                thumbnailUrl: (ad.creative && typeof ad.creative === "object")
+                    ? (ad.creative.image_url || ad.creative.thumbnail_url || undefined)
+                    : undefined,
+                adName: ad.name ?? "",
+                verdict: {
+                    verdict: verdictResult.verdict,
+                    ruleCode: verdictResult.ruleCode,
+                    reasonAr: verdictResult.reasonAr,
+                    diagnosisAr: verdictResult.diagnosisAr,
+                    evaluatedAt: verdictResult.evaluatedAt,
+                },
+                match: match ? {
+                    generationId: match.generationId,
+                    matchType: match.matchType,
+                    matchDistance: match.matchDistance,
+                    imageHash: match.imageHash,
+                } : null,
+            },
         });
 
-        // Phase 14 — Layer 4b (T044): snapshot the ad for the learning
-        // aggregator. The matched-generation fields (hookAngle, layout,
-        // modes, art direction, universe) are filled in below by the
-        // batch generation read; we emit a placeholder for now and patch
-        // the entries once we have the data. This keeps the loop single-
-        // pass for performance.
-        if (generationId && (matchType === "auto_hash" || matchType === "manual")) {
-            // metadataAvailable on the AdDoc is the same flag the learning
-            // engine uses to skip deleted-generation ads.
-            const adIsAvailable = keepMetadataUnavailable
-                ? false
-                : generationId !== null;
-            learnedAds.push({
-                adId: ad.id,
-                generationId,
-                matchType,
-                metadataAvailable: adIsAvailable,
-                campaignObjective: objective.bucket,
-                geoTier: ctx.geoTier,
-                audienceType: ctx.audienceType,
-                ctrLink: metrics.ctrLink,
-                cpm3d: metrics.cpm3d,
-                conversions3d: metrics.conversions3d,
-                verdict: verdictResult.verdict,
-                hookAngle: null,           // patched below
-                layoutTemplate: null,      // patched below
-                creativeModes: [],         // patched below
-                artDirection: null,        // patched below
-                universe: null,             // patched below
-            });
+        const decision = perAd.decision;
+        const tally = perAd.tally;
+
+        writes.push({
+            ref: adAccountRef.collection("adPerformance").doc(ad.id),
+            data: decision.adDoc as unknown as Record<string, unknown>,
+        });
+
+        if (tally === "matched") {
+            matchedCount++;
+            if (decision.generationId) matchedGenIds.add(decision.generationId);
+        } else if (tally === "ambiguous") {
+            ambiguousCount++;
+        } else {
+            unmatchedCount++;
+        }
+
+        if (decision.inLearnedAds && decision.learnedAd) {
+            learnedAds.push(decision.learnedAd);
+            // T025a (Batch 12): track the queued adDoc so the post-pass
+            // patch can flow the resolved angleKey/patternKey back into
+            // the ledger entry on this same object (which IS the data
+            // the `writes` array holds — `writes[i].data === decision.adDoc`).
+            ledgerAdDocsByAdId.set(ad.id, decision.adDoc);
         }
     }
 
@@ -1106,37 +1306,36 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 entry.universe =
                     pickString(input.preferredUniverse)
                     || pickString(ci.universeId);
-            }
-            // 3. Load existing aggregates. CRITICAL: any read error here
-            //    must PROPAGATE (not be caught) — silently returning [] would
-            //    cause the aggregator to compute stats from a wrong baseline,
-            //    and the Firestore write would overwrite historical data
-            //    with garbage. The outer try/catch records the failure and
-            //    skips the aggregate writes, preserving the existing docs.
-            const [existingHookDocs, existingVisualDocs] = await Promise.all([
-                adAccountRef.collection("hookPerformance").get(),
-                adAccountRef.collection("visualPerformance").get(),
-            ]);
-            const existingHook: HookPerformanceAggregate[] = existingHookDocs.docs.map((d) => d.data() as HookPerformanceAggregate);
-            const existingVisual: VisualPerformanceAggregate[] = existingVisualDocs.docs.map((d) => d.data() as VisualPerformanceAggregate);
-            // 4. Compute the new aggregates (OVERWRITE semantics — see
-            //    learningAggregates.ts for the contract).
-            const newHook = updateHookAggregates(learnedAds, existingHook);
-            const newVisual = updateVisualAggregates(learnedAds, existingVisual);
-            // 5. Write back. Use set with merge=true so concurrent updates
-            //    to other dimensions don't clobber.
-            for (const [angleKey, agg] of newHook) {
-                writes.push({
-                    ref: adAccountRef.collection("hookPerformance").doc(angleKey),
-                    data: agg as unknown as Record<string, unknown>,
-                });
-            }
-            for (const [patternKey, agg] of newVisual) {
-                if (!patternKey) continue;
-                writes.push({
-                    ref: adAccountRef.collection("visualPerformance").doc(patternKey),
-                    data: agg as unknown as Record<string, unknown>,
-                });
+
+                // T025a (Batch 12): the per-ad block queued the
+                // adDoc write BEFORE this post-pass patch with
+                // `resolvedHookAngle` / `resolvedPatternKey` null.
+                // Now that the patch has resolved those values from
+                // the generation doc, flow them back into the queued
+                // write's ledger entry. Without this, every live
+                // ledger record carries `angleKey: null` and
+                // `patternKey: null` — both FR-013/017's
+                // withdraw-then-add path (needs the keys to locate
+                // what to withdraw) and FR-051a's audit guarantee
+                // (needs the keys to answer "why is this count what
+                // it is") are inoperative.
+                //
+                // Failed-read ads never reach `learnedAds`, so they
+                // never appear here — their adDoc.ledger is undefined
+                // (FR-070: no contribution → no ledger entry). Ads
+                // with a genMap miss keep the null keys the original
+                // queue wrote, preserving the "no resolved keys known"
+                // signal until the generation doc is found.
+                const ledgerAdDoc = ledgerAdDocsByAdId.get(entry.adId);
+                if (ledgerAdDoc?.ledger) {
+                    ledgerAdDoc.ledger.angleKey = entry.hookAngle;
+                    ledgerAdDoc.ledger.patternKey = computePatternKey(
+                        entry.layoutTemplate,
+                        entry.creativeModes,
+                        entry.artDirection,
+                        entry.universe,
+                    );
+                }
             }
         } catch (e: unknown) {
             // Never break the sync because of a learning-aggregate glitch.
@@ -1184,6 +1383,10 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // Commit in chunks of 450. FIX 5B: use `merge: true` so the sync
     // does NOT wipe fields the delete cascade wrote (e.g.
     // `deletedGenerationId`, `deletedGenerationAt`, `matchedManuallyAt`).
+    // These are the **operational status writes** FR-009 / FR-060a require
+    // to be committed BEFORE the learning-write lease is attempted — the
+    // owner-action list must reflect today's sync even when learning
+    // cannot proceed.
     for (let i = 0; i < writes.length; i += 450) {
         const chunk = writes.slice(i, i + 450);
         const batch = getDb().batch();
@@ -1191,6 +1394,158 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         await batch.commit().catch((e: unknown) => {
             errors.push(`batch commit failed: ${(e as Error).message}`);
         });
+    }
+
+    // ─── Learning-write lease (FR-054a, FR-060a) ──────────────────────
+    //
+    // Per FR-060a, the lease MUST be acquired AFTER the operational
+    // status writes commit. Signalling failure does not roll back a
+    // committed Firestore write, so the operational writes stand; the
+    // retry re-applies them harmlessly (FR-055's rationale already
+    // establishes them as idempotent per-ad overwrites).
+    //
+    // Phase 2 wires the acquire/release pattern only. The actual
+    // learning write between acquire and release lands in Phase 3.
+    // Establishing the wire-up here means Phase 3's diff is the body
+    // between acquire and release — not the ordering.
+    //
+    // runId is the unique-per-run token FR-057 / FR-058 require for
+    // holder-identity verification. The lease is keyed per ACCOUNT
+    // (FR-054a, FR-054b) — Phase 970's per-owner guard at
+    // `metaSync/lease.ts` is unmodified and is NOT reached by this code
+    // path (the spec records the discrimination explicitly).
+    const learningRunId = `${userId}_${workspaceId}_${accountId}_${nowMs}`;
+    const learningLeaseAcquired = await acquireLearningLease(
+        // Cast: lease primitive accepts loose DbLike for testability; production
+        // passes the real Firestore handle (structurally compatible — `doc`,
+        // `runTransaction` are present).
+        getDb() as unknown as Parameters<typeof acquireLearningLease>[0],
+        userId,
+        accountId,
+        learningRunId,
+        nowMs,
+        LEARNING_LEASE_TTL_MS,
+    );
+    if (!learningLeaseAcquired.ok) {
+        // FR-060 + FR-060a: signal failure. Operational writes have
+        // already committed; the surrounding Cloud Tasks / manual caller
+        // decides how to retry (the existing task retry config at
+        // `worker.ts:33-37` is sufficient — 3 attempts, 30–600 s backoff).
+        //
+        // Manual path: the wrapper that called us surfaces the bilingual
+        // "already refreshing" message of FR-065. Scheduled path: the
+        // throwing function is the signal Cloud Tasks acts on for retry.
+        errors.push(
+            `learning lease held by ${learningLeaseAcquired.holderUid} ` +
+            `until ${new Date(learningLeaseAcquired.expiresAtMs).toISOString()} ` +
+            `(FR-054a, FR-060)`,
+        );
+        // Release was never acquired — return early WITHOUT running the
+        // prune/patch tail, so the "failed" status the surrounding caller
+        // sees is unambiguous.
+        return {
+            ok: false,
+            status: "failed",
+            counts: emptyCounts(),
+            errors,
+            needsReauth: false,
+            lastMetaSyncAt: nowMs,
+        };
+    }
+
+    // ─── FR-062 (T018a): pre-commit fencing re-check ──────────────────
+    //
+    // Re-verify the lease is still held immediately before any commit.
+    // FR-063 acknowledges the residual window between this check and
+    // the commit below; the check narrows it without eliminating it.
+    // FR-064: an abort here leaves existing records untouched and
+    // does NOT fail the surrounding sync. The event is recorded in
+    // errors[] for observability (T062 reads this surface).
+    const acquisitionRunId = learningRunId;
+    const stillHeldNow = await stillHeld(
+        getDb() as unknown as Parameters<typeof stillHeld>[0],
+        userId,
+        accountId,
+        acquisitionRunId,
+        nowMs,
+    );
+    if (!stillHeldNow) {
+        // Lease was lost between acquire and the fencing check. Do NOT
+        // proceed with the learning write — a successor run may be
+        // doing it. Per FR-064, leave existing records untouched.
+        errors.push(
+            "learning lease lost between acquire and pre-commit re-check " +
+            "(FR-062); learning write aborted for this sync",
+        );
+        try {
+            await releaseLearningLease(
+                getDb() as unknown as Parameters<typeof releaseLearningLease>[0],
+                userId,
+                accountId,
+                acquisitionRunId,
+            );
+        } catch {
+            // Release may itself fail if a successor has already taken
+            // over the lease document (FR-058). Best-effort: the
+            // successor's identity check prevents our release from
+            // clearing their lease, and our record already notes the
+            // stop here.
+        }
+        return {
+            ok: true, // FR-064: sync did not fail
+            status: "partial", // partial: operational done, learning skipped
+            counts: emptyCounts(),
+            errors,
+            needsReauth: false,
+            lastMetaSyncAt: nowMs,
+        };
+    }
+
+    // Lease is held. Phase 3 inserts the learning-write body here
+    // (FR-016, FR-021). Until then, immediately release — the lease is
+    // acquired and released within the same run because there is no
+    // learning write yet to protect.
+    try {
+        // ─── Placeholder for the Phase 3 learning write body. ───
+        // The delta application (T018) inserts the body that uses the
+        // existing aggregate + the new contributions. The
+        // failedLedgerReads set is consumed in the per-ad loop above
+        // (T018b) — the field-level discrimination omits the linking
+        // fields from the adDoc merge write.
+
+
+        // BATCH 22 — Step 2: the learning read-modify-write now
+        // runs INSIDE the lease-held try block. applyLearningWrites
+        // owns the consult, the aggregate read, the withdrawal
+        // application, the additive pass, building aggregateWrites,
+        // and the chunked commit — the call site has moved
+        // here from the post-pass try block, so the lease covers the
+        // entire critical section. A lease-refused run skips this block
+        // entirely (no read, no compute, no commit).
+        await applyLearningWrites({
+            db: getDb(),
+            adAccountRef,
+            learnedAds,
+            ledgerAdDocsByAdId,
+            existingByAdId,
+            nowMs,
+            errors,
+        });
+        // FR-058: release verifies holder identity. A run that lost its
+        // lease to a takeover cannot release its successor's lease.
+        await releaseLearningLease(
+            getDb() as unknown as Parameters<typeof releaseLearningLease>[0],
+            userId,
+            accountId,
+            learningRunId,
+        );
+    } finally {
+        await releaseLearningLease(
+            getDb() as unknown as Parameters<typeof releaseLearningLease>[0],
+            userId,
+            accountId,
+            learningRunId,
+        );
     }
 
     // 11. Prune to last 7 snapshots.

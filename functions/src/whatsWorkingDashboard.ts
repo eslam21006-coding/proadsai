@@ -88,6 +88,76 @@ const HOOK_ANGLE_DISPLAY_AR: Record<string, string> = {
 const HOOK_ICON_DATA_GATE = 3;            // min conversion ads to show an icon
 const VISUAL_ICON_DATA_GATE = 3;          // min conversion ads to show an icon
 const HOOK_ICON_WEAK_THRESHOLD = 0.75;    // ≤ 75% of account avg → ⚠️
+
+// ─── FR-041 multi-funnel indicator (Phase 969 T056) ────────────
+//
+// Decision (settled in Batch 17, owner audit 2026-09-06, §6.3):
+// the dashboard's `multiFunnel` flag is derived from the
+// per-funnel-type breakdown required by FR-027, NOT the
+// conversion-versus-other objective split. Reading the previous
+// dimension was a false positive on non-conversion campaigns and
+// a false negative on the motivating case (one angle used in two
+// conversion funnels — both buried in `byObjective.conversion`).
+//
+// SOURCE OF TRUTH — exported `isMultiFunnel` below. This single
+// function powers every dashboard row. The vitest renders the
+// boolean on the row, the Node test drives the dashboard impl
+// against an in-memory aggregate and reads the row's boolean.
+
+/**
+ * Real funnel types count toward the multi-funnel indication. The
+ * `unknown` bucket is the explicit FR-032 home for rows whose
+ * funnel attribution could not be resolved; it never matches a
+ * requested funnel type, so it does not extend "more than one
+ * funnel" on its own.
+ */
+const REAL_FUNNEL_KEYS = [
+    "paid_event",
+    "paid_product",
+    "free_webinar",
+    "lead_magnet_call",
+] as const;
+
+type RealFunnelKey = typeof REAL_FUNNEL_KEYS[number];
+
+/**
+ * True iff the angle's or pattern's evidence spans more than one
+ * real funnel type. Reads `byFunnelType` from the aggregate;
+ * defensively defaults missing `unknown` or absent fields to zero
+ * (older fixtures from before T047 lack the field).
+ *
+ * Settled decisions, deliberately stated rather than chosen at the
+ * keyboard:
+ *   1. Real funnel types only. `unknown` alone is 0. `unknown` + 1
+ *      real is 1. Owner reading: a row whose funnel attribution is
+ *      missing is weaker evidence, NOT a separate funnel. FR-032:
+ *      unknown receives no same-funnel weighting and never matches
+ *      a requested type — this matches its non-functional role.
+ *   2. Row-count, not creative-count. Mirrors `byObjective.conversion.count`
+ *      (FR-020a: counts are non-decreasing per the additive
+ *      contract). Mixed unit with FR-073's creative count would
+ *      either inflate the count (rows) or require a separate
+ *      per-funnel creative count. The conversion-vs-other split
+ *      already counts rows; consistency wins.
+ *   3. `conversion` + `other` from the objective split are not
+ *      funnel types. FR-041 names the owner's funnels (the four
+ *      funnel settings). The objective split predates this feature
+ *      and was Batch 16's reading — wrong dimension.
+ */
+export function isMultiFunnel(byFunnelType: unknown): boolean {
+    if (!byFunnelType || typeof byFunnelType !== "object") return false;
+    let span = 0;
+    for (const key of REAL_FUNNEL_KEYS) {
+        const bucket = (byFunnelType as Record<string, unknown>)[key];
+        if (bucket && typeof bucket === "object") {
+            const count = (bucket as { count?: unknown }).count;
+            if (typeof count === "number" && count > 0) span += 1;
+            if (span >= 2) return true;
+        }
+    }
+    return false;
+}
+
 // PHASE 970 (BATCH 4) — removed `SYNC_COOLDOWN_MS`. The pre-fix
 // 1-hour cooldown is gone; the new in-flight guard
 // (`metaSync/lease.ts`) handles concurrent-press suppression at the
@@ -141,6 +211,14 @@ interface StrongestAngle {
     nameAr: string;
     icon: "🔥" | "✅" | "⚠️";
     countAr: string;
+    /**
+     * FR-041 (Phase 969 T056) — true when this angle aggregate has
+     * non-zero contributions in BOTH `conversion` and `other` campaign
+     * objectives (i.e. it has been used across more than one funnel
+     * type). The frontend surfaces the `whats_working.multi_funnel.label`
+     * string ONLY when this flag is true.
+     */
+    multiFunnel: boolean;
 }
 
 interface StrongestVisual {
@@ -148,6 +226,13 @@ interface StrongestVisual {
     descriptionAr: string;
     icon: "🔥" | "✅" | "⚠️";
     countAr: string;
+    /**
+     * FR-041 (Phase 969 T056) — same definition as `StrongestAngle.multiFunnel`,
+     * but applied to the visual pattern's aggregate. Mirrored as a separate
+     * field so the frontend can render the label identically on either
+     * surface without inspecting the other list.
+     */
+    multiFunnel: boolean;
 }
 
 interface UnmatchedAd {
@@ -470,10 +555,22 @@ export async function getWhatsWorkingDashboardImpl(
         type HookAggShape = {
             angleKey: string;
             sampleSize: number;
+            /**
+             * T029b (Batch 13) — distinct creatives. The producer
+             * (`learning/aggregateDelta.ts`) populates this on every
+             * write; absent means the aggregate predates T021a's
+             * wire-up, in which case the gate stays closed (count
+             * of 0).
+             */
+            creativeCount?: number;
             byObjective: {
                 conversion: { avgLinkCtr: number; count: number; bestVerdictCount: number; worstVerdictCount: number };
                 other: { avgLinkCtr: number; count: number };
             };
+            /** FR-027 — per-funnel-type breakdown. Absent on
+             *  aggregates that pre-date T047; `isMultiFunnel` reads
+             *  defensively (treats as zero counts). */
+            byFunnelType?: Record<string, { count: number }>;
         };
         const hookAggs = (hookAggsSnap?.docs || []).map((d) => d.data() as HookAggShape);
         const hookHotAngle = pickHotAngle(
@@ -482,7 +579,10 @@ export async function getWhatsWorkingDashboardImpl(
                 .map((r) => ({
                     angleKey: r.angleKey,
                     avgLinkCtr: r.byObjective.conversion.avgLinkCtr,
-                    sampleSize: r.byObjective.conversion.count,
+                    // FR-034 / FR-034a / FR-037 — gate by distinct creatives
+                    // (T029b). Sum fields keep using the row-level
+                    // `count` (the average is a row-level computation).
+                    sampleSize: r.creativeCount ?? 0,
                 })),
         );
         const strongestAngles: StrongestAngle[] = hookAggs
@@ -508,6 +608,20 @@ export async function getWhatsWorkingDashboardImpl(
                         nameAr: HOOK_ANGLE_DISPLAY_AR[r.angleKey] || HOOK_ANGLE_DISPLAY_EN[r.angleKey] || r.angleKey,
                         icon: displayIcon,
                         countAr: makeCountAr(c.count, c.bestVerdictCount, "ar"),
+                        // FR-041 (Phase 969 T056, corrected in Batch 17) —
+                        // multi-funnel indication. Reads the
+                        // per-funnel-type breakdown FR-027 requires
+                        // (settled by Batch 17 §6.3). The previous
+                        // reading on `byObjective.conversion` +
+                        // `byObjective.other` was a false positive on
+                        // non-conversion campaigns AND a false
+                        // negative on the motivating case (two real
+                        // funnels, both conversion). See
+                        // `isMultiFunnel` for the settled rules —
+                        // real funnel types only, row-count, the
+                        // `unknown` bucket does not extend "more than
+                        // one" on its own.
+                        multiFunnel: isMultiFunnel(r.byFunnelType),
                     },
                     _w: c.bestVerdictCount,
                     _n: c.count,
@@ -537,16 +651,29 @@ export async function getWhatsWorkingDashboardImpl(
         type VisualAggShape = {
             patternKey: string;
             sampleSize: number;
+            /**
+             * T029b (Batch 13) — distinct creatives. Populated by
+             * `learning/aggregateDelta.ts` on every aggregate write.
+             */
+            creativeCount?: number;
             byObjective: {
                 conversion: { avgCpm: number; avgLinkCtr: number; count: number; bestVerdictCount: number; worstVerdictCount: number };
                 other: { count: number };
             };
+            /** FR-027 — per-funnel-type breakdown. Absent on
+             *  aggregates that pre-date T047; `isMultiFunnel` reads
+             *  defensively (treats as zero counts). */
+            byFunnelType?: Record<string, { count: number }>;
         };
         type VisualStrongestVisualRow = {
             patternKey: string;
             descriptionAr: string;
             icon: "🔥" | "✅" | "⚠️";
             countAr: string;
+            // FR-041 (Phase 969 T056) — mirror of
+            // `StrongestVisual.multiFunnel` so the sort tuple's
+            // out-alias keeps the field that the frontend reads.
+            multiFunnel: boolean;
         };
         type VisualTuple = { out: VisualStrongestVisualRow; _w: number; _n: number };
 
@@ -655,7 +782,9 @@ export async function getWhatsWorkingDashboardImpl(
             .map((v) => ({
                 angleKey: v.patternKey,
                 avgLinkCtr: v.byObjective.conversion.avgLinkCtr,
-                sampleSize: v.byObjective.conversion.count,
+                // FR-034 / FR-034a / FR-037 — gate by distinct creatives
+                // (T029b).
+                sampleSize: v.creativeCount ?? 0,
             }));
         const visualHotKey = pickHotAngle(visualEligibleRows);
         // Pair the public output with the raw sort keys (bestVerdictCount
@@ -687,6 +816,11 @@ export async function getWhatsWorkingDashboardImpl(
                     descriptionAr: patternDescriptionMap.get(v.patternKey) || "—",
                     icon: displayIcon,
                     countAr: makeCountAr(c.count, c.bestVerdictCount, "ar"),
+                    // FR-041 (Phase 969 T056, corrected in Batch 17) —
+                    // multi-funnel indication for visual patterns.
+                    // Same source of truth as the angle branch
+                    // (`isMultiFunnel` above).
+                    multiFunnel: isMultiFunnel(v.byFunnelType),
                 },
                 _w: c.bestVerdictCount,
                 _n: c.count,
@@ -842,6 +976,13 @@ export async function getHookAnglePerformanceImpl(
         type HookAggShape = {
             angleKey: string;
             sampleSize: number;
+            /**
+             * T029b (Batch 13) — distinct creatives. Populated by
+             * `learning/aggregateDelta.ts` on every write. Absent
+             * means the aggregate predates T021a's wire-up; the
+             * gate stays closed (count of 0).
+             */
+            creativeCount?: number;
             byObjective: {
                 conversion: { avgLinkCtr: number; count: number; bestVerdictCount: number; worstVerdictCount: number };
                 other: { avgLinkCtr: number; count: number };
@@ -852,11 +993,12 @@ export async function getHookAnglePerformanceImpl(
         // Pre-compute eligible rows + pick the top 2 (for the ⚠️
         // tooltip "جرّب [best] أو [second best]").
         const eligibleRows = hookAggs
-            .filter((r) => r.byObjective?.conversion?.count >= HOOK_ICON_DATA_GATE)
+            .filter((r) => (r.creativeCount ?? 0) >= HOOK_ICON_DATA_GATE)
             .map((r) => ({
                 angleKey: r.angleKey,
                 avgLinkCtr: r.byObjective.conversion.avgLinkCtr,
-                sampleSize: r.byObjective.conversion.count,
+                // FR-034 / FR-034a / FR-037 — gate by distinct creatives.
+                sampleSize: r.creativeCount ?? 0,
             }));
         const bestTwo = pickBestTwoAngles(eligibleRows);
         const hotAngle = pickHotAngle(eligibleRows);
@@ -871,7 +1013,12 @@ export async function getHookAnglePerformanceImpl(
                 continue;
             }
             const c = agg.byObjective.conversion;
-            const sampleSize = c?.count || 0;
+            // FR-034 / FR-034a / FR-037 — gate by distinct creatives
+            // (T029b). `sampleSize` here drives the tier-icon logic
+            // (the HOOK_ICON_DATA_GATE threshold); per the locked
+            // decision, it must read the creative count, not the row
+            // count.
+            const sampleSize = agg.creativeCount ?? 0;
             const avg = c?.avgLinkCtr || 0;
             const icon = computeIconFromAvgs(sampleSize, avg, accountAvgLinkCtr, HOOK_ICON_DATA_GATE);
             // 🔥 reserved for the single top angle (avgLinkCtr maximum).

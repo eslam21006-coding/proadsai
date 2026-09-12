@@ -539,6 +539,16 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'whats_working.visuals.empty': 'Not enough data yet',
         'whats_working.visuals.used_count': 'Used {n} times',
         'whats_working.visuals.used_with_winners': 'Used {n} times, {w} winners',
+        // FR-041 (Phase 969 T056, owner-approved 2026-09-06) — surfaced
+        // next to a strongest-angle or strongest-visual row when
+        // its aggregate has been used in BOTH `conversion` and `other`
+        // campaign objectives (the campaignObjective field on adPerformance
+        // + byObjective.other.count > 0 on the aggregate). The label
+        // renders ONLY when this flag is true. The frontend reads the
+        // boolean via the `multiFunnel` field on each StrongestAngle /
+        // StrongestVisual.
+        'whats_working.multi_funnel.label': 'Across multiple campaigns',
+        'whats_working.multi_funnel.tooltip': "You've used this across more than one type of campaign",
         'whats_working.unmatched.title': 'Ads That Need Linking',
         'whats_working.unmatched.empty': 'No unmatched ads',
         'whats_working.link_picker.empty': 'No generations with fingerprints found. Generate a new image to start matching.',
@@ -1493,6 +1503,12 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'whats_working.visuals.empty': 'لا توجد بيانات كافية بعد',
         'whats_working.visuals.used_count': 'استخدمتها {n} مرات',
         'whats_working.visuals.used_with_winners': 'استخدمتها {n} مرات، {w} منها ناجحة',
+        // FR-041 (Phase 969 T056, owner-approved 2026-09-06) — owner
+        // reviewed and approved the Arabic wording on 2026-09-06.
+        // Byte-identical to the approved text in batch-16 report §2.1.
+        // Rendered ONLY when the multiFunnel flag on the row is true.
+        'whats_working.multi_funnel.label': 'في حملات متعددة',
+        'whats_working.multi_funnel.tooltip': 'استخدمتَ هذا الأسلوب في أكثر من نوع من الحملات',
         'whats_working.unmatched.title': 'إعلانات تحتاج ربط',
         'whats_working.unmatched.empty': 'لا توجد إعلانات غير مربوطة',
         'whats_working.link_picker.empty': 'لا توجد تصميمات مع بصمة. أنشئ تصميماً جديداً لبدء المطابقة.',

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * patternSummaries.ts — Ticket 1 (Hardened)
  * ═══════════════════════════════════════════════════════════════════════════
  * Pattern summaries pipeline with:
@@ -31,6 +31,23 @@ export interface PatternSummary {
     language: string | null;
     aspectRatio: string | null;
     sampleSize: number;
+    /**
+     * T029c (Batch 13) — distinct-creative count for the bucket.
+     * Spec amendment 1 changes the unit the gate counts from ad rows
+     * to distinct creatives (FR-034 / FR-034a / FR-037). For
+     * PatternSummary the bucket key (pairId / templateId /
+     * universeFamily / hookAngle) groups NRecs that each represent
+     * one generation/creative, so `b.n` already counts creatives —
+     * the field is populated to `b.n` for clarity and so the gate
+     * can read it directly without a `?? sampleSize` fallback that
+     * silently regresses to row counting.
+     *
+     * Optional for backward compatibility with summaries written
+     * before T029c landed; gates MUST treat absent as fail (no
+     * creative attributed yet, gate stays closed until the producer
+     * populates).
+     */
+    creativeCount?: number;
     deployCount: number;
     spendBackedCount: number;
     usedCount: number;
@@ -150,6 +167,55 @@ function computeScores(c: {
     };
 }
 
+/**
+ * T029c fix (Batch 14) — derive a stable per-creative identifier from the
+ * `creativeIdentity` fields so the bucket counts **distinct creatives**,
+ * not distinct `generations` docs. Each `generations` doc = one
+ * generation event (an `addDoc` in `feedbackService.saveGeneration`);
+ * two regenerate-clicks of the same creative produce two docs with
+ * the same `creativeIdentity`. Without dedup, `b.n` would inflate
+ * `PatternSummary.creativeCount` by the regeneration count and the
+ * FR-034a floor would admit a single highly-regenerated creative.
+ *
+ * Hash inputs are the four deterministic identity fields:
+ *   - `selectedModes` (sorted)
+ *   - `contractTemplateId`
+ *   - `universeCategory`
+ *   - `hookAngle`
+ * Generation timestamps and feedback ratings are deliberately
+ * excluded — two saves of the same creative must hash to the same
+ * value. Returns `null` when no identity is present so the bucket
+ * falls back to the doc-id (preserves the prior behaviour for old
+ * `generations` docs written before this field existed).
+ */
+export function computeCreativeHash(ci: { selectedModes?: string[] | null; contractTemplateId?: string | null; universeCategory?: string | null; hookAngle?: string | null } | null | undefined): string | null {
+    if (!ci) return null;
+    const parts = [
+        [...(ci.selectedModes || [])].sort().join('+'),
+        ci.contractTemplateId || '',
+        ci.universeCategory || '',
+        ci.hookAngle || '',
+    ].join('|');
+    // BATCH 21 — CodeRabbit round-2 fix: when all four identity
+    // fields are absent, `parts === '|||'`. Without this guard the
+    // function returned a non-null djb2 hash of the constant `'|||'`
+    // string, so every record with no creativeIdentity shared one
+    // hash. That made `Bucket.creativeHashes` always report size 1
+    // for the legacy data the universeFamily gate accepts on
+    // `inp.tone`, so `creativeCount` undercounted and the FR-034a
+    // floor of 3 stayed closed. It also made the legacy fallback key
+    // (`__legacy_${r.userId}_${b.n}_${r.adId}`) unreachable from this
+    // producer — the row's `creativeHash` was never null in
+    // practice.
+    if (parts === '|||') return null;
+    // djb2 hash; stable across runs and short enough to log.
+    let h = 5381;
+    for (let i = 0; i < parts.length; i++) {
+        h = ((h << 5) + h + parts.charCodeAt(i)) | 0;
+    }
+    return (h >>> 0).toString(36).padStart(7, '0');
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // NORMALIZED RECORD + DATA QUALITY GUARDS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -161,6 +227,23 @@ interface NRec {
     isUsed: boolean; isFavorite: boolean; isPositive: boolean; isNegative: boolean; negativeTags: string[];
     isDeployed: boolean; isSpendBacked: boolean; hasConversion: boolean;
     spend: number; impressions: number; clicks: number;
+    /**
+     * T029c fix (Batch 14) — stable per-creative identifier derived
+     * from the `creativeIdentity` fields. Two NRecs with the same
+     * hash represent one creative (the same generation parameters);
+     * the bucket uses `creativeHashes.size` for `PatternSummary.creativeCount`
+     * so re-generations of one creative do not inflate the per-family
+     * creative count.
+     */
+    creativeHash: string | null;
+    /**
+     * BATCH 20 — Item 3 (CR-M18 hashless fallback uniqueness). The
+     * `generations` document id, used to disambiguate hashless rows
+     * in the legacy fallback key. Without this, all hashless rows
+     * from one user in the same angle collapse to a single Set
+     * entry, undercounting `creativeCount` for them.
+     */
+    adId: string;
 }
 
 interface QualityReport {
@@ -215,6 +298,11 @@ function normalizeAndFilter(docs: FirebaseFirestore.QueryDocumentSnapshot[]): { 
             negativeTags: Array.isArray(fb.tags) ? fb.tags : [],
             isDeployed: false, isSpendBacked: false, hasConversion: false,
             spend: 0, impressions: 0, clicks: 0,
+            // T029c fix (Batch 14) — see `computeCreativeHash` above.
+            // Stable per-creative identifier so re-generations of the
+            // same creative do not inflate `creativeCount`.
+            creativeHash: computeCreativeHash(d.creativeIdentity || null),
+            adId: doc.id,
         });
         quality.accepted++;
     }
@@ -312,12 +400,24 @@ interface Bucket {
     pos: number; neg: number; conv: number; negTags: number;
     spend: number; impr: number; clicks: number;
     niches: Set<string>; offers: Set<string>; stages: Set<string>; langs: Set<string>; ratios: Set<string>;
+    /**
+     * T029c fix (Batch 14) — distinct per-creative hashes for this
+     * bucket. Two NRecs with the same `creativeHash` represent one
+     * creative (the same generation parameters); the bucket uses
+     * `creativeHashes.size` for `PatternSummary.creativeCount` so
+     * re-generations of one creative do not inflate the per-family
+     * creative count. Old `generations` docs without
+     * `creativeIdentity` contribute `null` and count as one each,
+     * preserving the pre-fix behaviour for that historical subset.
+     */
+    creativeHashes: Set<string>;
 }
 
 function newBucket(): Bucket {
     return {
         n: 0, deploy: 0, spendBacked: 0, used: 0, fav: 0, pos: 0, neg: 0, conv: 0, negTags: 0,
-        spend: 0, impr: 0, clicks: 0, niches: new Set(), offers: new Set(), stages: new Set(), langs: new Set(), ratios: new Set()
+        spend: 0, impr: 0, clicks: 0, niches: new Set(), offers: new Set(), stages: new Set(), langs: new Set(), ratios: new Set(),
+        creativeHashes: new Set(),
     };
 }
 
@@ -329,6 +429,13 @@ function add(b: Bucket, r: NRec): void {
     if (r.niche) b.niches.add(r.niche); if (r.offerType) b.offers.add(r.offerType);
     if (r.funnelStage) b.stages.add(r.funnelStage); if (r.language) b.langs.add(r.language);
     if (r.aspectRatio) b.ratios.add(r.aspectRatio);
+    // T029c fix (Batch 14) — record the per-creative hash; absent
+    // hash counts as one (the legacy fallback for pre-fix `generations`
+    // docs) so the bucket still sees a `creativeCount` for them. The
+    // discriminator test in §3 of the Batch 14 report constructs two
+    // NRecs with the same `creativeHash` and asserts the bucket's
+    // creativeCount is 1, not 2.
+    b.creativeHashes.add(r.creativeHash ?? `__legacy_${r.userId}_${b.n}_${r.adId}`);
 }
 
 function toSummary(b: Bucket, fam: SummaryFamily, key: string, scope: SummaryScope, sv: string): PatternSummary {
@@ -342,7 +449,19 @@ function toSummary(b: Bucket, fam: SummaryFamily, key: string, scope: SummarySco
         summaryId: buildSummaryId(scope, sv, fam, key), family: fam, key, scope, scopeValue: sv,
         niche: top(b.niches), offerType: top(b.offers), funnelStage: top(b.stages),
         language: top(b.langs), aspectRatio: top(b.ratios),
-        sampleSize: b.n, deployCount: b.deploy, spendBackedCount: b.spendBacked,
+        sampleSize: b.n,
+        // T029c fix (Batch 14) — distinct-creative count derived from
+        // the set of per-creative hashes in the bucket. With a single
+        // `creativeHash` per creative (see `computeCreativeHash`),
+        // `creativeHashes.size` equals the count of distinct creatives
+        // per family key. The gate (FR-034 / FR-034a / FR-037) reads
+        // this directly without any `?? sampleSize` fallback. The
+        // Batch 13 report's claim that `b.n` already counted creatives
+        // was almost-but-not-quite right — see the Batch 14 verification
+        // for the full analysis. The fix is the Set-dedup here, not
+        // the row-counting invariant `b.n` would suggest.
+        creativeCount: b.creativeHashes.size,
+        deployCount: b.deploy, spendBackedCount: b.spendBacked,
         usedCount: b.used, favoriteCount: b.fav, positiveCount: b.pos,
         negativeCount: b.neg, conversionCount: b.conv,
         totalSpend: +b.spend.toFixed(2), totalImpressions: b.impr, totalClicks: b.clicks,
@@ -380,6 +499,19 @@ function aggregate(records: NRec[]): PatternSummary[] {
     }
     return out;
 }
+
+// BATCH 20 — Item 3 test seam. The bucketing path (`newBucket`,
+// `add`) is private; the behavioural test in
+// `__tests__/patternSummaries.creativeHash.test.ts` exercises the
+// hashless fallback uniqueness through these seams. Production
+// callers do not import from `__bucketForTests`; the underscore
+// prefix signals test-only and the export lives at the module scope
+// rather than any barrel re-export.
+export const __bucketForTests = {
+    newBucket,
+    add,
+} as const;
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WRITE + JOB STATE
