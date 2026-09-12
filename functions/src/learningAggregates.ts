@@ -125,6 +125,30 @@ export interface HookPerformanceAggregate {
      * backward compatibility with older fixtures.
      */
     creativeCount?: number;
+    /**
+     * Batch 28 (Fix B, FR-036) — the creative keys behind {@link creativeCount}.
+     *
+     * `creativeCount` is DERIVED from this array's length; the array is the
+     * state. It exists because the dedup set has to survive the sync: it was
+     * previously an in-memory `Set` that was stripped before persisting and
+     * re-initialised empty on read, so the same creative re-incremented the
+     * count on every sync and `creativeCount` became a count of
+     * creative-sync-OBSERVATIONS. FR-036 forbids exactly that: "Neither
+     * repeated observation across syncs nor multiplicity of ad rows may
+     * inflate the count."
+     *
+     * WHY PERSISTED RATHER THAN RE-DERIVED ON READ. Re-deriving the set from
+     * the per-row ledger entries would mean reading every ad row for the
+     * account on every sync — the unbounded collection scan FR-068 removed.
+     * Persisting is bounded by DISTINCT CREATIVES per angle (not rows, not
+     * syncs), which is the smallest quantity that can answer the question.
+     *
+     * Optional on read: absent means "no creative recorded yet", which is
+     * correct for every record written before this field existed — no
+     * production record carries `creativeCount` at all, since both it and
+     * this field are new in Phase 969 and unmerged.
+     */
+    contributedCreativeKeys?: string[];
     sampleSize: number;
     lastUpdated: number;
     byObjective: {

@@ -77,7 +77,19 @@ type DecideContributionOutcome = ContributionDecision;
 // on `agg.hookAngle` and looked it up against `agg.patternKey` —
 // a key-space mismatch that returned undefined for every visual
 // aggregate and silently skipped all visual withdrawals.
-function applyVisualAggregateWithdrawal(
+export /**
+ * Batch 28 (Fix A, FR-021) — the visual counterpart of `withdrawAvg` in
+ * `aggregateDelta.ts`. Duplicated rather than imported only because this
+ * function is still local to this module; both move together when the
+ * TODO above is taken and the visual withdrawal is lifted into
+ * `aggregateDelta.ts`.
+ */
+function withdrawAvgLocal(avg: number, count: number, value: number): number {
+    if (count <= 1) return 0;
+    return Math.round(((avg * count - value) / (count - 1)) * 100) / 100;
+}
+
+export function applyVisualAggregateWithdrawal(
     existing: VisualPerformanceAggregate,
     ad: AdForLearning,
 ): VisualPerformanceAggregate {
@@ -85,6 +97,18 @@ function applyVisualAggregateWithdrawal(
     const isConversion = ad.campaignObjective === "conversion";
     if (isConversion) {
         if (clone.sampleSize > 0) clone.sampleSize -= 1;
+        // Batch 28 (Fix A, FR-021): withdraw BOTH averages the visual
+        // aggregator maintains, using the withdrawn row's own recorded
+        // values, and compute them from the count BEFORE the decrement.
+        // `applyAdToVisual` averages `ctrLink` and `cpm3d` together, so
+        // both have to come back out together or the pair diverges.
+        const beforeCount = clone.byObjective.conversion.count;
+        clone.byObjective.conversion.avgLinkCtr = withdrawAvgLocal(
+            clone.byObjective.conversion.avgLinkCtr, beforeCount, ad.ctrLink,
+        );
+        clone.byObjective.conversion.avgCpm = withdrawAvgLocal(
+            clone.byObjective.conversion.avgCpm, beforeCount, ad.cpm3d,
+        );
         if (clone.byObjective.conversion.count > 0) {
             clone.byObjective.conversion.count -= 1;
         }

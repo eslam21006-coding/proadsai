@@ -118,12 +118,19 @@ export function applyHookAggregatesDelta(
         }
     }
 
-    // Strip the internal contributedCreatives Set before returning —
-    // it is working state, not part of the public aggregate shape.
+    // Batch 28 (Fix B, FR-036): the Set is working state and cannot be
+    // stored (Firestore holds JSON — a Set serialises to `{}`), so it is
+    // written out as `contributedCreativeKeys` and read back by
+    // `cloneHook`. `creativeCount` is DERIVED from the set's size rather
+    // than incremented independently, so the two can never disagree.
     const out = new Map<string, HookPerformanceAggregate>();
     for (const [angleKey, agg] of byAngleKey) {
-        const { contributedCreatives: _omit, ...publicAgg } = agg;
-        out.set(angleKey, publicAgg);
+        const { contributedCreatives, ...rest } = agg;
+        out.set(angleKey, {
+            ...rest,
+            contributedCreativeKeys: [...contributedCreatives],
+            creativeCount: contributedCreatives.size,
+        });
     }
     return out;
 }
@@ -265,14 +272,21 @@ export function applyHookAggregateWithdrawal(
     const isConversion = ad.campaignObjective === "conversion";
     if (isConversion) {
         if (clone.sampleSize > 0) clone.sampleSize -= 1;
+        // Batch 28 (Fix A, FR-021): withdraw the AVERAGE, not only the
+        // count. `ad.ctrLink` here is the withdrawn row's OWN recorded
+        // value — `applyLearningWrites` builds the synthetic row from the
+        // ledger entry (`ctrLink: withdraw.contributedValues.ctrLink`), so
+        // the exact value that was folded in is the value folded back out.
+        // Order matters: the new mean is computed from the count BEFORE
+        // the decrement.
+        clone.byObjective.conversion.avgLinkCtr = withdrawAvg(
+            clone.byObjective.conversion.avgLinkCtr,
+            clone.byObjective.conversion.count,
+            ad.ctrLink,
+        );
         if (clone.byObjective.conversion.count > 0) {
             clone.byObjective.conversion.count -= 1;
         }
-        // The average cannot be re-derived exactly from count alone
-        // (it depends on the underlying values). For now we leave the
-        // average unchanged — partial-sync drift is documented as
-        // accepted imprecision. Full inverse re-derivation lands in
-        // Phase 7 alongside the contribution-ledger integration.
         if (ad.verdict === "🟢" && clone.byObjective.conversion.bestVerdictCount > 0) {
             clone.byObjective.conversion.bestVerdictCount -= 1;
         }
@@ -280,21 +294,70 @@ export function applyHookAggregateWithdrawal(
             clone.byObjective.conversion.worstVerdictCount -= 1;
         }
         const tier = ad.geoTier;
-        if (clone.byGeoTier[tier].count > 0) {
-            clone.byGeoTier[tier] = { ...clone.byGeoTier[tier], count: clone.byGeoTier[tier].count - 1 };
+        const tierBefore = clone.byGeoTier[tier];
+        if (tierBefore) {
+            clone.byGeoTier[tier] = {
+                count: tierBefore.count > 0 ? tierBefore.count - 1 : 0,
+                avgCtr: withdrawAvg(tierBefore.avgCtr, tierBefore.count, ad.ctrLink),
+            };
         }
         const aud = ad.audienceType;
-        if (clone.byAudienceType[aud].count > 0) {
-            clone.byAudienceType[aud] = { ...clone.byAudienceType[aud], count: clone.byAudienceType[aud].count - 1 };
+        const audBefore = clone.byAudienceType[aud];
+        if (audBefore) {
+            clone.byAudienceType[aud] = {
+                count: audBefore.count > 0 ? audBefore.count - 1 : 0,
+                avgCtr: withdrawAvg(audBefore.avgCtr, audBefore.count, ad.ctrLink),
+            };
         }
     } else {
+        clone.byObjective.other.avgLinkCtr = withdrawAvg(
+            clone.byObjective.other.avgLinkCtr,
+            clone.byObjective.other.count,
+            ad.ctrLink,
+        );
         if (clone.byObjective.other.count > 0) {
             clone.byObjective.other.count -= 1;
         }
     }
     // FR-027 / T047 — withdrawal symmetric with addition.
     decrementByFunnelType(clone, ad);
-    return clone;
+
+    // Batch 28 (Fix B, FR-036): a withdrawn creative stops being counted.
+    // The key is dropped and `creativeCount` re-derived from the set, so
+    // the two cannot disagree. When only SOME of a creative's rows are
+    // withdrawn, the additive pass that always follows the withdrawals in
+    // `applyLearningWrites` re-adds the key from the surviving rows — so
+    // the removal is self-correcting within the sync, and a creative is
+    // only left uncounted when nothing of it contributes any more.
+    const withdrawnKey = ad.creativeKey ?? ad.adId;
+    clone.contributedCreatives.delete(withdrawnKey);
+
+    const { contributedCreatives, ...rest } = clone;
+    return {
+        ...rest,
+        contributedCreativeKeys: [...contributedCreatives],
+        creativeCount: contributedCreatives.size,
+    };
+}
+
+/**
+ * Batch 28 (Fix A, FR-021) — remove one observation from a running mean,
+ * exactly.
+ *
+ * `avg` and `count` describe the aggregate BEFORE the withdrawal;
+ * `value` is the withdrawn row's own recorded contribution. FR-021 requires
+ * a contribution to be withdrawable "exactly, without accumulating rounding
+ * drift", and this is the inverse of the incremental mean `applyAdToHook`
+ * applies on the way in.
+ *
+ * The `count <= 1` guard covers the last contribution leaving: there is no
+ * mean of zero observations, so the average RESETS to 0 rather than dividing
+ * by zero. Returning 0 (not the prior mean) is what makes a full
+ * withdraw-then-re-add round-trip land back on the original value.
+ */
+function withdrawAvg(avg: number, count: number, value: number): number {
+    if (count <= 1) return 0;
+    return round2((avg * count - value) / (count - 1));
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -375,16 +438,15 @@ function cloneHook(a: HookPerformanceAggregate): HookWorkingAggregate {
             retargeting: { ...a.byAudienceType.retargeting },
             advantage_plus: { ...a.byAudienceType.advantage_plus },
         },
-        contributedCreatives: new Set(),
-        // Existing aggregates from before T021 carry no
-        // contributedCreatives. The next sync with the same creative
-        // will add the creative to the Set, incrementing creativeCount
-        // — which is wrong for a creative that contributed historically
-        // (its prior contribution should count). Per T021's spec
-        // resolution, this is acceptable as long as the integrator
-        // carries the Set forward across syncs. For Phase 3 close-out
-        // this means we either serialise the Set or re-derive it from
-        // the per-row ledger entries. Defer to the follow-up batch.
+        // Batch 28 (Fix B, FR-036): hydrate the dedup set from the
+        // PERSISTED key list. Before this, the set was re-initialised
+        // empty on every read, so a creative that had already contributed
+        // re-incremented `creativeCount` on the next sync — the count
+        // became a count of creative-sync-observations, which FR-036
+        // forbids in the same sentence that forbids row multiplicity.
+        // The array is the state; `creativeCount` is derived from it on
+        // the way out (see the strip step in applyHookAggregatesDelta).
+        contributedCreatives: new Set(a.contributedCreativeKeys ?? []),
     };
     return result;
 }
@@ -429,6 +491,7 @@ function emptyHook(angleKey: string): HookWorkingAggregate {
         angleKey,
         schemaVersion: 1,
         creativeCount: 0,
+        contributedCreativeKeys: [],
         sampleSize: 0,
         lastUpdated: 0,
         contributedCreatives: new Set(),
