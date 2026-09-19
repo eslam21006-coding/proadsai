@@ -747,3 +747,231 @@ Every batch after this consolidation writes by editing `§10+
 future batches` rather than creating a new file. The convention is
 documented once, in the second paragraph above, so reviewers
 expecting the old pattern can find their way.
+
+---
+
+## 10. Batch 2 — the sealing spine (T028/T029/T030/T031/T033/T044)
+
+**What this batch delivers.** When a creative's performance is first
+measured against a resolvable cost target, that target is written
+onto the row and locked. A later settings change does not re-open the
+seal. The operational status keeps recomputing against current
+economics — the two stay separate (FR-008 / FR-009 / FR-010). Phase
+4's sealed-state machinery now exists in code; Phase 5 and 6 work
+can land downstream.
+
+### 10.1 The resolver question, answered
+
+The funnel-economics target is resolved by `getEffectiveTarget(derived:
+DerivedTargets): number | null` at `cpaEconomics.ts:476`. It is
+**pure**: takes an already-resolved `DerivedTargets` payload and
+returns a number or `null`. It performs no Firestore reads, takes no
+secrets, and is exercised in tests without stubs.
+
+The payload it consumes is **loaded once per sync** at
+`shared.ts:746-784` from a single read
+(`users/{uid}/workspaces/{wid}/adAccounts/{act}/settings/current`),
+inside the per-account lease window. Already in scope by the time
+the per-ad loop runs.
+
+**Rejection paths the resolver already encodes:**
+- `derived.economicsVersion !== ECONOMICS_VERSION` (the version
+  gate, FR-041 / R-1).
+- `paid.effectiveTargetCpa` and `free.effectiveTargetCpl` both
+  absent or null.
+
+**Batch 2's addition:** a fourth gate — `workspaceFunnelType ===
+"unknown"` — refuses to seal against a workspace whose settings
+doc did not expose a funnel bucket. Without this, the seal path
+would persist `"unknown"` as a real `sealedFunnelType`, which is
+exactly the "no placeholder, no unbounded stand-in" failure mode
+FR-005 forbids. The discriminator test `SC-015
+[unresolvable settings]` pins this gate; the corresponding
+discriminating-without-this-gate demo failed that test correctly.
+
+**Zero new Firestore reads were introduced.** The new
+`perSyncSealedContext = resolveSealedContext(...)` call sits
+inside the existing per-account critical section, immediately
+after the settings read. The per-row logic then asks the same
+`decideSealedTransition` for every ad. Both are pure functions
+of the already-loaded payload.
+
+### 10.2 What landed in code
+
+**Pure module — `functions/src/learning/sealedContext.ts`.** Three
+families of pure functions:
+
+- `resolveSealedContext(derived, workspaceFunnelType, nowMs)`
+  returns `SealedContext | null`. The `null` return IS the
+  "stay PROVISIONAL" answer — no placeholder, no `Infinity`
+  fallback (the existing verdict engine's `?? Infinity` pattern
+  at `shared.ts:1128` is unchanged; only the seal path is
+  null-aware).
+- `decideSealedTransition(existing, newResolution)` returns
+  `{ allowed: true; fields; didTransition }` or
+  `{ allowed: false; reason }`. **The guard tests the
+  transition, not the flag** — see §10.4 for the three behavioural
+  halves and the before/after of an incorrect guard.
+- `resolveCreativeSealedContext(rows)` and
+  `deriveCreativeState(rows)` — the aggregate-side derivations
+  for FR-012a and FR-036c. Called by Batch 5 / Batch 6 readers.
+
+**Per-row write site — `metaSync/shared.ts`.** The new
+`perSyncSealedContext` is computed once per sync after the
+settings load. Inside the per-ad loop, the worker:
+
+1. Reads the existing `sealedTarget` / `sealedAt` /
+   `sealedFunnelType` from the bounded-read `existingData`
+   (absent → undefined, so the guard sees a "PROVISIONAL" row).
+2. Calls `decideSealedTransition(existing, perSyncSealedContext)`.
+3. Threads the verdict's `fields` through `decideAdWrite`
+   (via `sealFields` on `PerAdVaryingInputs` →
+   `DecideAdWriteInput`) so they land in `baseDoc` and ride
+   the existing `merge: true` write.
+4. On `allowed: false` (FR-005c refusal — only the
+   "different target" or "clear an existing seal" cases
+   reach this branch), the worker omits the four sealed fields
+   entirely; the merge preserves the prior values per
+   FR-070's field-level discrimination. The refusal is logged
+   on `errors[]` as `seal_refused  adId=...  reason=...
+   existing=...  attempted=...` so the operator can audit
+   without spam (FR-051c discipline).
+
+**Per-row read site — `metaSync/shared.ts:266-302`.** The four
+sealed fields are added to `AdDoc`. They are `?: T | null` so a
+failed-merge-write that does not include them preserves the prior
+values (FR-070).
+
+**`contributionLedger.ts` doc.** FR-011(a)'s narrowing is
+documented in the `ContributedValues` interface and
+`contributionsEqual`: the comparison basis carries `ctrLink`,
+`cpm`, `verdictMark` and NO `sealedTarget`. The efficiency figure
+(FR-002a / FR-077) lands on the ledger entry's separate
+`efficiencyValue` / `efficiencyContributed` fields, behind its own
+write-once guard in Batch 3. A structural guard in
+`sealedContext.test.ts` asserts the two modules do not import each
+other, so a future edit cannot quietly cross them.
+
+### 10.3 What was deliberately not changed
+
+- `getEffectiveTarget` itself. It is pure and correct. We added
+  one gate around it (workspaceFunnelType), not inside it.
+- `decideContribution` in `contributionLedger.ts`. Re-evaluation
+  for target-independent measures (FR-011(a) already narrowed)
+  runs through it unchanged. The behavioural discipline is the
+  new doc comment, not new code.
+- The verdict engine's `?? Infinity` fallback at `shared.ts:1128`.
+  The verdict engine needs a number for the K5 matrix; the seal
+  path is now null-aware and does NOT use that fallback.
+  Touching the verdict engine would have been a change of
+  scope.
+- `applyLearningWrites`. The aggregate side of FR-005c (the
+  efficiency figure's write-once) lands in Batch 3, not now.
+
+### 10.4 The three discriminating tests, with before/after pairs
+
+The user explicitly asked for tests that fail against wrong
+implementations. Three pairs follow; each discards a non-trivial
+wrong implementation and demonstrates the test catches it.
+
+**Discriminator A — FR-005c second-half.** A guard that simply
+checks `if (wasSealed) return refusal` (a flag-only guard)
+satisfies the FR-005c second-half test ("different target
+refused") AND breaks the idempotent re-write path. The wrong
+guard I temporarily installed reduced
+`Passed: 25, Failed: 0` to **`Passed: 22, Failed: 3`**, with
+the three failures being:
+
+```
+❌ FR-005c idempotent: same target re-written is permitted without a transition
+   Expected values to be strictly equal: false !== true
+❌ SC-031 [shape]: the carve-out for the first efficiency-figure write is a SEPARATE call site
+   Expected values to be strictly equal: false !== true
+❌ FR-005e: a row may seal (its sealedTarget is set) and yet have no efficiencyValue
+   Expected values to be strictly equal: false !== true
+```
+
+The three tests that failed are precisely the three that lean on
+the idempotent path. The wrong guard could not tell them apart
+from the FR-005c-refusal case; the discriminating shape is the
+absent `didTransition: true` flag, which the correct guard sets.
+The discriminator test title names this:
+*"an already-SEALED row refused a DIFFERENT target (the test that
+fails against a flag-checking guard)"*.
+
+**Discriminator B — FR-036c any-row vs all-rows.** A guard that
+implements `deriveCreativeState` as "SEALED only when every row
+is SEALED" (the wrong all-rows rule) satisfies FR-036c's
+"only-PROVISIONAL" test and the discrimination test, but breaks
+the settings-gap and empty-set cases. Wrong guard's run:
+**`Passed: 22, Failed: 3`**, with:
+
+```
+❌ FR-036c any-row: a single SEALED row in the creative makes the creative SEALED
+❌ FR-036c [settings gap]: a new row appearing during a settings gap stays PROVISIONAL
+                       when the creative was already SEALED — the creative does not regress
+❌ FR-036c empty row set: returns PROVISIONAL (conservative default)
+```
+
+The settings-gap failure is exactly the user's "thing 3 to get
+right" — a new placement appearing during a settings gap must
+not drag the already-sealed creative back to PROVISIONAL. The
+discriminator test's title names this case explicitly so a
+reader sees what the test catches.
+
+**Discriminator C — FR-005b workspaceFunnelType gate.** A
+`resolveSealedContext` that drops the `workspaceFunnelType ===
+"unknown"` check would seal a row whose workspace has no funnel
+bucket exposed, persisting `"unknown"` as a real sealedFunnelType
+(the placeholder failure mode FR-005 forbids). Wrong impl
+run: **`Passed: 24, Failed: 1`**, with:
+
+```
+❌ SC-015 [unresolvable settings]: resolveSealedContext returns null when the workspace funnel type is 'unknown'
+```
+
+After reverting each wrong impl, the suite returns to 25/25
+pass. **The three discriminating tests are the only way these
+three distinct wrong implementations are caught by the suite.**
+
+### 10.5 Test discipline
+
+The `sealedContext.test.ts` file (25 tests) is pure-function:
+no stubs, no Firestore, no Meta fetch. The shape follows the
+Batch-1 accrual file — direct assertions on returned values,
+discriminating test titles that name the wrong implementation
+they catch, structural guards labelled as such.
+
+The chain (`npm run test:phase969`) is **`EXIT=0`** with the
+sealedContext suite at the end. Total phase-969 suite count:
+19 prior suites + the new `sealedContext`, all green at 25
+new assertions:
+`creativeGrouping 19, learningLease 12, boundedLedgerRead 12,
+fr070 7, perAdActions 11, t021aWireup 2, learningAccumulation 18,
+learningCascade 4, t025aWorkerWiring 2, t029GateMigration 5,
+t064b 10, applyLearningWritesLease 8, multiFunnel 7,
+withdrawalAverage 7, creativeCount 7, symmetry 10,
+visualCreativeCount 10, conversionAccrual 32, sealedContext 25`.
+
+Full chain `npm test` from clean `lib/`: `contractFixtures.test:
+PASS`, `EXIT=0`. Nothing regresses.
+
+### 10.6 What this batch does NOT deliver
+
+- **The efficiency figure itself.** Batch 3 (T039 + T040 +
+  T041 + T042 + T043 + T046). The place where it lands is
+  documented at `contributionLedger.ts:62-69` — separate from
+  the seal fields, behind a write-once guard. The
+  `efficiencyValue` / `efficiencyContributed` slots on
+  `ContributionLedgerEntry` already exist (types.ts:79-80)
+  and have no callers; Batch 3 fills them.
+- **The aggregate's per-creative sealed target wiring.** The
+  `resolveCreativeSealedContext` pure function is built; the
+  worker call site that feeds it remains to land when the
+  efficiency figure arrives. The wiring is one line:
+  `resolveCreativeSealedContext(rows.map(r => ({ sealedTarget,
+  sealedAt, sealedFunnelType: r.sealedFunnelType })))`.
+- **The FR-005c carve-out's efficiency-side guard.** The shape
+  is pinned by SC-031's "shape" test (the seal and the
+  efficiency-figure write are separate call sites). The
+  actual guard lands in Batch 3.

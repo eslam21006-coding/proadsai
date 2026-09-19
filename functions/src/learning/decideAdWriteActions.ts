@@ -107,6 +107,15 @@ export interface PerAdVaryingInputs {
      * ads.
      */
     adStatus?: string | null;
+    /**
+     * Batch 2 (T028) — the already-resolved sealed fields for this
+     * row. The worker has consulted `resolveSealedContext` once per
+     * sync and `decideSealedTransition` per row against the existing
+     * `adDoc`. The result lands here for inclusion in `baseDoc`.
+     * Absent / empty when the transition was refused or the row has
+     * no contribution at all (failed-read, FR-070).
+     */
+    sealFields?: DecideAdWriteInput["sealFields"];
 }
 
 // ─── Outputs ────────────────────────────────────────────────────
@@ -162,6 +171,7 @@ export function decideAdWriteActions(
         verdict: varying.verdict,
         keepMetadataUnavailable: ctx.keepMetadataUnavailable,
         adStatus: varying.adStatus ?? null,
+        sealFields: varying.sealFields ?? {},
     });
 
     // Tally: independent of FR-070. Counts the resolved linkage so

@@ -88,6 +88,11 @@ import {
     type AdForLearning,
 } from "../learningAggregates.js";
 import {
+    decideSealedTransition,
+    resolveSealedContext,
+    type WorkspaceFunnelType,
+} from "../learning/sealedContext.js";
+import {
     acquireLearningLease,
     releaseLearningLease,
     stillHeld,
@@ -239,6 +244,54 @@ export interface AdDoc {
      * `effective_status` is deferred (FR-085's accepted cost).
      */
     adStatus?: string | null;
+    /**
+     * FR-001 — the cost target this ad was sealed against. One-way:
+     * once a non-null value is written (FR-005b's PROVISIONAL → SEALED
+     * transition), it cannot be replaced by a different value
+     * (FR-005c's code guard). Null when the ad is PROVISIONAL — the
+     * target was not resolvable at first sight.
+     *
+     * **NOT to be confused with the verdict engine's `target`**: that
+     * value recomputes per sync against current economics (FR-009).
+     * The sealed target is what the creative's judgement was measured
+     * against. They diverge on purpose — FR-008 separates them.
+     */
+    sealedTarget?: number | null;
+    /**
+     * FR-004 — the funnel type in force when the ad was sealed.
+     * Mirrors the workspace funnel type's bucket key
+     * (`paid_event` | `paid_product` | `free_webinar` |
+     * `lead_magnet_call`). Always `null` while the row is PROVISIONAL.
+     */
+    sealedFunnelType?: import("../learning/sealedContext.js").WorkspaceFunnelType | null;
+    /**
+     * FR-005d — the moment of sealing, in epoch ms. Set on the
+     * PROVISIONAL → SEALED transition; never modified thereafter.
+     * Late-sealing rows (FR-012a) inherit their creative's earliest
+     * `sealedAt` through the aggregate-side derivation, not their own.
+     */
+    sealedAt?: number | null;
+    /**
+     * FR-005a — the per-row contribution state machine:
+     *   - absent or null: never evaluated / no target ever resolvable.
+     *   - `PROVISIONAL`: no target was resolvable at first sight. The
+     *     row contributes usage / click-through / cost-per-thousand
+     *     evidence normally.
+     *   - `SEALED`: a target was resolvable; the row carries the
+     *     sealed fields above and contributes in full.
+     *
+     * One-way. PROVISIONAL → SEALED happens at the first evaluation
+     * at which a target is resolvable (FR-005b); the reverse is
+     * FORBIDDEN (FR-005c).
+     *
+     * Optional AND null-tolerant so that a worker that knows the row
+     * is still PROVISIONAL can write `contributionState: "PROVISIONAL"`
+     * explicitly (the merge semantics then record the state for
+     * clarity) or omit it entirely. The merge never clears this
+     * field because the worker's `decideSealedTransition` always
+     * supplies the appropriate value when contributing.
+     */
+    contributionState?: "PROVISIONAL" | "SEALED" | null;
     /**
      * T025: contribution ledger entry. Embedded on the ad row per
      * data-model.md §2. Records exactly what this row contributed in
@@ -741,7 +794,6 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // breakdown accumulates from there. Resolves to "unknown" when
     // the doc is absent (FR-032 — receives no same-funnel weighting,
     // still counts toward headline totals).
-    type WorkspaceFunnelType = "paid_event" | "paid_product" | "free_webinar" | "lead_magnet_call" | "unknown";
     let workspaceFunnelType: WorkspaceFunnelType = "unknown";
     try {
         const settingsRef = getDb()
@@ -795,6 +847,24 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     } catch (e: unknown) {
         errors.push(`load funnel settings failed: ${(e as Error).message}`);
     }
+
+    // Phase 4 / Batch 2 (T028) — compute the per-sync sealed context once,
+    // before the per-ad loop. `null` means the target is not resolvable
+    // this sync — every contributing row stays PROVISIONAL on the sealed
+    // axis (FR-005b). The verdict engine continues to compute against the
+    // same `derived` payload via `getEffectiveTarget ?? Infinity`; the
+    // seal path is now null-aware (no fallback) per FR-005 (no
+    // placeholder, no Infinity).
+    //
+    // The same workspaceFunnelType and derived that load once at the top
+    // of this scope feed both. No additional Firestore reads — the read
+    // that loaded `funnelSettings.derived` above is the only one needed,
+    // and it sits inside the per-account lease window.
+    const perSyncSealedContext = resolveSealedContext(
+        funnelSettings?.derived ?? null,
+        workspaceFunnelType,
+        nowMs,
+    );
 
     // Phase 14 — Layer 4b (T044, wired in a later step): batch-load
     // matched-generation metadata for all matched ads so the learning
@@ -1127,6 +1197,40 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         const target = funnelSettings
             ? getEffectiveTarget(funnelSettings.derived) ?? Infinity
             : Infinity;
+
+        // Phase 4 / Batch 2 (T028, T029) — the FR-005c guard. Reads the
+        // existing ad row's sealed fields (when present) and the new
+        // per-sync resolved sealed context, and returns the four sealed
+        // fields the worker must include in the `baseDoc` write. The
+        // guard tests the TRANSITION, not the flag — see the
+        // `decideSealedTransition` doc block for both halves of FR-005c.
+        //
+        // Operational fields (spend, conversions, etc.) always flow —
+        // the merge write semantics leave the prior sealed values intact
+        // when the new sealed fields are omitted (FR-070 field-level
+        // discrimination).
+        const existingFunnelType: WorkspaceFunnelType | null
+            = (existingData?.sealedFunnelType as WorkspaceFunnelType | null | undefined) ?? null;
+        const sealVerdict = decideSealedTransition(
+            existingData === undefined
+                ? undefined
+                : {
+                    sealedTarget: existingData.sealedTarget ?? null,
+                    sealedAt: existingData.sealedAt ?? null,
+                    sealedFunnelType: existingFunnelType,
+                },
+            perSyncSealedContext,
+        );
+        const sealFields = sealVerdict.allowed ? sealVerdict.fields : {};
+        if (!sealVerdict.allowed) {
+            // One line per refusal, deduplicated by adId within the
+            // sync. FR-051c enumerated-reason discipline.
+            errors.push(
+                `seal_refused  adId=${ad.id} reason=${sealVerdict.reason} ` +
+                `existing=${existingData?.sealedTarget ?? "null"} ` +
+                `attempted=${perSyncSealedContext?.sealedTarget ?? "null"}`,
+            );
+        }
         // adSetCpa: undefined if no conversions (the engine treats this as
         // "no data" and falls through to leave-it per the K5 matrix).
         const adSetCpa3d = adSetConv3d > 0 ? adSetSpend3d / adSetConv3d : undefined;
@@ -1230,6 +1334,12 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 // parent-level pauses by design (effective_status is
                 // deferred, FR-085 accepted cost).
                 adStatus: ad.status ?? null,
+                // Batch 2 (T028) — the FR-005c-guard verdict for this
+                // row. The discriminator includes these in `baseDoc`
+                // only when the guard permitted the transition; the
+                // failure case leaves the fields absent (empty `{}`)
+                // and lets the merge preserve the prior values (FR-070).
+                sealFields,
                 verdict: {
                     verdict: verdictResult.verdict,
                     ruleCode: verdictResult.ruleCode,
