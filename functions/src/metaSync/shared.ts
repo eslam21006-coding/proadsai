@@ -232,6 +232,14 @@ export interface AdDoc {
     evaluatedAt: number;
     schemaVersion: 1;
     /**
+     * FR-085 — the ad's own configured `status` from Meta
+     * (`metaGraph.ts:83`, typed at `:145`). Operational data:
+     * persisted for every sync so the eligibility rule FR-077(b)
+     * can read it. Under-detects parent-level pauses by design —
+     * `effective_status` is deferred (FR-085's accepted cost).
+     */
+    adStatus?: string | null;
+    /**
      * T025: contribution ledger entry. Embedded on the ad row per
      * data-model.md §2. Records exactly what this row contributed in
      * the most recent sync that contributed it (FR-016). Absent on
@@ -1216,6 +1224,12 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                     ? (ad.creative.image_url || ad.creative.thumbnail_url || undefined)
                     : undefined,
                 adName: ad.name ?? "",
+                // FR-085 — the ad's own configured `status`. The Meta
+                // fetch at `metaGraph.ts:83` requests it; here it
+                // becomes `adStatus` on the AdDoc. Under-detects
+                // parent-level pauses by design (effective_status is
+                // deferred, FR-085 accepted cost).
+                adStatus: ad.status ?? null,
                 verdict: {
                     verdict: verdictResult.verdict,
                     ruleCode: verdictResult.ruleCode,

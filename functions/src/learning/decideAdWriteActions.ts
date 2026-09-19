@@ -99,6 +99,14 @@ export interface PerAdVaryingInputs {
      * `decideAdWrite` previously received.
      */
     adName: string;
+    /**
+     * FR-085 — the ad's own configured `status` from Meta. The
+     * worker reads `ad.status` and passes it through here. The
+     * discriminator always writes it (operational field), so it
+     * lands on `AdDoc.adStatus` for both successful and failed-read
+     * ads.
+     */
+    adStatus?: string | null;
 }
 
 // ─── Outputs ────────────────────────────────────────────────────
@@ -153,6 +161,7 @@ export function decideAdWriteActions(
         thumbnailUrl: varying.thumbnailUrl,
         verdict: varying.verdict,
         keepMetadataUnavailable: ctx.keepMetadataUnavailable,
+        adStatus: varying.adStatus ?? null,
     });
 
     // Tally: independent of FR-070. Counts the resolved linkage so

@@ -91,6 +91,17 @@ export interface DecideAdWriteInput {
      * Undefined for first-ever syncs.
      */
     keepMetadataUnavailable: boolean;
+    /**
+     * FR-085 — the ad's own configured `status` from Meta
+     * (`metaGraph.ts:83`, typed at `:145`). Operational data: it is
+     * written for every ad in every sync, including FR-070's
+     * failed-read case (the field is part of `baseDoc` below, which
+     * is included unconditionally). A value of `null` means Meta
+     * did not return a status — we still write the `null` so the
+     * merge clears any prior value rather than preserving a stale
+     * one.
+     */
+    adStatus?: string | null;
 }
 
 // ─── Outputs ─────────────────────────────────────────────────────
@@ -134,6 +145,7 @@ export function decideAdWrite(input: DecideAdWriteInput): DecideAdWriteResult {
         thumbnailUrl,
         verdict,
         keepMetadataUnavailable,
+        adStatus,
     } = input;
 
     // ─── Linking fields, decision: precedence or omit ───────────
@@ -218,6 +230,11 @@ export function decideAdWrite(input: DecideAdWriteInput): DecideAdWriteResult {
         diagnosisAr: verdict.diagnosisAr,
         evaluatedAt: verdict.evaluatedAt,
         schemaVersion: 1,
+        // FR-085 — ad's own configured status. Operational data
+        // (FR-009: operational status is recomputed every sync), so
+        // written for every ad, including failed-read ads. The merge
+        // semantics ensure `null` clears any prior value.
+        adStatus: adStatus ?? null,
     };
 
     const adDoc: AdDoc = includeLinkingFields

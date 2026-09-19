@@ -26,5 +26,5 @@ export * from "./decideAdWriteActions.js";   // FR-070, FR-073, FR-074
 export * from "./learningPerAdLoop.js";      // T021a/T025a integration call site
 
 // ─── Phase 4 — conversion accrual + efficiency figure ──────────────
-// export * from "./conversionAccrual.js";  // FR-081–FR-086a
+export * from "./conversionAccrual.js";   // FR-081–FR-086a, FR-077(b)
 // export * from "./efficiencyFigure.js";   // FR-002, FR-002a, FR-003, FR-077–FR-080, FR-087
