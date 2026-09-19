@@ -139,6 +139,29 @@ export default function WorkspaceSwitcher({
   // `workspaceAccess` again and this component will need to accept it.)
   const visibleWorkspaces = activeWorkspaces;
 
+  // fix-workspace-bleed — text-filter for the workspace list.
+  // Hidden when there is only one workspace (filtering a single item
+  // does nothing useful and the input would be visual noise). Resets
+  // on close so reopening shows the full list. Real-time, no debounce
+  // — the list is bounded by the per-user workspace cap (10) so
+  // recomputing on every keystroke is cheap.
+  const showSearch = visibleWorkspaces.length > 1;
+  const [filter, setFilter] = useState('');
+  const filteredWorkspaces = React.useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return visibleWorkspaces;
+    return visibleWorkspaces.filter(ws =>
+      (ws.name ?? '').toLowerCase().includes(q),
+    );
+  }, [visibleWorkspaces, filter]);
+  // Reset the filter whenever the dropdown closes so a stale query
+  // never silently hides a workspace the next time the user opens it.
+  // Keyed on `open` so the reset is a deterministic one-shot effect,
+  // not a state-in-effect pattern.
+  useEffect(() => {
+    if (!open) setFilter('');
+  }, [open]);
+
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
@@ -285,6 +308,45 @@ export default function WorkspaceSwitcher({
           <div className="px-3 py-2 border-b border-white/[0.04]">
             <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">{t('workspace.switcher.brand_workspaces')}</p>
           </div>
+          {/* fix-workspace-bleed — search/filter input. Only rendered
+              when the list has more than one entry (filtering a single
+              item is noise). Real-time, case-insensitive substring
+              match against `ws.name`. The filter is reset on close by
+              the effect above so reopening starts fresh. */}
+          {showSearch && (
+            <div className="px-3 py-2 border-b border-white/[0.04]">
+              <div className="relative">
+                <i
+                  className="fa-solid fa-magnifying-glass absolute left-2.5 top-1/2 -translate-y-1/2 text-[9px] text-slate-500 pointer-events-none"
+                  aria-hidden="true"
+                />
+                <input
+                  type="text"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder={t('workspace.switcher.search_placeholder')}
+                  aria-label={t('workspace.switcher.search_placeholder')}
+                  // Stop click-outside (the mousedown listener bound to
+                  // `ref` above) from treating this input as "outside"
+                  // the dropdown — otherwise typing into the input would
+                  // close the panel mid-keystroke.
+                  onMouseDown={(e) => e.stopPropagation()}
+                  className="w-full bg-white/[0.04] border border-white/[0.06] rounded-md text-[10px] text-white placeholder:text-slate-500 pl-7 pr-7 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500/60 focus:border-blue-500/60"
+                />
+                {filter && (
+                  <button
+                    type="button"
+                    onClick={() => setFilter('')}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    aria-label={t('workspace.switcher.clear_search')}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-white hover:bg-white/[0.08] transition-colors"
+                  >
+                    <i className="fa-solid fa-xmark text-[9px]" aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           <div className="max-h-[240px] overflow-y-auto custom-scrollbar">
             {showLoadError ? (
               // U5: could not load. Plain retry message, distinct from U3.
@@ -308,8 +370,16 @@ export default function WorkspaceSwitcher({
               <div className="px-3 py-4 text-center">
                 <p className="text-[10px] text-slate-400">{t('workspace.error.no_workspaces')}</p>
               </div>
+            ) : filteredWorkspaces.length === 0 ? (
+              // fix-workspace-bleed — filter produced no matches.
+              // Distinct from U3 ("no workspaces at all") because the
+              // user has workspaces, the current query just excludes
+              // all of them.
+              <div className="px-3 py-4 text-center">
+                <p className="text-[10px] text-slate-400">{t('workspace.switcher.no_results')}</p>
+              </div>
             ) : (
-              visibleWorkspaces.map(ws => (
+              filteredWorkspaces.map(ws => (
                 <div
                   key={ws.id}
                   className={`flex items-center gap-2.5 px-3 py-2.5 cursor-pointer transition-all group ${
