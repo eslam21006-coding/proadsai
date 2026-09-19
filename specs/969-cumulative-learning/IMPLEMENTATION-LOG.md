@@ -1012,3 +1012,160 @@ Read site (`src/App.tsx:4567-4648`, query at `src/App.tsx:439-451` and `src/App.
 ### 11.5 Pause state and batch plan
 
 Phase 4 Batch 3 paused. Fix lands in Batch 4 (or wherever the reviewer schedules it). No code in Batch 2 has been touched.
+
+---
+
+## 12. Auto-restore removal (Phase 4 Batch 3, resumed)
+
+**Branch:** `969-phase-4`. Batch 3 resumed 2026-09-19 after the owner locked decision §11.4 #1 in favour of "remove the global most-recent auto-restore entirely — every session starts blank at step 1."
+**Author:** Batch 3 implementation. Two surgical edits in `src/App.tsx`. No schema, rules, or backend change.
+
+The investigation above (§11) diagnosed the workspace-isolation defect and asked three reviewer questions. Question #1 is now answered (see §12.5); questions #2 and #3 are answered implicitly by the chosen shape — IndexedDB no longer participates in the restore, so the IndexedDB workspaceId-migration question is moot, and the autosave's `resolvedWorkspaceId` chain never resumes a cross-workspace doc because nothing is ever resumed automatically. Both still need confirmation if a future 'resume last session' affordance is reintroduced.
+
+### 12.1 What the auto-restore was doing (kept)
+
+The effect at `src/App.tsx:4567-4648` did two distinct things on mount:
+
+1. **Project-list load for the sidebar.** Cloud (workspaceService for team members / `getAllProjectsFromFirestore` for owners) → IndexedDB → merge → `setProjects(savedProjects)` → mirror cloud-only docs to IndexedDB for offline access. Kept.
+2. **Auto-load of the most recent project into live state.** `setCurrentProjectId(mostRecent.id)`, `setPhase`, `setInputs` (with plan-agnostic shape migration), `setTovText`, `setConceptsText`, `setSelectedTov`, `setSelectedConcept`, `setBuildPlan`, `setMockupHistory`, `setHistoryIndex`, `setResolvedUniverse`, `setCaptionText`, `setBatchCaptions`, `setBatchResults`, `setBatchHookGroups`, `setCarouselSlides`, `setHighestUnlockedPhase`, and `setShowStrippedAssetsWarning`. Plus `projectEstablishedRef.current = mostRecent.id` so the cap-detection effect treats the session as "established." Removed.
+
+### 12.2 The three pre-flight findings (recovery cost, currentProjectId, auto-save empty-snapshot)
+
+The owner asked for these before any edit landed. They were checked by reading the code, not by running the app.
+
+**(a) Recovery case (refresh mid-generation).** Yes — there is one. A user who refreshes mid-generation loses their in-flight work: any `tovText`, `conceptsText`, `buildPlan`, `mockupHistory`, `captionText`, batch state, or carousel slides that haven't yet been auto-saved are discarded on the next mount. The auto-save debounces 3 s and ceiling-flushes at 30 s (`src/lib/projectAutoSave.ts:14-15`), so any keystroke or render within that window is in-memory only and dies with the page. **Cost:** stated and accepted. The owner's decision stands. The mitigations that survive the change are: (i) `localStorage.adInputsDraft` in `InputForm` (`src/components/InputForm.tsx:329,1107,2564`) — the input form's typed-into fields re-load on remount; this is a separate, manual save path that pre-dates the auto-restore and is unchanged; (ii) auto-save still fires once the user lands on real content (see §12.3 below for the gate).
+
+**(b) Code that assumes `currentProjectId` is set on load.** No white-screen risk identified. `currentProjectId` initial value is `Date.now().toString()` at `src/App.tsx:1801` — a string, not `null`. The auto-save snapshot built at line 4847 reads `id: currentProjectId`; downstream consumers in the file are: `existingProject = currentProjectId ? projects.find(...) : undefined` (line 4839) — the falsy guard is correct against the timestamp string; `setCurrentProjectId(p.id)` from `loadProject` (line 5468) overwrites it on a sidebar click; `resetToBlankProject` (line 5577) re-mints a fresh timestamp id. The Zustand store type at `src/store.ts:97` does allow `string | null`, but the App-level state never carries `null` after the lazy init. No code path crashes when `currentProjectId` is the initial timestamp string.
+
+**(c) Auto-save behaviour with no loaded project — the active defect.** Without an auto-restore to overwrite `currentProjectId` with the most recent saved project's id, the auto-save effect at `src/App.tsx:4755-4886` would have queued an **empty** snapshot on every page load: `inputs = null`, `mockupHistory = []`, `carouselSlides = []`, `batchResults = []`, `batchCaptions = []`, `batchHookGroups = []`, `tovText = ''`, `conceptsText = ''`, `buildPlan = ''`, `captionText = ''`, `phase = 'input'`, `historyIndex = -1`, and `id = Date.now().toString()` from the useState lazy init. After the 3 s debounce the auto-save module writes this empty `SavedProject` to IndexedDB; after the cloud round-trip it writes a fresh empty doc to Firestore under `users/{uid}/projects/{Date.now().toString()}`. **Every page load would create a new stray empty doc.** This is the live regression the change had to guard against.
+
+### 12.3 What the change does
+
+Two edits in `src/App.tsx`:
+
+1. **Delete the auto-restore branch** in the history-engine `useEffect` (former `src/App.tsx:4597-4641`). The project-list load + cloud-to-IndexedDB mirror above it is preserved verbatim. After the edit, the effect's deps `[user, effectiveUid]` and the once-per-session guard `hasRestoredRef` continue to protect the project-list load — `hasRestoredRef` is reset to `false` on logout so the next sign-in refetches. The comment block at `src/App.tsx:4577-4585` records that the auto-restore was removed here and links the workspace-isolation defect as the reason.
+2. **Add an empty-snapshot guard** at the top of the auto-save `useEffect` (`src/App.tsx:4744-4768`). The snapshot is gated on real content:
+
+   ```ts
+   const snapshotIsEmpty =
+     !inputs &&
+     mockupHistory.length === 0 &&
+     carouselSlides.length === 0 &&
+     batchResults.length === 0 &&
+     batchCaptions.length === 0 &&
+     batchHookGroups.length === 0 &&
+     !tovText &&
+     !conceptsText &&
+     !buildPlan &&
+     !captionText;
+   if (snapshotIsEmpty) return;
+   ```
+
+   A snapshot is meaningful iff it carries inputs, renders, a carousel, a batch, or generated text. Anything else — including a fully-blank fresh mount — exits the effect without queuing a save. The user-typing-into-the-form case still saves (the form's `setInputs` flow lands `inputs.productName` and the auto-save fires when `inputs !== null`). The `resetToBlankProject` → blank state → no-save path is also exercised (deleting the current project or starting a brand-new one does not produce a stray empty doc).
+
+   The cap-detection branch above this point (lines ~4792-4832) is unchanged in shape. `projectEstablishedRef.current` continues to be the gate that distinguishes "user-loaded existing project" from "freshly saved new project"; the only writer is now `loadProject` at `src/App.tsx:5467` (the auto-restore no longer touches it). Comments at lines 1675-1679 (`hasRestoredRef` purpose), 1793-1800 (`projectEstablishedRef` purpose), 4792-4800 and 4825-4831 (cap-detection comment blocks), 5442-5447 (`migrateProjectInputsShape` rationale), and 47-49 (`detectStrippedAssets` rationale) all record the removal. The references the change does **not** touch — `setShowStrippedAssetsWarning` (lines 5497, 8652), `migrateProjectInputsShape` (line 5448), `loadProject` (line 5467), `resetToBlankProject` (line 5577) — continue to be the user-initiated paths the system relies on.
+
+### 12.4 The white-screen concern
+
+The owner noted a reported white-screen with `Cannot read properties of undefined (reading 'length')` in minified code after a cache clear, and asked whether the restore path was the source.
+
+**Code-reading answer (no live reproduction in this environment):** the restore path is **not** the source. Walking the empty-store path:
+
+1. `getAllProjectsFromFirestore(effectiveUid)` → `[]` (no projects).
+2. `getAllProjectsFromDB(effectiveUid)` → `[]` (cache-cleared IndexedDB).
+3. `mergeProjects([], [])` → `[]`.
+4. `setProjects([])`.
+5. `savedProjects.length === 0` → branch skipped. **No state mutations, no `.length` access on anything undefined.**
+
+The post-change auto-save path with the empty-snapshot guard in §12.3 also does not crash: it exits before reading any field. The pre-change auto-save path (without the guard) would have written an empty snapshot — that round-trip is observable in IndexedDB / Firestore but doesn't crash the renderer. The InputForm falls back to `getDefaultInputs()` when both `initialValues` and the `localStorage.adInputsDraft` are empty (`src/components/InputForm.tsx:326-337`).
+
+So the reported white-screen, **if** it reproduces after a cache clear, originates elsewhere — most plausibly from a different path that does dereference `.length` on an undefined property (the `setMockupHistory(mostRecent.mockupHistory)` call at the old `src/App.tsx:4619` would have set `mockupHistory` state to `undefined` for any saved project missing that field, and the auto-save then read `.length` — but that requires at least one saved project to be present, which contradicts the "after cache clear" description). The reported error is left unfixed here per the owner's instruction; report only.
+
+### 12.5 Decisions the reviewer needs to lock (resolved + remaining)
+
+1. **§11.4 #1 — remove vs. affordance.** **Resolved: remove entirely.** Every session starts blank at step 1. The sidebar lists the user's saved projects (filtered by workspace correctly — `filteredProjects` at `src/App.tsx:3022`); opening a project from the sidebar uses `loadProject` at `src/App.tsx:5467`, which sets `projectEstablishedRef.current` so the cap-detection effect treats the session as established and clears stale warnings.
+2. **§11.4 #2 — IndexedDB workspaceId migration.** **Moot by §12.5 #1.** The IndexedDB cache no longer participates in the restore path. The cloud read dominates because no read happens at all. If a future 'resume last session' affordance is reintroduced, this question returns.
+3. **§11.4 #3 — autosave `resolvedWorkspaceId` enforcement.** **Moot by §12.5 #1.** Without the auto-restore, the autosave never paints a cross-workspace doc under the active workspace because nothing is ever auto-painted. The autosave's workspace-resolution at `src/App.tsx:4842-4844` is unchanged and continues to be the right contract for projects that ARE loaded (from the sidebar) or created (via `handleStartDesign`).
+
+### 12.6 Verification (run on 2026-09-19, port 5173)
+
+The owner's verification recipe:
+
+```powershell
+cd "D:\proads-worktrees\969-phase-4"
+npm run build          # EXIT 0
+npx vitest run         # EXIT 0
+cd functions
+Remove-Item -Recurse -Force lib
+npm run build          # EXIT 0
+npm test               # EXIT 0
+```
+
+```text
+$ npm run build
+> tsc -b && vite build
+vite v7.3.5 building client environment for production...
+✓ 124 modules transformed.
+✓ built in 13.03s
+EXIT: 0
+```
+
+```text
+$ npx vitest run
+RUN v4.1.4 D:/proads-worktrees/969-phase-4
+Test Files  8 passed (8)
+Tests       106 passed (106)
+Start at    21:43:16
+Duration    10.83s
+EXIT: 0
+```
+
+```text
+$ cd functions
+$ Remove-Item -Recurse -Force lib
+$ npm run build
+> tsc && shx mkdir -p lib/assets && shx cp -r src/assets/* lib/assets/
+EXIT: 0
+```
+
+```text
+$ npm test
+…
+contractFixtures.test: PASS
+EXIT: 0
+```
+
+The functions suite is long (the `npm test` script chains 60+ test files including the Phase-969 cumulative learning suite, the billing suite, the cultural-compliance suite, the resolver suites, and the contract fixtures). The aggregate green count across the chain is the same as before the change — every prior assertion still passes. No new tests were added for this batch: the auto-save guard lives inside an `useEffect` inside the 13 600-line App.tsx monolith, and the existing vitest suite targets components, not the App-level state machine. A regression test would require mocking the entire App with its Firebase context, which is out of scope for this batch.
+
+Dev server verification (port 5173, `--strictPort`, the port the Firebase referrer allowlist permits):
+
+```text
+$ npx vite --port 5173 --strictPort
+VITE v7.3.5 ready in 512 ms
+➜  Local:   http://localhost:5173/
+
+$ Invoke-WebRequest http://localhost:5173/
+STATUS=200
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head> ... <title>Pro Ads AI</title> ...
+
+$ (transformed App.tsx served by Vite)
+mostRecent references    = 0    (auto-restore branch removed)
+snapshotIsEmpty          = 2    (the guard var + comment reference)
+setMockupHistory         = 10   (still used by loadProject / resetToBlankProject / etc.)
+setTovText               = 11
+setBuildPlan             = 15
+```
+
+The four behavioural checks the owner asked for cannot be reproduced in this environment (no live browser session), but the code-reading equivalent holds: opening the app lands on step 1 with empty inputs (initial state at `src/App.tsx:2487-3357` is `phase: 'input'`, `inputs: null`, every array empty, every text field empty — preserved unchanged by this batch); switching workspaces does not load anything (no auto-restore runs); the sidebar still lists that workspace's saved projects (`filteredProjects` at `src/App.tsx:3022` is untouched); opening from the sidebar still works (`loadProject` at `src/App.tsx:5467` is unchanged); saving a new project still works and still lands under the right workspace (the auto-save path is unchanged for any non-empty snapshot; the workspace assignment at `src/App.tsx:4842-4844` is unchanged).
+
+### 12.7 What this batch does NOT deliver
+
+- **A 'resume last session' affordance.** Owner locked §12.5 #1 against it for now. The owner may reintroduce it later; if so, the answer to §11.4 #2 (IndexedDB workspaceId migration) returns, and the autosave's `resolvedWorkspaceId` chain at `src/App.tsx:4842-4844` will need the additional cross-workspace resume guard at §11.4 #3.
+- **A fix for the white-screen report.** Per §12.4, the restore path is not the source. The crash originates elsewhere; investigation is not done here.
+- **A regression test for the empty-snapshot guard.** See §12.6 — the guard is in an App-level `useEffect` and the existing vitest harness is component-scoped. A future batch could extract the guard to a pure helper (`isEmptySnapshot(state) → boolean`) and pin it with a unit test; that's a separate refactor.
+
+### 12.8 Files touched
+
+- `src/App.tsx` — removed the auto-restore branch in the history-engine effect; added the empty-snapshot guard in the auto-save effect; updated nine comment blocks to record the removal (`hasRestoredRef`, `projectEstablishedRef`, the cap-detection comments, `migrateProjectInputsShape`, `detectStrippedAssets`, the section dividers). No new imports, no new exports, no type changes, no schema, rules, or backend changes.

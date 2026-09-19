@@ -46,7 +46,8 @@ import { ALL_UNIVERSES, type UniverseEntry } from './universeDatabase';
 
 // BUG 3: saved projects strip hero photos / logos to "stored_externally" (Firestore 1 MiB
 // limit). Detect that placeholder so the re-upload warning can be shown consistently from
-// every restore path (manual loadProject + startup auto-restore).
+// every restore path (manual loadProject on sidebar click). Phase 4 Batch 3 removed the
+// startup auto-restore that previously also called detectStrippedAssets on mount.
 const detectStrippedAssets = (
   inputsObj: { personalPhotos?: string[]; brandLogos?: string[] } | null | undefined,
 ): boolean =>
@@ -1672,10 +1673,13 @@ const App: React.FC = () => {
   const isRtl = lang === 'ar';
   // Mutable ref for effective UID — updated each render, safe to use in effects before state declarations
   const effectiveUidRef = React.useRef<string | null>(null);
-  // Guards the startup project auto-restore so it runs exactly ONCE per signed-in session.
-  // The restore effect's deps include `user`/`effectiveUid`, which change reference on token
-  // refresh and on async team `teamOwnerUid` resolution — re-running it would overwrite live
-  // session work (e.g. a freshly rendered carousel) with the saved snapshot. Reset on logout.
+  // Guards the project-list load (sidebar scope) so it runs exactly ONCE per signed-in
+  // session. The effect's deps include `user` / `effectiveUid`, which change reference on
+  // token refresh and on async team `teamOwnerUid` resolution — re-running it would
+  // overwrite any in-flight project the user has loaded from the sidebar and re-trigger
+  // the cloud → IndexedDB sync loop. Reset on logout. Previously this guarded the
+  // startup auto-restore; after Phase 4 Batch 3 the auto-restore is removed and the
+  // ref guards the lighter project-list load instead.
   const hasRestoredRef = React.useRef(false);
   // FIX 3: tracks the previous selectedTov so we only clear concepts when the user SWITCHES
   // between two real hooks — never on first set or session restore (prev is '').
@@ -1790,13 +1794,15 @@ const App: React.FC = () => {
   // effect re-evaluates and would otherwise re-set the flag true. Reset on sign-out
   // (see the onAuthStateChanged sign-out branch) so the next session starts fresh.
   const projectLimitDismissedRef = React.useRef(false);
-  // Tracks the `currentProjectId` of a project the user (or the startup auto-restore)
-  // explicitly loaded from history. Used by the cap-detection effect to distinguish
-  // "user-loaded existing project" (safe to clear stale warnings) from "freshly saved
-  // new project" (warning must stay visible until the user takes a real action).
-  // Autosave silently adding the current project to `projects` does NOT touch this
-  // ref, so a freshly-saved over-cap project keeps its warning visible across the
-  // autosave debounce → cloud-roundtrip → re-evaluation cycle.
+  // Tracks the `currentProjectId` of a project the user explicitly loaded from history.
+  // Used by the cap-detection effect to distinguish "user-loaded existing project"
+  // (safe to clear stale warnings) from "freshly saved new project" (warning must stay
+  // visible until the user takes a real action). Autosave silently adding the current
+  // project to `projects` does NOT touch this ref, so a freshly-saved over-cap project
+  // keeps its warning visible across the autosave debounce → cloud-roundtrip →
+  // re-evaluation cycle. Phase 4 Batch 3 removed the startup auto-restore that
+  // previously also set this ref on mount; loadProject at src/App.tsx:5467 is now the
+  // only path that touches it.
   const projectEstablishedRef = React.useRef<string | null>(null);
   const [currentProjectId, setCurrentProjectId] = useState<string>(() => Date.now().toString());
   const [currentProjectName, setCurrentProjectName] = useState<string>("Untitled Project");
@@ -2100,15 +2106,20 @@ const App: React.FC = () => {
         setTeamOwnerUid(null);
         setTeamRole(null);
         setWorkspaceLoadError(false);
-        // Allow the project auto-restore to run again for the next sign-in.
+        // Allow the project-list load to run again for the next sign-in (the
+        // startup auto-restore that previously also flipped this ref was
+        // removed in Phase 4 Batch 3 — the same once-per-session guard now
+        // protects the lighter project-list load).
         hasRestoredRef.current = false;
         // Reset the session-scoped banner-dismiss flag so the next sign-in starts
         // with a fresh cap evaluation rather than carrying forward the previous
         // account's manual dismissal.
         projectLimitDismissedRef.current = false;
         // Reset the "project established" ref so the next sign-in starts in the
-        // "not yet loaded from history" state until the startup auto-restore or
-        // an explicit user click repopulates it.
+        // "not yet loaded from history" state until an explicit user click on
+        // the sidebar repopulates it (loadProject at src/App.tsx:5467). Phase 4
+        // Batch 3 removed the startup auto-restore that previously also set
+        // this ref on mount.
         projectEstablishedRef.current = null;
         // Audit C2: clear the banner state itself, not just the two refs. Without
         // this the flag survives an account switch made without a page reload —
@@ -4564,11 +4575,22 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   }, [batchResults]);
 
   // --- HISTORY ENGINE (IndexedDB + Firestore sync) ---
+  // Loads the project list for the sidebar. Does NOT auto-load any project into
+  // live session state — every session starts blank at step 1 and the user opens
+  // a saved project from the sidebar. The auto-restore that previously lived in
+  // this effect was removed: it read every project under the owner's account
+  // (no workspace predicate) and clobbered live session state with whichever
+  // document was most recent, which silently resumed a team member's draft
+  // inside the owner's session and was the root of the workspace-isolation
+  // defect (Phase 4 Batch 3).
   useEffect(() => {
     if (!user || !effectiveUid) return; // Don't load projects if not logged in
-    // Restore exactly once per session. Token refreshes / effectiveUid flips re-fire this
-    // effect, and a second restore would clobber live session state (carousel slides, etc.)
-    // with the persisted snapshot. hasRestoredRef is reset to false on logout.
+    // Load the project list exactly once per session. Token refreshes /
+    // effectiveUid flips re-fire this effect; a second load would overwrite
+    // any in-flight project the user has loaded from the sidebar and
+    // re-trigger the cloud → IndexedDB sync loop. hasRestoredRef is reset to
+    // false on logout (the once-per-session guard survives a token refresh but
+    // yields to a full sign-out / sign-in cycle).
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
     const initLoad = async () => {
@@ -4593,52 +4615,15 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
           }
         }
         setProjects(savedProjects);
-
-        if (savedProjects.length > 0) {
-          const mostRecent = savedProjects[0];
-          setCurrentProjectId(mostRecent.id);
-          // Mark as user-established — semantically identical to a user click on
-          // history (the auto-restore reopens the user's most recent project).
-          projectEstablishedRef.current = mostRecent.id;
-          setCurrentProjectName(mostRecent.name || "Untitled Project");
-          // Startup auto-restore runs BEFORE the billing/userPlan effect completes, so we
-          // apply only the plan-AGNOSTIC shape migration here (universe remap, style
-          // normalization). Plan-aware retargeting normalization is reserved for loadProject
-          // (user-initiated action) where userPlan is known; applying it here would wrongly
-          // strip retargeting data for users whose plan is still loading.
-          const _restoredShape = migrateProjectInputsShape(mostRecent.inputs);
-          setInputs(sanitizeProjectModes(_restoredShape));
-          // BUG 3: auto-restore must set the stripped-assets warning too (not just loadProject).
-          setShowStrippedAssetsWarning(detectStrippedAssets(_restoredShape));
-          setPhase(mostRecent.phase);
-          setTovText(mostRecent.tovText);
-          setConceptsText(normalizeFieldLabels(mostRecent.conceptsText));
-          setSelectedTov(mostRecent.selectedTov);
-          setSelectedConcept(mostRecent.selectedConcept);
-          setBuildPlan(mostRecent.buildPlan);
-          setMockupHistory(mostRecent.mockupHistory);
-          setHistoryIndex(mostRecent.historyIndex);
-          setResolvedUniverse(mostRecent.resolvedUniverse);
-          setCaptionText(mostRecent.captionText);
-          setBatchCaptions(mostRecent.batchCaptions || []);
-          setBatchResults(mostRecent.batchResults || []);
-          setBatchHookGroups(mostRecent.batchHookGroups ? mostRecent.batchHookGroups.map(g => ({ ...g, selectedConcepts: new Set(g.selectedConcepts as any) })) : []);
-          setCarouselSlides(mostRecent.carouselSlides || []);
-          setBatchRendering(false);
-          setBatchSelectedHooks(new Set());
-          setShowBatchConfig(false);
-          setBatchConceptsLoading(false);
-
-          // Compute highestUnlockedPhase from data
-          const phaseOrder: AppPhase[] = ['input', 'tov_review', 'concept_review', 'render_studio', 'primary_text'];
-          let highestPhaseWithData: AppPhase = 'input';
-          if (mostRecent.captionText) highestPhaseWithData = 'primary_text';
-          else if (mostRecent.mockupHistory && mostRecent.mockupHistory.length > 0) highestPhaseWithData = 'render_studio';
-          else if (mostRecent.conceptsText) highestPhaseWithData = 'concept_review';
-          else if (mostRecent.tovText) highestPhaseWithData = 'tov_review';
-          const highestIdx = phaseOrder.indexOf(highestPhaseWithData);
-          setHighestUnlockedPhase(highestIdx >= 0 ? highestIdx : 0);
-        }
+        // Auto-restore removal (Phase 4 Batch 3): every session starts blank at
+        // step 1 with empty inputs. The auto-restore that previously lived here
+        // called setCurrentProjectId / setPhase / setInputs / setTovText /
+        // setBuildPlan / setMockupHistory / setHighestUnlockedPhase and the
+        // rest. Saved projects remain accessible through the sidebar, which
+        // already filters by workspace correctly (filteredProjects at
+        // src/App.tsx:3022). Users open projects explicitly via loadProject,
+        // which sets projectEstablishedRef so the cap-detection effect treats
+        // the session as "established" rather than a fresh draft.
       } catch (e: any) {
         console.error("Failed to load history from DB", e);
         showToast(`Failed to load projects: ${e?.code || e?.message || 'unknown'}`, 'error');
@@ -4755,6 +4740,33 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   useEffect(() => {
     if (!user || !effectiveUidRef.current) return;
     if (projects.some((p: SavedProject) => p.isRenaming)) return;
+
+    // Empty-snapshot guard (Phase 4 Batch 3). Without this, every page load
+    // queues a SavedProject snapshot with `id = currentProjectId` (the
+    // Date.now().toString() from useState's lazy init), `inputs = null`, and
+    // every array/field at its empty default. The auto-save module would then
+    // write that empty doc to IndexedDB and Firestore — the user never asked
+    // for a project, but a stray document with a fresh timestamp id lands in
+    // both stores on every login. The previous auto-restore masked this by
+    // replacing `currentProjectId` with the most recent saved project's id
+    // BEFORE the auto-save effect fired; without the auto-restore, the empty
+    // mount-time snapshot would propagate. Gate the save on real content:
+    // a snapshot is meaningful iff it carries inputs, renders, a carousel, a
+    // batch, or generated text. This is the live-session equivalent of the
+    // server-side "is this a draft?" predicate.
+    const snapshotIsEmpty =
+      !inputs &&
+      mockupHistory.length === 0 &&
+      carouselSlides.length === 0 &&
+      batchResults.length === 0 &&
+      batchCaptions.length === 0 &&
+      batchHookGroups.length === 0 &&
+      !tovText &&
+      !conceptsText &&
+      !buildPlan &&
+      !captionText;
+    if (snapshotIsEmpty) return;
+
     const uid = effectiveUidRef.current;
     if (!uid) return;
 
@@ -4783,7 +4795,9 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     // over-cap project would briefly flip `isNewProject` false on the next re-run and
     // clear the legitimate warning before the user could read it. Instead, gate on
     // `projectEstablishedRef`, which is set ONLY by user-initiated paths (`loadProject`
-    // from history, startup auto-restore). Autosave never touches it.
+    // from history). The startup auto-restore that previously also set this ref was
+    // removed in Phase 4 Batch 3 — loadProject at src/App.tsx:5467 is now the sole
+    // writer. Autosave never touches it.
     //
     // Audit C1: `teamResolution === 'resolved'` alone is not sufficient on the live
     // user-doc listener path. There, `setTeamResolution('resolved')` (line ~2046) runs
@@ -4815,11 +4829,14 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
           setProjectLimitReached(false);
         }
       } else {
-        // User explicitly loaded this project from history (or the startup auto-restore
-        // did so) — it's an established editing session, not a freshly-saved project
-        // that just tripped the cap. Clear any stale warning so the user isn't nagged
-        // about a cap they may have already addressed. The server's `overLimit` response
-        // (line ~4192) still handles the live case if a subsequent save crosses the cap.
+        // User explicitly loaded this project from history — it's an established
+        // editing session, not a freshly-saved project that just tripped the cap.
+        // Clear any stale warning so the user isn't nagged about a cap they may
+        // have already addressed. The server's `overLimit` response (line ~4192)
+        // still handles the live case if a subsequent save crosses the cap.
+        // (Phase 4 Batch 3: the startup auto-restore that previously also set
+        // projectEstablishedRef is gone — loadProject at src/App.tsx:5467 is now
+        // the only path that flips this ref true.)
         setProjectLimitReached(false);
       }
     }
@@ -5430,10 +5447,12 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
 
   // Plan-agnostic shape migration: universe remap (r_sushi_bar → r_sushi_counter,
   // "Premium Sushi Bar" → "Premium Sushi Counter") and style/universe mode normalization.
-  // Safe to run before userPlan is resolved (i.e., on the startup auto-restore path).
+  // Safe to run before userPlan is resolved (loadProject at src/App.tsx:5467 calls it
+  // on the user-initiated sidebar path; the startup auto-restore that previously
+  // called it on mount was removed in Phase 4 Batch 3).
   // Declared as a function (not const arrow) so it hoists to the top of App — render
-  // gates above this line would otherwise leave it in TDZ when the auto-restore
-  // useEffect callback fires.
+  // gates above this line would otherwise leave it in TDZ when the loadProject
+  // path fires.
   function migrateProjectInputsShape(rawInputs: any): any {
     if (!rawInputs) return null;
     const _style = (rawInputs.visualStyleFamily ?? rawInputs.universeMode ?? 'realistic') as 'realistic' | 'fantasy' | 'minimal';
