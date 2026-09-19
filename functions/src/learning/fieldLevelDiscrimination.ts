@@ -91,6 +91,31 @@ export interface DecideAdWriteInput {
      * Undefined for first-ever syncs.
      */
     keepMetadataUnavailable: boolean;
+    /**
+     * FR-085 — the ad's own configured `status` from Meta
+     * (`metaGraph.ts:83`, typed at `:145`). Operational data: it is
+     * written for every ad in every sync, including FR-070's
+     * failed-read case (the field is part of `baseDoc` below, which
+     * is included unconditionally). A value of `null` means Meta
+     * did not return a status — we still write the `null` so the
+     * merge clears any prior value rather than preserving a stale
+     * one.
+     */
+    adStatus?: string | null;
+    /**
+     * Batch 2 (T028) — the sealed fields produced by the
+     * FR-005c-guard-verdict `decideSealedTransition` for this ad.
+     * The four fields are written through `merge: true` so the
+     * failed-transition case (FR-005c refusal) leaves the existing
+     * values intact. **Used only when the worker has confirmed a
+     * contribution** — failed-read ads do not seal.
+     */
+    sealFields?: {
+        sealedTarget?: number | null;
+        sealedFunnelType?: import("./sealedContext.js").WorkspaceFunnelType | null;
+        sealedAt?: number | null;
+        contributionState?: "PROVISIONAL" | "SEALED";
+    };
 }
 
 // ─── Outputs ─────────────────────────────────────────────────────
@@ -134,6 +159,8 @@ export function decideAdWrite(input: DecideAdWriteInput): DecideAdWriteResult {
         thumbnailUrl,
         verdict,
         keepMetadataUnavailable,
+        adStatus,
+        sealFields,
     } = input;
 
     // ─── Linking fields, decision: precedence or omit ───────────
@@ -218,6 +245,22 @@ export function decideAdWrite(input: DecideAdWriteInput): DecideAdWriteResult {
         diagnosisAr: verdict.diagnosisAr,
         evaluatedAt: verdict.evaluatedAt,
         schemaVersion: 1,
+        // FR-085 — ad's own configured status. Operational data
+        // (FR-009: operational status is recomputed every sync), so
+        // written for every ad, including failed-read ads. The merge
+        // semantics ensure `null` clears any prior value.
+        adStatus: adStatus ?? null,
+        // Batch 2 (T028) — sealed fields. The worker supplies
+        // `sealFields` only after consulting the FR-005c guard
+        // (`decideSealedTransition`); defaults to null/absent so a
+        // failed read or an unspecified input doesn't accidentally
+        // overwrite the prior seal. The merge write semantics keep the
+        // existing fields intact when these are omitted, which is what
+        // FR-070's field-level discrimination was designed for.
+        sealedTarget: sealFields?.sealedTarget ?? null,
+        sealedFunnelType: sealFields?.sealedFunnelType ?? null,
+        sealedAt: sealFields?.sealedAt ?? null,
+        contributionState: sealFields?.contributionState ?? null,
     };
 
     const adDoc: AdDoc = includeLinkingFields
