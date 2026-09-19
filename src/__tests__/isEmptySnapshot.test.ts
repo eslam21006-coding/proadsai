@@ -167,7 +167,7 @@ describe("isEmptySnapshot — empty string is NOT content (text fields)", () => 
     expect(isEmptySnapshot(blank({ captionText: "" }))).toBe(true);
   });
 
-  it("tovText: ' ' (whitespace) is NOT empty — content includes non-empty trimmed strings", () => {
+  it("tovText: ' ' (whitespace) is NOT empty — truthiness treats it as content; the predicate does not trim", () => {
     // Defensive: the helper reads truthiness, not trimmed length. A
     // whitespace-only string is still content from this predicate's
     // perspective — the auto-save path will write it as-is, and any

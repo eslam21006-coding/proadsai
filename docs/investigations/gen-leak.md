@@ -3,7 +3,9 @@
 **Branch:** `969-phase-4`
 **Date:** 2026-09-19
 **Subject:** where generation data is written and read; whether a generation written by one user can surface in another user’s session
-**Affected workspace (from report):** `ZbGPvZbrAAFl8afG41dG` (Moataz Mashal) — owner uid `ywpCgWsXqVP4tlNwfhSoTqMjRw52`, ad account `act_1069240099193713`
+**Affected workspace (from report):** `<workspaceId-2>` (team-member-A workspace) — owner uid `<ownerUid>`, ad account `<adAccountId-2>`
+
+> **Redaction note (CodeRabbit review 2026-09-19, PR #73):** production identifiers (Firebase auth UIDs, workspace IDs, ad account IDs) replaced with placeholders. The analysis — file paths, rule references, the verdict that the generations path is rule-blocked — is preserved verbatim.
 
 ---
 
@@ -421,7 +423,7 @@ Three observable facts from §A-§E:
 
 Consequence (verified from the code, not assumed):
 
-> For a team member in workspace `ZbGPvZbrAAFl8afG41dG`, a generation produces a record at **`generations/{auto-id}` with `userId = <teamMemberUid>` and `workspaceId = "ZbGPvZbrAAFl8afG41dG"`**. The image lands at **`users/<teamMemberUid>/renders/<hash>`**. **None of `resolveCallerScope`, `resolveMetaScope`, nor any Firestore rule grants the workspace owner read access to that record or that image.** Conversely, the team member cannot see the owner’s own generations in the same workspace because the rule is symmetric.
+> For a team member in workspace `<workspaceId-2>`, a generation produces a record at **`generations/{auto-id}` with `userId = <team-member-1-uid>` and `workspaceId = "<workspaceId-2>"`**. The image lands at **`users/<team-member-1-uid>/renders/<hash>`**. **None of `resolveCallerScope`, `resolveMetaScope`, nor any Firestore rule grants the workspace owner read access to that record or that image.** Conversely, the team member cannot see the owner’s own generations in the same workspace because the rule is symmetric.
 
 ### §F.1 Is the cross-user observation explainable by the same indirection that Meta uses?
 

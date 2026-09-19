@@ -193,7 +193,7 @@ The `workspaceId` is set on the doc only via this effect. So once an owner click
 ```
                  ┌──────────────────────────────────────────┐
                  │  team member session                     │
-                 │  (e.g. uid=g8xbpLFt69f7L5E0jrO6zHDtsgz1) │
+                 │  (e.g. uid=<team-member-1-uid>) │
                  └────────────────────┬─────────────────────┘
                                       │ httpsCallable('saveProject', { project })
                                       ▼
@@ -202,7 +202,7 @@ The `workspaceId` is set on the doc only via this effect. So once an owner click
                  │  functions/src/index.ts:7772-8000        │
                  │                                          │
                  │  callerScope = resolveCallerScope(uid)   │
-                 │  ──► ownerUid = ywpCgWsXqVP4tlNwfhSoTqMjRw52  (Eslam, the owner)
+                 │  ──► ownerUid = <ownerUid>  (owner, the owner)
                  │                                          │
                  │  projectRef = users/{ownerUid}/projects/{project.id}  ◄── write
                  │  cleanProject.userId = ownerUid                  ◄── stamp
@@ -225,60 +225,62 @@ So the rule does what it should. The bug is the read path on the SavedProject th
 
 ### §2.3 What the data confirms
 
-Captured 2026-09-19 from `proadsai-saas`, owner uid `ywpCgWsXqVP4tlNwfhSoTqMjRw52` (Eslam), Moataz workspace id `ZbGPvZbrAAFl8afG41dG`.
+> **Redaction note (CodeRabbit review 2026-09-19, PR #73):** this section originally committed production identifiers (Firebase auth UIDs, workspace IDs, ad account IDs, creator UIDs, names, and email addresses) to the repo. Those have been replaced with clearly-labelled fixtures (`<ownerUid>`, `<workspaceId-N>`, `<team-member-N-email>`, etc.). The counts, the ratios, and the analysis are preserved verbatim — the production identifiers were inputs to the analysis, not the analysis itself.
+
+Captured 2026-09-19 from `proadsai-saas`. The figures below use placeholder identifiers (`<ownerUid>`, `<workspaceId-N>`, `<team-member-N-email>`); the live values are not committed. Counts and ratios are preserved.
 
 #### §2.3.1 Saved projects under the owner — 360 total, mixed creators
 
 ```
 Owner projects by workspaceId (count):
-   (none) : 37          ← legacy, before workspaces existed
-   PW1TwIwxvHNxJ0lY6JFI : 163   ← Eslam Salah (DEFAULT workspace, named after owner)
-   ZbGPvZbrAAFl8afG41dG : 3     ← Moataz Mashal
-   vcL4h5sXFFJWFhwwCsK5 : 11
-   dueXIiFdEJKuAjSuYlUX : 8
-   m5VqQlf6bL2wWUVQDCy6 : 13
-   8gnzAzZY1QACuOQOJN1D : 3
-   5ZRdOCRnSKamHTiJd07F : 39
-   kmuu4ZUMbsK5jnMCwglH : 6
-   ZVASEGdrF5qbizl4Bbug : 26
-   4wLvD9bGu1RQ7JrXXwY4 : 14
-   UYAhw2SgNwZUbTOQAHg7 : 2
-   sip79bqD2U6mT5fJbjWU : 14
-   9n2zPb3Z6D7IRBOLSXi0 : 1
-   UrFxLxgCRIgZXa44C21g : 21
-   total : 360
+   (none)        : 37          ← legacy, before workspaces existed
+   <workspaceId-1> : 163   ← owner (DEFAULT workspace, named after owner)
+   <workspaceId-2> : 3     ← team-member A
+   <workspaceId-3> : 11
+   <workspaceId-4> : 8
+   <workspaceId-5> : 13
+   <workspaceId-6> : 3
+   <workspaceId-7> : 39
+   <workspaceId-8> : 6
+   <workspaceId-9> : 26
+   <workspaceId-10>: 14
+   <workspaceId-11>: 2
+   <workspaceId-12>: 14
+   <workspaceId-13>: 1
+   <workspaceId-14>: 21
+   total         : 360
 
 Owner projects by creatorEmail (count):
-   islam210.06@gmail.com       : 188   ← Eslam (owner)
-   ahmedbasha16422@gmail.com   : 143   ← Ahmed Basha (team member, uid g8xbpLFt69f7L5E0jrO6zHDtsgz1)
-   ahmedmaghraby110@gmail.com  : 14    ← Ahmed Maghraby (team member)
-   quantum.leap.2027@gmail.com : 9     ← Mohamed Abdelmoniem (team member)
-   adscope.net@gmail.com       : 5     ← Eslam Salah (the team member — name-collides with owner)
-   support@proadsai.com        : 1     ← Test team member
-   (none)                      : 1
-   total                       : 360
+   <owner-email>             : 188   ← owner
+   <team-member-1-email>     : 143   ← team-member B (Firebase uid <team-member-B-uid>)
+   <team-member-2-email>     : 14    ← team-member C
+   <team-member-3-email>     : 9     ← team-member D
+   <team-member-4-email>     : 5     ← team-member E (name-collides with owner)
+   <test-team-member-email>  : 1     ← test team member
+   (none)                    : 1
+   total                     : 360
 ```
 
 **~49% of the docs under the owner's namespace were written by team members — separate Firebase auth accounts.** Every one of them is reachable by the owner (per `firestore.rules:53-58`); and the auto-restore effect picks them as candidates for the in-progress session whenever they're the most-recent.
 
-#### §2.3.2 The Moataz workspace under the owner — 3 projects, mixed creators, mixed phases
+#### §2.3.2 The team-member-A workspace under the owner — 3 projects, mixed creators, mixed phases
 
-Three SavedProjects in `users/{ownerUid}/projects` whose `workspaceId = ZbGPvZbrAAFl8afG41dG`:
+Three SavedProjects in `users/{ownerUid}/projects` whose `workspaceId = <workspaceId-2>`:
 
 | `id` | `timestamp` (UTC) | `phase` | `creatorEmail` | `creatorName` | Notes |
 |---|---|---|---|---|---|
-| `1789831103306` | 2026-09-19T15:18:38Z | `input` | `islam210.06@gmail.com` | Eslam | Owner started a fresh draft in Moataz |
-| `1789826691244` | 2026-09-19T14:07:31Z | `input` | `ahmedbasha16422@gmail.com` | Ahmed Basha | Team member's new draft in Moataz |
-| **`1789823908575`** | **2026-09-19T14:03:07Z** | **`tov_review`** | **`ahmedbasha16422@gmail.com`** | **Ahmed Basha** | **Team member's mid-flow work — hooks step.** `tovText` is populated (904 chars); no `conceptsText`/`buildPlan`/`captionText`; `mockupHistory` exists but empty. `status: rendered`. `name: " دورة "تغيّر وارتقِ"_صورة البطل على خلفية سادة"`. |
+| `<projectId-owner-fresh>` | 2026-09-19T15:18:38Z | `input` | `<owner-email>` | owner | Owner started a fresh draft in team-member-A workspace |
+| `<projectId-team-draft>` | 2026-09-19T14:07:31Z | `input` | `<team-member-1-email>` | team-member-1 | Team member's new draft in team-member-A workspace |
+| **`<projectId-hooks-step>`** | **2026-09-19T14:03:07Z** | **`tov_review`** | **`<team-member-1-email>`** | **team-member-1** | **Team member's mid-flow work — hooks step.** `tovText` is populated (904 chars); no `conceptsText`/`buildPlan`/`captionText`; `mockupHistory` exists but empty. `status: rendered`. `name: " دورة "تغيّر وارتقِ"_صورة البطل على خلفية سادة"`. |
 
-The doc at `users/{ownerUid}/projects/1789823908575` is the **exact match** for the report: a generation that reached the Hooks step (Step 2, `tov_review`) at the same time the owner went to look. Looking at the document:
+The doc at `users/{ownerUid}/projects/<projectId-hooks-step>` is the **exact match** for the report: a generation that reached the Hooks step (Step 2, `tov_review`) at the same time the owner went to look. Looking at the document:
 
 ```text
 phase                  : tov_review
-userId                 : ywpCgWsXqVP4tlNwfhSoTqMjRw52   (overwritten by saveProject callable)
-creatorEmail           : ahmedbasha16422@gmail.com
-creatorName            : Ahmed Basha
-workspaceId            : ZbGPvZbrAAFl8afG41dG
+userId                 : <ownerUid>   (overwritten by saveProject callable)
+creatorEmail           : <team-member-1-email>
+creatorName            : team-member-1
+workspaceId            : <workspaceId-2>
 status                 : rendered
 name                   :  دورة "تغيّر وارتقِ"_صورة البطل على خلفية سادة
 has tovText            : true (904 chars)
@@ -288,7 +290,7 @@ has mockupHistory      : true (0 entries)
 has captionText        : false
 ```
 
-This is the in-progress state at the Hooks step the team member reached. The Phase 5 generation API itself had no failure recorded under this project id (`db.collection('generations').where('workspaceId','==',MOATAZ_WS).where('status','==','failed').get()` returns 0), and no record has the `uid` field from `recordGenerationFailure` (0 of 20 Moataz generations). So the "failed generation" the owner observed is the in-progress state, **not** a `generations/{id}` record — the team member reached the Hooks step, and what got persisted at that moment was the SavedProject snapshot.
+This is the in-progress state at the Hooks step the team member reached. The Phase 5 generation API itself had no failure recorded under this project id (`db.collection('generations').where('workspaceId','==','<workspaceId-2>').where('status','==','failed').get()` returns 0), and no record has the `uid` field from `recordGenerationFailure` (0 of 20 team-member-A workspace generations). So the "failed generation" the owner observed is the in-progress state, **not** a `generations/{id}` record — the team member reached the Hooks step, and what got persisted at that moment was the SavedProject snapshot.
 
 #### §2.3.3 Top 10 most-recent projects across ALL workspaces, 2026-09-19
 
@@ -296,37 +298,37 @@ The auto-restore's `getAllProjectsFromFirestore(effectiveUid)` reads ALL of thes
 
 | `id` | timestamp (UTC) | `phase` | `workspaceId` | `creatorEmail` |
 |---|---|---|---|---|
-| `1789831681710` | 2026-09-19T15:36:53.397Z | `render_studio` | `PW1TwIwxvHNxJ0lY6JFI` (Eslam Salah) | `ahmedbasha16422@gmail.com` |
-| `1789831103306` | 2026-09-19T15:18:38.544Z | `input` | `ZbGPvZbrAAFl8afG41dG` (Moataz) | `islam210.06@gmail.com` |
-| `1789827638739` | 2026-09-19T15:18:07.318Z | `input` | `PW1TwIwxvHNxJ0lY6JFI` (Eslam Salah) | `islam210.06@gmail.com` |
-| `1789826882544` | 2026-09-19T14:20:31.245Z | `input` | `PW1TwIwxvHNxJ0lY6JFI` (Eslam Salah) | `ahmedbasha16422@gmail.com` |
-| `1789826691244` | 2026-09-19T14:07:31.450Z | `input` | `ZbGPvZbrAAFl8afG41dG` (Moataz) | `ahmedbasha16422@gmail.com` |
-| `1789823908575` | 2026-09-19T14:03:07.340Z | `tov_review` | `ZbGPvZbrAAFl8afG41dG` (Moataz) | `ahmedbasha16422@gmail.com` |
-| `1789488470092` | 2026-09-19T11:06:04.783Z | `input` | `UrFxLxgCRIgZXa44C21g` | `islam210.06@gmail.com` |
-| `1789233447360` | 2026-09-12T17:24:11.250Z | `render_studio` | `UYAhw2SgNwZUbTOQAHg7` | `ahmedbasha16422@gmail.com` |
-| `1789143292137` | 2026-09-11T16:15:00.550Z | `input` | `PW1TwIwxvHNxJ0lY6JFI` (Eslam Salah) | `ahmedbasha16422@gmail.com` |
-| `1788977394027` | 2026-09-09T18:09:59.098Z | `input` | `PW1TwIwxvHNxJ0lY6JFI` (Eslam Salah) | `ahmedmaghraby110@gmail.com` |
+| `<projectId-owner-render>` | 2026-09-19T15:36:53.397Z | `render_studio` | `<workspaceId-1>` (owner) | `<team-member-1-email>` |
+| `<projectId-owner-fresh>` | 2026-09-19T15:18:38.544Z | `input` | `<workspaceId-2>` (team-member-A workspace) | `<owner-email>` |
+| `<projectId-2>` | 2026-09-19T15:18:07.318Z | `input` | `<workspaceId-1>` (owner) | `<owner-email>` |
+| `<projectId-3>` | 2026-09-19T14:20:31.245Z | `input` | `<workspaceId-1>` (owner) | `<team-member-1-email>` |
+| `<projectId-team-draft>` | 2026-09-19T14:07:31.450Z | `input` | `<workspaceId-2>` (team-member-A workspace) | `<team-member-1-email>` |
+| `<projectId-hooks-step>` | 2026-09-19T14:03:07.340Z | `tov_review` | `<workspaceId-2>` (team-member-A workspace) | `<team-member-1-email>` |
+| `<projectId-4>` | 2026-09-19T11:06:04.783Z | `input` | `<workspaceId-14>` | `<owner-email>` |
+| `<projectId-5>` | 2026-09-12T17:24:11.250Z | `render_studio` | `<workspaceId-11>` | `<team-member-1-email>` |
+| `<projectId-6>` | 2026-09-11T16:15:00.550Z | `input` | `<workspaceId-1>` (owner) | `<team-member-1-email>` |
+| `<projectId-7>` | 2026-09-09T18:09:59.098Z | `input` | `<workspaceId-1>` (owner) | `<team-member-2-email>` |
 
-The 14:03 doc — the one in Moataz at `tov_review` — would be `savedProjects[0]` between 14:03 and 14:07. The 14:20 doc would be `savedProjects[0]` between 14:20 and 15:18. The 15:18 owner-driven doc would be `savedProjects[0]` from 15:18 to 15:36. **At the moment the owner opens the Moataz workspace expecting a fresh session, the most-recent doc anywhere in the account may not belong to the Moataz workspace.** The owner either sees something from a different workspace loaded into the Brief form, or sees the team member's Moataz session loaded back. Both are wrong.
+The 14:03 doc — the one in team-member-A workspace at `tov_review` — would be `savedProjects[0]` between 14:03 and 14:07. The 14:20 doc would be `savedProjects[0]` between 14:20 and 15:18. The 15:18 owner-driven doc would be `savedProjects[0]` from 15:18 to 15:36. **At the moment the owner opens the team-member-A workspace expecting a fresh session, the most-recent doc anywhere in the account may not belong to the team-member-A workspace.** The owner either sees something from a different workspace loaded into the Brief form, or sees the team member's team-member-A workspace session loaded back. Both are wrong.
 
-#### §2.3.4 Ahmed Basha's namespace
+#### §2.3.4 team-member-1's namespace
 
-Ahmed Basha (`g8xbpLFt69f7L5E0jrO6zHDtsgz1`) — the team member — has 151 of his own legacy SavedProjects under `users/{g8xbpLFt69f7L5E0jrO6zHDtsgz1}/projects` left over from before ISSUE-D landed the `resolveCallerScope` indirection on `saveProject`. The most recent of those is `2026-07-30T16:04:46Z` — over a month old. New writes since the rollout land under the owner (the 143-project column above).
+team-member-1 (`<team-member-1-uid>`) — the team member — has 151 of his own legacy SavedProjects under `users/{<team-member-1-uid>}/projects` left over from before ISSUE-D landed the `resolveCallerScope` indirection on `saveProject`. The most recent of those is `2026-07-30T16:04:46Z` — over a month old. New writes since the rollout land under the owner (the 143-project column above).
 
-Ahmed Basha's user doc:
+team-member-1's user doc:
 
 ```json
 {
-  "email": "ahmedbasha16422@gmail.com",
+  "email": "<team-member-1-email>",
   "isTeamMember": true,
-  "teamOwnerUid": "ywpCgWsXqVP4tlNwfhSoTqMjRw52",
-  "displayName": "Ahmed Basha",
+  "teamOwnerUid": "<ownerUid>",
+  "displayName": "team-member-1",
   "plan": "none",
   "credits": 30
 }
 ```
 
-`isTeamMember: true` and `teamOwnerUid: ywpCgW...` — Ahmed is a verified team member of the owner. His `saveProject` calls land at `users/{ywpCgW...}/projects/{id}` per `resolveCallerScope`. The data is consistent with the code.
+`isTeamMember: true` and `teamOwnerUid: <ownerUid>...` — team-member-1 is a verified team member of the owner. His `saveProject` calls land at `users/{<ownerUid>...}/projects/{id}` per `resolveCallerScope`. The data is consistent with the code.
 
 ---
 
@@ -343,7 +345,7 @@ This section answers the prompt's section 3: which data crosses workspaces, whic
 | `users/{uid}/workspaces/{wid}/adAccounts/{aid}/hookPerformance/{angle}` | in path | **Yes** | **Yes** | **Safe.** |
 | `users/{uid}/workspaces/{wid}/adAccounts/{aid}/visualPerformance/{pattern}` | in path | **Yes** | **Yes** | **Safe.** |
 | **SavedProject** — `users/{ownerUid}/projects/{id}` | partial — `workspaceId` is a **field** | **Field only** | **Yes** (path is owner) | **❌ This is the leak.** Path explicitly excludes `workspaceId`. Owner can read all 360 docs (~49% by team members). |
-| `generations` failure records (server-side admin write at `functions/src/index.ts:4165`) | top-level | No | No (field name `uid`, not `userId`) | **Latent bug** (audit §1: `recordGenerationFailure` writes `uid` instead of `userId` and no `workspaceId`). 0 in the Moataz sample so it doesn't contribute to the Moataz leak; record-failure data is otherwise unreadable from a client because the rule's `userId` check fails on a missing field. |
+| `generations` failure records (server-side admin write at `functions/src/index.ts:4165`) | top-level | No | No (field name `uid`, not `userId`) | **Latent bug** (audit §1: `recordGenerationFailure` writes `uid` instead of `userId` and no `workspaceId`). 0 in the team-member-A workspace sample so it doesn't contribute to the team-member-A workspace leak; record-failure data is otherwise unreadable from a client because the rule's `userId` check fails on a missing field. |
 | `users/{uid}/projects/{id}/thumbnail.{jpg,png}` | storage | No | Yes | Same scope as the doc — by rule the thumbnail is owner-only in storage (`storage.rules:43-57`), but team members with the team-member exception also have access. |
 | `feedbackService.buildPersonalizationContext` `adPerformance` read (`feedbackService.ts:498`) | top-level legacy `adPerformance/{uid}_{adId}` | No | Yes | Same-user cross-workspace aggregate. Owner sees aggregated numbers across all their workspaces. |
 | `metaLegacySync` (`functions/src/index.ts:6242-6464`) | top-level `adPerformance` | No (field) | Yes (`{uid}_{adId}`) | Same-user cross-workspace only; not in the 969 worker path. |
@@ -358,7 +360,7 @@ For the actual 969 learning system — `users/{uid}/workspaces/{wid}/adAccounts/
 
 Two unrelated scope-cleanups are still pending in the audit and worth flagging:
 
-1. `recordGenerationFailure` (`functions/src/index.ts:4165`) writes `{ uid, callable, failureClass, ... }` with field name **`uid`** instead of `userId`, and no `workspaceId`. The doc lands on disk (admin SDK bypasses rules) but the rule at `firestore.rules:240-244` (`resource.data.userId == request.auth.uid`) fails on read because the `userId` field is missing. 0 of 20 in Moataz — so it does not contribute to THIS leak — but it is the same shape of bug that Phase 8/Phase 10 already flagged as a separate defect.
+1. `recordGenerationFailure` (`functions/src/index.ts:4165`) writes `{ uid, callable, failureClass, ... }` with field name **`uid`** instead of `userId`, and no `workspaceId`. The doc lands on disk (admin SDK bypasses rules) but the rule at `firestore.rules:240-244` (`resource.data.userId == request.auth.uid`) fails on read because the `userId` field is missing. 0 of 20 in team-member-A workspace — so it does not contribute to THIS leak — but it is the same shape of bug that Phase 8/Phase 10 already flagged as a separate defect.
 2. `feedbackService.buildPersonalizationContext`'s `adPerformance` read at `feedbackService.ts:498` aggregates the legacy `adPerformance` collection across all workspaces for a single owner. Not a leak (owner-only data), just a within-owner aggregate.
 
 ---
@@ -428,12 +430,12 @@ A team member CAN resume / save another workspace's project — they have `read,
 
 1. The leak mechanism at the read site is the auto-restore effect's unfiltered Firestore + IndexedDB query that picks `savedProjects[0]` without a `workspaceId` predicate (`src/App.tsx:4567-4648`).
 2. ~49% of SavedProject docs under the owner's `users/{ownerUid}/projects` collection are written by team members (verified by `creatorEmail`). The owner is entitled to read them all by rule (`firestore.rules:53-58`); the bug is that the auto-restore picks them up as the in-progress session regardless of `activeWorkspaceId`.
-3. A matching doc exists in the data: `users/{ywpCgWsXqVP4tlNwfhSoTqMjRw52}/projects/1789823908575` carries `workspaceId = ZbGPvZbrAAFl8afG41dG`, `creatorEmail = ahmedbasha16422@gmail.com`, `creatorName = Ahmed Basha`, `phase = tov_review`, with `tovText` populated. This is exactly the symptom the report describes.
-4. The same team-member (Ahmed Basha) had 151 legacy projects under his own uid (`users/{g8xbpLFt69f7L5E0jrO6zHDtsgz1}/projects`) from before `resolveCallerScope` was applied to `saveProject`. Those are stale leftovers and not reachable from the owner's session via the team-member exception (because the legacy Ahmed-uid docs are under Ahmed's own user doc, which doesn't have `teamOwnerUid = ywpCgW...` of its own — actually Ahmed's user doc DOES carry `teamOwnerUid = ywpCgW...`, but the legacy docs are under `users/AhmedUid/projects/{id}` not `users/{ownerUid}/projects/{id}`, so the owner can read them only if Ahmed is a team member of himself, which the rule checks... — verified: Ahmed's user doc has `isTeamMember: true, teamOwnerUid: ywpCgW...`, but the rule is `request.auth.uid == userId || (isTeamMember of caller AND teamOwnerUid == userId)`, so for `userId = AhmedUid`, the owner session has `auth.uid = ywpCgW...`, `isTeamMember(caller ywpCgW...) === false` (the owner is not a team member of anyone), so the owner cannot read `users/AhmedUid/projects` directly. Those 151 legacy docs are isolated.)
+3. A matching doc exists in the data: `users/{<ownerUid>}/projects/<projectId-hooks-step>` carries `workspaceId = <workspaceId-2>`, `creatorEmail = <team-member-1-email>`, `creatorName = team-member-1`, `phase = tov_review`, with `tovText` populated. This is exactly the symptom the report describes.
+4. The same team-member (team-member-1) had 151 legacy projects under his own uid (`users/{<team-member-1-uid>}/projects`) from before `resolveCallerScope` was applied to `saveProject`. Those are stale leftovers and not reachable from the owner's session via the team-member exception (because the legacy <team-member-1-uid> docs are under team-member-1's own user doc, which doesn't have `teamOwnerUid = <ownerUid>...` of its own — actually team-member-1's user doc DOES carry `teamOwnerUid = <ownerUid>...`, but the legacy docs are under `users/<team-member-1-uid>/projects/{id}` not `users/{ownerUid}/projects/{id}`, so the owner can read them only if team-member-1 is a team member of themselves, which the rule checks... — verified: team-member-1's user doc has `isTeamMember: true, teamOwnerUid: <ownerUid>...`, but the rule is `request.auth.uid == userId || (isTeamMember of caller AND teamOwnerUid == userId)`, so for `userId = <team-member-1-uid>`, the owner session has `auth.uid = <ownerUid>...`, `isTeamMember(caller <ownerUid>...) === false` (the owner is not a team member of anyone), so the owner cannot read `users/<team-member-1-uid>/projects` directly. Those 151 legacy docs are isolated.)
 
 ### §5.2 Not established
 
-1. Whether the owner, on the day of the bug, opened Moataz or another workspace — chronology is consistent with Moataz, but the precise session that triggered the leak cannot be reproduced from Firestore alone (only the in-app IndexedDB store would record that, and only on the owner's machine).
+1. Whether the owner, on the day of the bug, opened team-member-A workspace or another workspace — chronology is consistent with team-member-A workspace, but the precise session that triggered the leak cannot be reproduced from Firestore alone (only the in-app IndexedDB store would record that, and only on the owner's machine).
 2. Whether the deployed `firestore.rules` exactly match the file in the repo at the time the bug surfaced. The repo file at `firestore.rules:53-58` has the team-member exception. If the deployed rules are older than this commit, the read-side boundary could differ. Verified by manual probe attempts (firebase-tools CLI has no `firestore:rules:get`; left for production verification in the fix batch).
 
 ### §5.3 The two boundary options the fix must choose between

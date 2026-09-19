@@ -134,7 +134,7 @@ There are no active users. Existing aggregate records carry frozen
 counts whose original target is unrecoverable. They are **retired,
 not converted** — below-version reads return absent and first-write
 replaces in full. A deliberate production test was run on
-`act_1180773537404268`'s `pain` aggregate: pre-969 `count: 5` →
+`<adAccountId-postdeploy>`'s `pain` aggregate: pre-969 `count: 5` →
 post-969 `count: 32` (the doc was **updated in place**, not retired).
 This contradicted the spec's literal "retire don't convert" wording
 but matched its **intent**: old data does not block new writes, and
@@ -171,12 +171,12 @@ row** than the first four.
 
 ### Why the 10/3/3 gates count distinct creatives (FR-034/034a/037)
 
-Across `act_995888422231015`, the fan-out is 7.37:1 (383 rows → 52
+Across `<adAccountId-baseline>`, the fan-out is 7.37:1 (383 rows → 52
 creatives, largest single creative spanning 55 rows); across both
 connected accounts the average is 6.90:1 (1008 rows → 146
 creatives). At that fan-out, **row counting means a single creative
 clears every gate by itself**. The 55-row `pain` creative in
-`act_1180773537404268` clears a 10-row activation threshold with
+`<adAccountId-postdeploy>` clears a 10-row activation threshold with
 seven rows of evidence to spare. The per-item floor of 3 (then 3
 rows, now 3 creatives) exists to prevent exactly this; row counting
 made that floor decoration. **The owner accepted the 7.4× delay
@@ -611,9 +611,9 @@ The pipeline is on track.
 
 ## 7. Production baseline and verification results
 
-The numbers below were captured against `act_995888422231015`
+The numbers below were captured against `<adAccountId-baseline>`
 (pre-sync baseline, `docs/investigations/969-production-baseline.md`)
-and `act_1180773537404268` (post-deploy Sync 1 and Sync 2,
+and `<adAccountId-postdeploy>` (post-deploy Sync 1 and Sync 2,
 `docs/investigations/969-sync-check-{01,02}.md`). They are the
 **headline evidence** the feature works.
 
@@ -621,14 +621,14 @@ and `act_1180773537404268` (post-deploy Sync 1 and Sync 2,
 
 | Metric | Value | Surface |
 |---|---|---|
-| Workspace-scoped `adPerformance` for `act_995888422231015` | **383** | PR-969 writes here |
+| Workspace-scoped `adPerformance` for `<adAccountId-baseline>` | **383** | PR-969 writes here |
 | Of those, `adDocsWithLedger` | **0** | expected (field is new in PR-969) |
 | Workspace-scoped `hookPerformance` for this account | **0** | expected |
 | Workspace-scoped `visualPerformance` for this account | **0** | expected |
-| Legacy top-level `adPerformance` for `act_995888422231015` | **452** | LEG A, untouched |
+| Legacy top-level `adPerformance` for `<adAccountId-baseline>` | **452** | LEG A, untouched |
 | Aggregate docs carrying any new Phase-969 field | 0 (anywhere in the project) | expected |
 
-### Two-sync comparison (post-deploy, `act_1180773537404268`,
+### Two-sync comparison (post-deploy, `<adAccountId-postdeploy>`,
 28 minutes apart)
 
 | Field | Sync 1 | Sync 2 | Δ | Verdict |
@@ -983,7 +983,9 @@ PASS`, `EXIT=0`. Nothing regresses.
 **Branch:** `969-phase-4`. Phase 4 Batch 3 paused pending owner review of the investigation.
 **Author:** investigation, read-only. No fix code. No deployment.
 
-A team member working in workspace `ZbGPvZbrAAFl8afG41dG` (Moataz Mashal) reached the Hooks step on a generation. The owner opened their own session and saw the same failed project at the same step, on a different workspace. The persistence and the read path are tracked end-to-end in `specs/969-cumulative-learning/reports/workspace-isolation-defect-generation-state.md` and a parallel cross-user trace in `docs/investigations/gen-leak.md`. Top-line summary below.
+A team member working in workspace `<workspaceId-2>` (team-member-A workspace) reached the Hooks step on a generation. The owner opened their own session and saw the same failed project at the same step, on a different workspace. The persistence and the read path are tracked end-to-end in `specs/969-cumulative-learning/reports/workspace-isolation-defect-generation-state.md` and a parallel cross-user trace in `docs/investigations/gen-leak.md`. Top-line summary below.
+
+> **Redaction note (CodeRabbit review 2026-09-19, PR #73):** the production identifiers in §11 (Firebase auth UIDs, workspace IDs, project IDs, creator emails, names) are redacted to placeholders. The analysis — counts, ratios, the verdict on the leak — is preserved verbatim. See the linked reports for the redaction notes and the original analysis.
 
 ### 11.1 What's wrong
 
@@ -992,11 +994,11 @@ The in-progress generation state lives in two layers, both keyed by `uid` only, 
 1. **`users/{ownerUid}/projects/{projectId}`** — `workspaceId` is a *field* on the doc, not a path segment. The `saveProject` callable (`functions/src/index.ts:7772-8000`) correctly resolves the team member's writes onto the owner via `resolveCallerScope` (`functions/src/workspaces/workspacePolicy.ts:339-438`) and stamps `userId = ownerUid`. That is correct for quota/plan attribution. But the *owner branch* of the auto-restore at `src/App.tsx:4567-4648` reads every doc under `users/{ownerUid}/projects` (no `where('workspaceId',...)` predicate at `src/App.tsx:439-451`) and picks `savedProjects[0]` — the global most recent — to load as live state. If the most recent is a team member's doc from another workspace, the owner's session resumes the team member's draft.
 2. **`ProAdsDB_V2.projects` IndexedDB** — keyed by `id`, with a `userId` index. `getAllProjectsFromDB(userId)` at `src/App.tsx:360-373` is `index.getAll(userId)` — same unfiltered read, mirrored to disk via the same merge step.
 
-Verified against production data on 2026-09-19: 360 SavedProject docs under the owner's namespace; ~49% by `creatorEmail` of team-member accounts (separate Firebase auth uids). The `workspaceId = ZbGPvZbrAAFl8afG41dG` set has three docs, one of which (`1789823908575`) is Ahmed Basha's mid-flow `tov_review` doc, populated with `tovText` (904 chars), `phase: tov_review`, `creatorEmail: ahmedbasha16422@gmail.com`, `creatorName: Ahmed Basha`. That is the exact symptom the report describes.
+Verified against production data on 2026-09-19: 360 SavedProject docs under the owner's namespace; ~49% by `creatorEmail` of team-member accounts (separate Firebase auth uids). The `<workspaceId-2>` set has three docs, one of which (`<projectId-hooks-step>`) is team-member-1's mid-flow `tov_review` doc, populated with `tovText` (904 chars), `phase: tov_review`, `creatorEmail: <team-member-1-email>`, `creatorName: team-member-1`. That is the exact symptom the report describes.
 
 ### 11.2 What's NOT wrong
 
-- The `generations/{auto-id}` collection — the artefact the prompt's section 2 mentions — is correctly cross-user-blocked by `firestore.rules:240-244` (`resource.data.userId == request.auth.uid`, no team-member exception). The owner cannot read team-member-written `generations` docs from a client session. Verified: 0 of 20 Moataz `generations` have a `uid` field (so the latent `recordGenerationFailure` field-name bug at `functions/src/index.ts:4165` does not contribute here).
+- The `generations/{auto-id}` collection — the artefact the prompt's section 2 mentions — is correctly cross-user-blocked by `firestore.rules:240-244` (`resource.data.userId == request.auth.uid`, no team-member exception). The owner cannot read team-member-written `generations` docs from a client session. Verified: 0 of 20 team-member-A workspace `generations` have a `uid` field (so the latent `recordGenerationFailure` field-name bug at `functions/src/index.ts:4165` does not contribute here).
 - The 969 worker outputs at `users/{uid}/workspaces/{wid}/adAccounts/{aid}/...` — every subcollection under the workspace subtree (adPerformance, hookPerformance, visualPerformance, imageFingerprints, baselines, syncSnapshots, settings) — are workspace-scoped at the path level. Verified by `specs/969-cumulative-learning/reports/firestore-scope-audit.md`. The cumulative-learning data is not contaminated.
 
 ### 11.3 Where the fix lands
@@ -1199,7 +1201,7 @@ That crash is reachable. `loadProject` at `src/App.tsx:5467` calls `setMockupHis
 
 **The helper does.** `(arr?.length ?? 0) > 0` is `false` for `undefined` and `[]`; the predicate returns `true` (snapshot is empty → save skipped, no throw). Tests §13.4 #5 below pin this for every array field individually, plus a "every field undefined" worst-case fixture.
 
-The behaviour change is therefore strictly an improvement: where the inline guard crashed, the helper saves no work and continues normally; where the inline guard saved nothing (the empty-fresh-mount case), the helper also saves nothing — same outcome.
+The behaviour change is therefore strictly an improvement: where the inline guard crashed, the helper saves no work and continues normally; where the inline guard saved nothing (the empty-fresh-mount case), the helper also saves nothing — same outcome. Concretely, when one array is `undefined` while another field carries content, the helper avoids the exception and applies the normal empty/non-empty decision on every other field, so the auto-save proceeds for a non-empty snapshot just as it does for a fully-populated live session.
 
 ### 13.3 Other emptiness-check patterns on the same fields
 
@@ -1284,7 +1286,7 @@ isEmptySnapshot — empty string is NOT content (text fields)
   ✓ conceptsText: '' is empty 0ms
   ✓ buildPlan: '' is empty 0ms
   ✓ captionText: '' is empty 0ms
-  ✓ tovText: ' ' (whitespace) is NOT empty — content includes non-empty trimmed strings 0ms
+  ✓ tovText: ' ' (whitespace) is NOT empty — truthiness treats it as content; the predicate does not trim 0ms
 
 isEmptySnapshot — empty array is NOT content (array fields)
   ✓ mockupHistory: [] is empty 0ms
@@ -1325,7 +1327,7 @@ The functions suite is untouched by this frontend-only change. The same exit cod
 
 ### 13.6 What this batch does NOT deliver
 
-- **A fix for the white-screen report (the original report).** This batch closes the *candidate* crash path the §12.4 walk named — the auto-save effect reading `.length` on a `mockupHistory` that `loadProject` set to `undefined`. The original report (against an unspecified minified stack) remains unrooted. The two arrays-out-of-five undefined cases the test pins are the most plausible mechanism; if the white-screen reproduces in the next live verification, that path is now closed and the search moves elsewhere.
+- **A fix for the white-screen report (the original report).** This batch closes the *candidate* crash path the §12.4 walk named — the auto-save effect reading `.length` on a `mockupHistory` that `loadProject` set to `undefined`. The original report (against an unspecified minified stack) remains unrooted. The six array-undefined cases the test pins — one all-arrays-undefined fixture and five single-array-undefined fixtures (mockupHistory, carouselSlides, batchResults, batchCaptions, batchHookGroups) — are the most plausible mechanism; if the white-screen reproduces in the next live verification, that path is now closed and the search moves elsewhere.
 - **A test for `stepsWithData`.** §13.3 notes it as a related-but-distinct predicate. Out of scope for this batch.
 - **An `isEmptySnapshot` consumer in the cloud sync round-trip.** The cloud write path is gated on `workspaceReady` (`src/App.tsx:4674-4688`) and the `stripHeavyImageData` stripper. Empty snapshots still go through to Firestore if the auto-save's local-only queue ever accepted one — the auto-save's `saveProjectToDB` followed by the `saveProject` callable is the second layer. Adding `isEmptySnapshot` to the second layer is a defense-in-depth move that this batch does not make; the local auto-save's gate is the only place the bug can enter, and that gate is now pinned.
 
