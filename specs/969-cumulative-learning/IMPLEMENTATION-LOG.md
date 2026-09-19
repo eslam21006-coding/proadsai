@@ -975,3 +975,40 @@ PASS`, `EXIT=0`. Nothing regresses.
   is pinned by SC-031's "shape" test (the seal and the
   efficiency-figure write are separate call sites). The
   actual guard lands in Batch 3.
+
+---
+
+## 11. Workspace isolation defect — generation state (Paused 2026-09-19)
+
+**Branch:** `969-phase-4`. Phase 4 Batch 3 paused pending owner review of the investigation.
+**Author:** investigation, read-only. No fix code. No deployment.
+
+A team member working in workspace `ZbGPvZbrAAFl8afG41dG` (Moataz Mashal) reached the Hooks step on a generation. The owner opened their own session and saw the same failed project at the same step, on a different workspace. The persistence and the read path are tracked end-to-end in `specs/969-cumulative-learning/reports/workspace-isolation-defect-generation-state.md` and a parallel cross-user trace in `docs/investigations/gen-leak.md`. Top-line summary below.
+
+### 11.1 What's wrong
+
+The in-progress generation state lives in two layers, both keyed by `uid` only, never by `workspaceId`:
+
+1. **`users/{ownerUid}/projects/{projectId}`** — `workspaceId` is a *field* on the doc, not a path segment. The `saveProject` callable (`functions/src/index.ts:7772-8000`) correctly resolves the team member's writes onto the owner via `resolveCallerScope` (`functions/src/workspaces/workspacePolicy.ts:339-438`) and stamps `userId = ownerUid`. That is correct for quota/plan attribution. But the *owner branch* of the auto-restore at `src/App.tsx:4567-4648` reads every doc under `users/{ownerUid}/projects` (no `where('workspaceId',...)` predicate at `src/App.tsx:439-451`) and picks `savedProjects[0]` — the global most recent — to load as live state. If the most recent is a team member's doc from another workspace, the owner's session resumes the team member's draft.
+2. **`ProAdsDB_V2.projects` IndexedDB** — keyed by `id`, with a `userId` index. `getAllProjectsFromDB(userId)` at `src/App.tsx:360-373` is `index.getAll(userId)` — same unfiltered read, mirrored to disk via the same merge step.
+
+Verified against production data on 2026-09-19: 360 SavedProject docs under the owner's namespace; ~49% by `creatorEmail` of team-member accounts (separate Firebase auth uids). The `workspaceId = ZbGPvZbrAAFl8afG41dG` set has three docs, one of which (`1789823908575`) is Ahmed Basha's mid-flow `tov_review` doc, populated with `tovText` (904 chars), `phase: tov_review`, `creatorEmail: ahmedbasha16422@gmail.com`, `creatorName: Ahmed Basha`. That is the exact symptom the report describes.
+
+### 11.2 What's NOT wrong
+
+- The `generations/{auto-id}` collection — the artefact the prompt's section 2 mentions — is correctly cross-user-blocked by `firestore.rules:240-244` (`resource.data.userId == request.auth.uid`, no team-member exception). The owner cannot read team-member-written `generations` docs from a client session. Verified: 0 of 20 Moataz `generations` have a `uid` field (so the latent `recordGenerationFailure` field-name bug at `functions/src/index.ts:4165` does not contribute here).
+- The 969 worker outputs at `users/{uid}/workspaces/{wid}/adAccounts/{aid}/...` — every subcollection under the workspace subtree (adPerformance, hookPerformance, visualPerformance, imageFingerprints, baselines, syncSnapshots, settings) — are workspace-scoped at the path level. Verified by `specs/969-cumulative-learning/reports/firestore-scope-audit.md`. The cumulative-learning data is not contaminated.
+
+### 11.3 Where the fix lands
+
+Read site (`src/App.tsx:4567-4648`, query at `src/App.tsx:439-451` and `src/App.tsx:360-373`). Schema, rules, and write path do not change. The fix restricts the auto-restore set to `users/{ownerUid}/projects` where `workspaceId == activeWorkspaceId ?? <defaultWorkspaceId>`, and picks `savedProjects[0]` from that subset. If the subset is empty, the in-progress session lands on a brand-new project (Brief/Step 1), never on a cross-workspace doc. See investigation `§5.3` for the schema-vs-query trade-off.
+
+### 11.4 Decisions the reviewer needs to lock
+
+1. Does the editor want a 'resume last session anywhere' affordance as a separate UI surface (not the default auto-restore), or is the global most-recent auto-restore to be removed entirely? The former preserves the 'where was I?' experience; the latter is the safer default.
+2. Does the IndexedDB cache need a one-shot migration to `workspaceId`-stamped IndexedDB rows (so offline / cold-start behaviour matches the new query), or can the cloud read dominate? Current code merges IndexedDB with cloud; both must converge on the same partition.
+3. Does the autosave's `resolvedWorkspaceId = (canUseWorkspaces && activeWorkspaceId) || existingProject?.workspaceId` (`src/App.tsx:4842-4844`) need to also enforce that `existingProject?.workspaceId === activeWorkspaceId` before resuming? Without this, the autosave can repaint an auto-loaded cross-workspace doc under the active workspace and quietly 're-home' it.
+
+### 11.5 Pause state and batch plan
+
+Phase 4 Batch 3 paused. Fix lands in Batch 4 (or wherever the reviewer schedules it). No code in Batch 2 has been touched.
