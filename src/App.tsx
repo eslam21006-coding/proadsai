@@ -1138,6 +1138,10 @@ interface MenuSidebarProps {
   // badge is passive, no modal, no redirect.
   funnelSettingsComplete: boolean;
   activeWorkspaceNeedsMetaAccount: boolean;
+  // fix-workspace-bleed — workspace-aware sub-label under "Meta Ads
+  // Connected". See `metaAccountSubLabel` on MenuItemsProps for the
+  // sourcing rule.
+  metaAccountSubLabel: string | null;
   /**
    * BUG A — true when the signed-in user is a team member rather than the
    * account owner. The server refuses every workspace ad-account mutation
@@ -1182,6 +1186,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
   funnelSettingsAvailable,
   funnelSettingsComplete,
   activeWorkspaceNeedsMetaAccount,
+  metaAccountSubLabel,
   isTeamMember,
 }) => {
   const { t } = useT();
@@ -1248,6 +1253,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
               funnelSettingsAvailable={funnelSettingsAvailable}
               funnelSettingsComplete={funnelSettingsComplete}
               activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
+              metaAccountSubLabel={metaAccountSubLabel}
               isTeamMember={isTeamMember}
             />
           </div>
@@ -1448,6 +1454,16 @@ interface MenuItemsProps {
    */
   activeWorkspaceNeedsMetaAccount: boolean;
   /**
+   * fix-workspace-bleed — workspace-aware sub-label shown under the
+   * "Meta Ads Connected" entry. On workspace plans this is the active
+   * workspace's `metaAdAccountName`; on non-workspace plans it is the
+   * user-level selected account's name. `null` hides the sub-label
+   * entirely (no workspace link, or Meta not connected). Pre-computed
+   * in the parent so MenuSidebar and the mobile overlay render the same
+   * value without duplicating the gate.
+   */
+  metaAccountSubLabel: string | null;
+  /**
    * BUG A — true for a team member (non-owner). Hides the two entries that
    * lead into `linkMetaAccountToWorkspace`, which the server refuses for
    * members: the highlighted "Select ad account for this workspace" prompt
@@ -1470,7 +1486,7 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
   // `data.isTeamMember` (variables bound elsewhere, not the destructure
   // here). Drop the unused destructure to satisfy
   // `@typescript-eslint/no-unused-vars`.
-  const { t, isDarkMode, lang, milestones, phase, metaConnection, metaSyncing, funnelSettingsAvailable, funnelSettingsComplete, activeWorkspaceNeedsMetaAccount } = props;
+  const { t, isDarkMode, lang, milestones, phase, metaConnection, metaSyncing, funnelSettingsAvailable, funnelSettingsComplete, activeWorkspaceNeedsMetaAccount, metaAccountSubLabel } = props;
   const items: Array<{ key: string; el: React.ReactNode }> = [
     { key: 'new', el: <MenuItem key="new" icon="fa-plus" label={t('history.newProject')} onClick={props.onNewProject} /> },
     { key: 'bookmarks', el: <MenuItem key="bookmarks" icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={props.onSavedRenders} /> },
@@ -1508,23 +1524,19 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
       key: 'meta',
       el: (() => {
         const isConnected = !!metaConnection?.connected;
-        const selectedId = metaConnection?.selectedAccountId ?? null;
-        const selectedAccount = isConnected
-          ? metaConnection?.adAccounts?.find((a) => a.id === selectedId)
-          : undefined;
-        // Sub-label only when connected AND the active workspace already
-        // has a linked account. While the workspace is unlinked we don't
-        // show a misleading "current account" line — the highlighted
-        // prompt below already explains the situation.
-        const subLabel = isConnected && !activeWorkspaceNeedsMetaAccount
-          ? (selectedAccount?.name || selectedId || '')
-          : '';
+        // fix-workspace-bleed — sub-label is precomputed by the parent
+        // using the same gate `activeMetaAccountId` uses (App.tsx:4216).
+        // On workspace plans the value tracks the active workspace's
+        // `metaAdAccountName`; on non-workspace plans it falls back to
+        // the user-level selected account. The parent-owned computation
+        // is the single source of truth — no second lookup here.
+        const subLabel = metaAccountSubLabel;
         return (
           <MenuItem
             key="meta"
             icon="fa-brands fa-meta"
             label={isConnected ? t('topbar.menu_meta_connected') : t('topbar.menu_meta_connect')}
-            subLabel={subLabel || null}
+            subLabel={subLabel}
             // Phase 967 (FR-020b, T075) — when the token is expiring
             // or a sync returned `needsReauth`, the menu entry opens
             // the OAuth flow (re-authorise) instead of the sync.
@@ -4255,6 +4267,69 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       && !funnelSettingsAvailable,
     [metaConnection?.connected, canUseWorkspaces, funnelSettingsAvailable],
   );
+
+  // fix-workspace-bleed — sidebar sub-label + picker highlight source.
+  // Mirrors the gate `activeMetaAccountId` (lines 4216–4227) uses: on
+  // workspace plans, the active workspace's own `metaAdAccountId` is the
+  // source of truth; on non-workspace plans, fall back to the user-level
+  // `metaConnections.selectedAccountId` (set by the OAuth + picker flow).
+  // The sub-label NAME is read from the same scope: workspace-level
+  // `metaAdAccountName` when on a workspace plan, the matching entry in
+  // the user-level `adAccounts` array otherwise. This is the single
+  // computation that drives both the sidebar sub-label
+  // (MenuItems:1510–1521) and the picker's `currentSelectedId`
+  // (App.tsx:13155); both must update on workspace switch.
+  //
+  // Round-02 review (Codex P2): a workspace may carry a valid
+  // `metaAdAccountId` while its `metaAdAccountName` is the empty string
+  // — `connectMetaAccountImpl` (functions/src/metaConnection.ts:243–256)
+  // explicitly preserves the empty-string state when a first-time link
+  // omits `accountName`. The pre-fix branch hid the sub-label entirely
+  // for those workspaces. Resolve the workspace ID through the
+  // user-level `adAccounts[]` array (the ID source is still the
+  // workspace doc; the array is only the human-name lookup table the
+  // OAuth callback already populates) and fall back to the bare ID
+  // when even that lookup misses.
+  const metaAccountSubLabel = useMemo<string | null>(() => {
+    if (!metaConnection?.connected) return null;
+    if (activeWorkspaceNeedsMetaAccount) return null;
+    if (canUseWorkspaces) {
+      const wsId = activeWorkspace?.metaAdAccountId ?? null;
+      const wsName = activeWorkspace?.metaAdAccountName;
+      if (wsName && wsName.length > 0) return wsName;
+      if (!wsId) return null;
+      // Workspace-linked but unnamed: look the ID up in the connection's
+      // account list. `adAccounts[]` is the same array the OAuth
+      // callback populates for every account the user has granted; the
+      // id is workspace-scoped, only the human-readable `name` is
+      // resolved through this user-level mirror.
+      const account = metaConnection.adAccounts?.find((a) => a.id === wsId);
+      return account?.name && account.name.length > 0 ? account.name : wsId;
+    }
+    const id = metaConnection?.selectedAccountId ?? null;
+    const account = id ? metaConnection?.adAccounts?.find((a) => a.id === id) : undefined;
+    const name = account?.name;
+    return name && name.length > 0 ? name : (id ?? null);
+  }, [
+    metaConnection?.connected,
+    metaConnection?.selectedAccountId,
+    metaConnection?.adAccounts,
+    activeWorkspaceNeedsMetaAccount,
+    canUseWorkspaces,
+    activeWorkspace?.metaAdAccountId,
+    activeWorkspace?.metaAdAccountName,
+  ]);
+
+  // fix-workspace-bleed — picker highlight id. Same gate as
+  // `activeMetaAccountId` so the picker shows the active workspace's
+  // account as currently-selected when a workspace plan is active.
+  // Falls back to the user-level `selectedAccountId` on non-workspace
+  // plans, mirroring the pre-fix behaviour on those plans (where the
+  // user-level selection is the only source of truth).
+  const metaAccountPickerCurrentId = useMemo<string | null>(() => {
+    if (!canUseWorkspaces) return metaConnection?.selectedAccountId ?? null;
+    return activeWorkspace?.metaAdAccountId ?? null;
+  }, [canUseWorkspaces, activeWorkspace?.metaAdAccountId, metaConnection?.selectedAccountId]);
 
   // Phase 14 batch 01 (workspace-account fix) — Open the picker with the
   // active workspace's name in the title. Used by the "Select ad account
@@ -11582,6 +11657,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         funnelSettingsAvailable={funnelSettingsAvailable}
         funnelSettingsComplete={funnelSettingsComplete}
         activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
+        metaAccountSubLabel={metaAccountSubLabel}
         isTeamMember={isTeamMemberUser}
       />
 
@@ -11706,6 +11782,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         funnelSettingsAvailable={funnelSettingsAvailable}
         funnelSettingsComplete={funnelSettingsComplete}
         activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
+        metaAccountSubLabel={metaAccountSubLabel}
         isTeamMember={isTeamMemberUser}
               />
             </div>
@@ -13152,7 +13229,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         <MetaAccountPickerModal
           open={showMetaAccountPicker}
           accounts={(metaConnection?.adAccounts ?? []).map((a) => ({ id: a.id, name: a.name }))}
-          currentSelectedId={metaConnection?.selectedAccountId ?? null}
+          // fix-workspace-bleed — picker highlight id is workspace-aware
+          // on workspace plans (active workspace's account) and falls
+          // back to the user-level `selectedAccountId` on non-workspace
+          // plans. See `metaAccountPickerCurrentId` memo above.
+          currentSelectedId={metaAccountPickerCurrentId}
           selecting={metaAccountPickerSelecting}
           errorMessage={metaAccountPickerError}
           isDarkMode={isDarkMode}

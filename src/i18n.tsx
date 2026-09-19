@@ -993,6 +993,11 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.switcher.brand_workspaces': 'Brand Workspaces',
         'workspace.switcher.default_badge': 'Default',
         'workspace.switcher.default_name': 'Default Workspace',
+        // fix-workspace-bleed — search/filter bar in the workspace
+        // dropdown. Shown only when the list has 2+ entries.
+        'workspace.switcher.search_placeholder': 'Search workspaces…',
+        'workspace.switcher.clear_search': 'Clear search',
+        'workspace.switcher.no_results': 'No workspaces found',
         'roles.meta.admin': 'Meta Admin',
         'roles.meta.advertiser': 'Advertiser',
         'roles.meta.analyst': 'Analyst',
@@ -1936,6 +1941,12 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.switcher.brand_workspaces': 'مساحات عمل العلامات',
         'workspace.switcher.default_badge': 'افتراضية',
         'workspace.switcher.default_name': 'مساحة العمل الافتراضية',
+        // fix-workspace-bleed — Arabic strings for the workspace-search
+        // filter (Arabic-first per the i18n contract; matching the EN
+        // placeholder/clear/no-results surface area).
+        'workspace.switcher.search_placeholder': 'ابحث عن مساحة عمل…',
+        'workspace.switcher.clear_search': 'مسح البحث',
+        'workspace.switcher.no_results': 'لا توجد مساحات عمل مطابقة',
         'roles.meta.admin': 'مسؤول Meta',
         'roles.meta.advertiser': 'معلِن',
         'roles.meta.analyst': 'محلل',
