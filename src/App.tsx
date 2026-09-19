@@ -4279,12 +4279,32 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   // computation that drives both the sidebar sub-label
   // (MenuItems:1510–1521) and the picker's `currentSelectedId`
   // (App.tsx:13155); both must update on workspace switch.
+  //
+  // Round-02 review (Codex P2): a workspace may carry a valid
+  // `metaAdAccountId` while its `metaAdAccountName` is the empty string
+  // — `connectMetaAccountImpl` (functions/src/metaConnection.ts:243–256)
+  // explicitly preserves the empty-string state when a first-time link
+  // omits `accountName`. The pre-fix branch hid the sub-label entirely
+  // for those workspaces. Resolve the workspace ID through the
+  // user-level `adAccounts[]` array (the ID source is still the
+  // workspace doc; the array is only the human-name lookup table the
+  // OAuth callback already populates) and fall back to the bare ID
+  // when even that lookup misses.
   const metaAccountSubLabel = useMemo<string | null>(() => {
     if (!metaConnection?.connected) return null;
     if (activeWorkspaceNeedsMetaAccount) return null;
     if (canUseWorkspaces) {
-      const name = activeWorkspace?.metaAdAccountName;
-      return name && name.length > 0 ? name : null;
+      const wsId = activeWorkspace?.metaAdAccountId ?? null;
+      const wsName = activeWorkspace?.metaAdAccountName;
+      if (wsName && wsName.length > 0) return wsName;
+      if (!wsId) return null;
+      // Workspace-linked but unnamed: look the ID up in the connection's
+      // account list. `adAccounts[]` is the same array the OAuth
+      // callback populates for every account the user has granted; the
+      // id is workspace-scoped, only the human-readable `name` is
+      // resolved through this user-level mirror.
+      const account = metaConnection.adAccounts?.find((a) => a.id === wsId);
+      return account?.name && account.name.length > 0 ? account.name : wsId;
     }
     const id = metaConnection?.selectedAccountId ?? null;
     const account = id ? metaConnection?.adAccounts?.find((a) => a.id === id) : undefined;
@@ -4296,6 +4316,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     metaConnection?.adAccounts,
     activeWorkspaceNeedsMetaAccount,
     canUseWorkspaces,
+    activeWorkspace?.metaAdAccountId,
     activeWorkspace?.metaAdAccountName,
   ]);
 
