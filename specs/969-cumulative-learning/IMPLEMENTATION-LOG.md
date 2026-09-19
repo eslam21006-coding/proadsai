@@ -1163,9 +1163,175 @@ The four behavioural checks the owner asked for cannot be reproduced in this env
 ### 12.7 What this batch does NOT deliver
 
 - **A 'resume last session' affordance.** Owner locked §12.5 #1 against it for now. The owner may reintroduce it later; if so, the answer to §11.4 #2 (IndexedDB workspaceId migration) returns, and the autosave's `resolvedWorkspaceId` chain at `src/App.tsx:4842-4844` will need the additional cross-workspace resume guard at §11.4 #3.
-- **A fix for the white-screen report.** Per §12.4, the restore path is not the source. The crash originates elsewhere; investigation is not done here.
-- **A regression test for the empty-snapshot guard.** See §12.6 — the guard is in an App-level `useEffect` and the existing vitest harness is component-scoped. A future batch could extract the guard to a pure helper (`isEmptySnapshot(state) → boolean`) and pin it with a unit test; that's a separate refactor.
+- **A fix for the white-screen report.** Per §12.4, the restore path is not the source. The crash originates elsewhere; investigation is not done here. **Update from §13 below:** §13 closes one of the candidate crash paths in this exact file (loadProject → state-becomes-undefined → auto-save reads `.length`), but the original report remains unrooted.
+- **A regression test for the empty-snapshot guard.** See §12.6 — the guard is in an App-level `useEffect` and the existing vitest harness is component-scoped. A future batch could extract the guard to a pure helper (`isEmptySnapshot(state) → boolean`) and pin it with a unit test; that's a separate refactor. **Landed in §13.**
 
 ### 12.8 Files touched
 
 - `src/App.tsx` — removed the auto-restore branch in the history-engine effect; added the empty-snapshot guard in the auto-save effect; updated nine comment blocks to record the removal (`hasRestoredRef`, `projectEstablishedRef`, the cap-detection comments, `migrateProjectInputsShape`, `detectStrippedAssets`, the section dividers). No new imports, no new exports, no type changes, no schema, rules, or backend changes.
+
+---
+
+## 13. Empty-snapshot guard extraction (Phase 4 Batch 3 follow-up)
+
+**Branch:** `969-phase-4`. Batch 3 follow-up committed after the owner accepted the live-session verification in §12 and asked §12.7 #3 to land in this batch instead of a later one.
+**Author:** extraction + 30-test pure-helper regression suite. Three files touched.
+
+§12.7 listed the guard's lack of a regression test as a "non-deliverable". §12.6 named the structural reason: the predicate lived inline in a `useEffect` inside the 13,600-line App monolith, and the vitest harness is component-scoped, so testing it directly would require mocking the entire App with its Firebase context. That combination — load-bearing logic, no test, buried where nobody reads — is exactly how the empty-snapshot bug got there in the first place. The fix is structural: move the predicate to a pure function and pin it.
+
+### 13.1 The extraction
+
+**New file: `src/utils/isEmptySnapshot.ts`** (108 lines). Exports one pure function `isEmptySnapshot(s: SnapshotShape): boolean` and a narrow input type `SnapshotShape`. The type admits exactly the ten fields the predicate reads — `inputs`, the five arrays (`mockupHistory`, `carouselSlides`, `batchResults`, `batchCaptions`, `batchHookGroups`), and the four text fields (`tovText`, `conceptsText`, `buildPlan`, `captionText`). A wider type would invite callers to pass more than the function reads and hide what it depends on.
+
+**The implementation.** Three rules:
+
+1. `inputs != null` → `false` (any non-null object is content; `getDefaultInputs()` returns an object with all-empty strings, but the user typed into it, so it's a real draft — drilling into field-level emptiness here would duplicate work the downstream cap-detection already does).
+2. `(arr?.length ?? 0) > 0` for each of the five arrays. The `?.` and `??` make `undefined` arrays safely count as empty.
+3. Truthy check on each of the four text fields. `''` falls through to "empty"; `undefined` falls through too (truthy check covers both).
+
+**The wiring.** `src/App.tsx`'s auto-save effect (the same one the inline guard lived in at the old `src/App.tsx:4757-4768`, now at `src/App.tsx:4754-4773`) calls the helper with an explicit ten-field object. The helper import is `import { isEmptySnapshot } from './utils/isEmptySnapshot';` added to the existing utils-import block at `src/App.tsx:15`.
+
+### 13.2 The behaviour change vs. the inline guard (the white-screen mechanism)
+
+The inline guard used `mockupHistory.length === 0` and four sibling `.length` reads. If any of those arrays is `undefined`, that read throws `TypeError: Cannot read properties of undefined (reading 'length')` — the exact error shape the white-screen report names.
+
+That crash is reachable. `loadProject` at `src/App.tsx:5467` calls `setMockupHistory(p.mockupHistory)`, and a malformed SavedProject whose doc lacks the `mockupHistory` field lands `undefined` in state. On the next render the auto-save effect fires, reads `mockupHistory.length`, and crashes. §12.4 listed this as a candidate mechanism for the white-screen report and explicitly noted that the inline guard did NOT survive it.
+
+**The helper does.** `(arr?.length ?? 0) > 0` is `false` for `undefined` and `[]`; the predicate returns `true` (snapshot is empty → save skipped, no throw). Tests §13.4 #5 below pin this for every array field individually, plus a "every field undefined" worst-case fixture.
+
+The behaviour change is therefore strictly an improvement: where the inline guard crashed, the helper saves no work and continues normally; where the inline guard saved nothing (the empty-fresh-mount case), the helper also saves nothing — same outcome.
+
+### 13.3 Other emptiness-check patterns on the same fields
+
+The owner asked §3 to confirm there is no other inline duplicate of the auto-save guard. Searched: every reference to `mockupHistory.length === 0`, `isEmpty`, `stepsWithData`, `hasMeaningfulData`, `hasData` across `src/`. One related-but-distinct predicate surfaces, which is worth naming so it doesn't drift later:
+
+**`src/lib/projectStepsData.ts:7` — `stepsWithData(p)`.** Returns a per-step boolean record (`input`, `tov_review`, `concept_review`, `render_studio`, `primary_text`) for a *saved* `SavedProject`. It is a read-side predicate the `SavedProjectCard` and `loadProject` use to render which steps a project has reached. It is **not** the same shape as `isEmptySnapshot`:
+
+- Input is a `Pick<SavedProject, ...>` of nine fields, not a live-state `SnapshotShape` of ten. `stepsWithData` reads `selectedTov`; `isEmptySnapshot` reads `conceptsText`.
+- The `input` check uses `Object.keys(project.inputs ?? {}).length > 0` — that counts the number of keys in `inputs`, so a saved AdInputs with all-empty string fields still registers as "has data" because the keys exist. `isEmptySnapshot` uses `inputs != null` — same object identity, no field drilling.
+- `stepsWithData` operates on a *persisted* doc (loaded from Firestore / IndexedDB). `isEmptySnapshot` operates on the *live session* state the auto-save effect snapshots.
+
+Substituting one for the other would be wrong in both directions. **No change made** to `stepsWithData` in this batch.
+
+No other file contains the same inline emptiness predicate. The auto-save effect's gate is the only consumer of `isEmptySnapshot`.
+
+### 13.4 The test file
+
+**New file: `src/__tests__/isEmptySnapshot.test.ts`** (227 lines, 30 tests). Five `describe` blocks mirror the five distinctions the owner named:
+
+1. **Blank snapshot is empty** (the case the guard exists for) — 2 tests.
+2. **Each field alone makes the snapshot non-empty** — 10 tests, one per field. If someone drops a field from the predicate in a future refactor, exactly one of these fails and the failing test name names the dropped field.
+3. **Empty string is NOT content** (text fields) — 4 tests (`''` is empty for each text field) plus 1 defensive test that `' '` (whitespace) IS content (the predicate reads truthiness, not trimmed length — a separate concern from any rendering-layer trimming).
+4. **Empty array is NOT content** (array fields) — 5 tests (`[]` is empty for each array).
+5. **Undefined and null are handled safely** — 8 tests: every-field-undefined (worst case), each array-undefined individually (the §12.4 crash path), `inputs: undefined` (the type permits it), and the reverse case (a single array present alongside every other array undefined → still non-empty, so a future partial-restore path can't accidentally regress to "everything missing means save").
+
+The test file uses a `blank(overrides?)` helper that returns a fully-empty `SnapshotShape` with the supplied overrides, so each test's setup is one line.
+
+### 13.5 Verification
+
+```powershell
+cd "D:\proads-worktrees\969-phase-4"
+npm run build          # EXIT 0
+npx vitest run         # EXIT 0
+cd functions
+Remove-Item -Recurse -Force lib
+npm run build          # EXIT 0
+npm test               # EXIT 0
+```
+
+```text
+$ npm run build
+> tsc -b && vite build
+vite v7.3.5 building client environment for production...
+✓ 125 modules transformed.   # was 124 — one new file
+✓ built in 17.81s
+EXIT: 0
+```
+
+```text
+$ npx vitest run
+RUN v4.1.4 D:/proads-worktrees/969-phase-4
+Test Files  9 passed (9)        # was 8 — one new file
+Tests       136 passed (136)    # was 106 — +30 from isEmptySnapshot.test.ts
+Start at    22:21:09
+Duration    13.11s
+EXIT: 0
+```
+
+The new file alone, verbose (so each assertion name is visible):
+
+```text
+$ npx vitest run --reporter=verbose src/__tests__/isEmptySnapshot.test.ts
+
+isEmptySnapshot — blank snapshot is empty (the case the guard exists for)
+  ✓ a fully blank snapshot returns true (everything at its empty default) 2ms
+  ✓ every field null + every array empty + every text '' is empty 0ms
+
+isEmptySnapshot — each field alone makes the snapshot non-empty
+  ✓ inputs alone (everything else blank) → non-empty 0ms
+  ✓ mockupHistory with one entry (everything else blank) → non-empty 0ms
+  ✓ carouselSlides with one entry (everything else blank) → non-empty 0ms
+  ✓ batchResults with one entry (everything else blank) → non-empty 0ms
+  ✓ batchCaptions with one entry (everything else blank) → non-empty 0ms
+  ✓ batchHookGroups with one entry (everything else blank) → non-empty 0ms
+  ✓ tovText alone (everything else blank) → non-empty 1ms
+  ✓ conceptsText alone (everything else blank) → non-empty 0ms
+  ✓ buildPlan alone (everything else blank) → non-empty 0ms
+  ✓ captionText alone (everything else blank) → non-empty 0ms
+
+isEmptySnapshot — empty string is NOT content (text fields)
+  ✓ tovText: '' is empty 0ms
+  ✓ conceptsText: '' is empty 0ms
+  ✓ buildPlan: '' is empty 0ms
+  ✓ captionText: '' is empty 0ms
+  ✓ tovText: ' ' (whitespace) is NOT empty — content includes non-empty trimmed strings 0ms
+
+isEmptySnapshot — empty array is NOT content (array fields)
+  ✓ mockupHistory: [] is empty 0ms
+  ✓ carouselSlides: [] is empty 0ms
+  ✓ batchResults: [] is empty 0ms
+  ✓ batchCaptions: [] is empty 0ms
+  ✓ batchHookGroups: [] is empty 0ms
+
+isEmptySnapshot — undefined and null are handled safely
+  ✓ every array undefined (no .length access) → still returns a value (does not throw) 1ms
+  ✓ mockupHistory: undefined alone (the §12.4 crash path) → no throw, treated as empty 0ms
+  ✓ carouselSlides: undefined alone → no throw, treated as empty 0ms
+  ✓ batchResults: undefined alone → no throw, treated as empty 0ms
+  ✓ batchCaptions: undefined alone → no throw, treated as empty 0ms
+  ✓ batchHookGroups: undefined alone → no throw, treated as empty 0ms
+  ✓ inputs: undefined (not just null) is treated as empty 0ms
+  ✓ a single array present alongside every other array undefined → non-empty (the field-still-matters check) 0ms
+
+Test Files  1 passed (1)
+     Tests  30 passed (30)
+EXIT: 0
+```
+
+```text
+$ cd functions; npm run build
+> tsc && shx mkdir -p lib/assets && shx cp -r src/assets/* lib/assets/
+EXIT: 0
+```
+
+```text
+$ cd functions; npm test
+… (full chain — same shape as §12.6) …
+contractFixtures.test: PASS
+EXIT: 0
+```
+
+The functions suite is untouched by this frontend-only change. The same exit codes as §12.6 confirm no regression.
+
+### 13.6 What this batch does NOT deliver
+
+- **A fix for the white-screen report (the original report).** This batch closes the *candidate* crash path the §12.4 walk named — the auto-save effect reading `.length` on a `mockupHistory` that `loadProject` set to `undefined`. The original report (against an unspecified minified stack) remains unrooted. The two arrays-out-of-five undefined cases the test pins are the most plausible mechanism; if the white-screen reproduces in the next live verification, that path is now closed and the search moves elsewhere.
+- **A test for `stepsWithData`.** §13.3 notes it as a related-but-distinct predicate. Out of scope for this batch.
+- **An `isEmptySnapshot` consumer in the cloud sync round-trip.** The cloud write path is gated on `workspaceReady` (`src/App.tsx:4674-4688`) and the `stripHeavyImageData` stripper. Empty snapshots still go through to Firestore if the auto-save's local-only queue ever accepted one — the auto-save's `saveProjectToDB` followed by the `saveProject` callable is the second layer. Adding `isEmptySnapshot` to the second layer is a defense-in-depth move that this batch does not make; the local auto-save's gate is the only place the bug can enter, and that gate is now pinned.
+
+### 13.7 Files touched
+
+- `src/utils/isEmptySnapshot.ts` — **new**. 108 lines. Pure function + narrow input type + safety-contract docstring.
+- `src/__tests__/isEmptySnapshot.test.ts` — **new**. 227 lines. 30 tests across 5 `describe` blocks.
+- `src/App.tsx` — imported the helper (one line added to the existing utils-import block at line 15); replaced the ten-line inline predicate with a ten-line helper call (lines 4754-4773). Net change +18 / -13.
+- No schema, rules, or backend changes. No changes to any other file.

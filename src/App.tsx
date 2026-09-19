@@ -12,6 +12,7 @@ import { resolveCreativeSpec, CREATIVE_MODE_CATALOG, type ResolvedCreativeSpec }
 import { isValidHookPayload, validateCanonicalHooks, normalizeHooksToCanonical, getHookValidationSummary } from './utils/hookPayload';
 import { parseHookVariations, parseHookVariation } from './utils/hookVariationParser';
 import { buildInlineEditedBlock } from './utils/inlineHookEdit';
+import { isEmptySnapshot } from './utils/isEmptySnapshot';
 import { useAppStore } from './store';
 import FeedbackButtons from './components/FeedbackButtons';
 import FavoritesPanel from './components/FavoritesPanel';
@@ -4753,19 +4754,23 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     // mount-time snapshot would propagate. Gate the save on real content:
     // a snapshot is meaningful iff it carries inputs, renders, a carousel, a
     // batch, or generated text. This is the live-session equivalent of the
-    // server-side "is this a draft?" predicate.
-    const snapshotIsEmpty =
-      !inputs &&
-      mockupHistory.length === 0 &&
-      carouselSlides.length === 0 &&
-      batchResults.length === 0 &&
-      batchCaptions.length === 0 &&
-      batchHookGroups.length === 0 &&
-      !tovText &&
-      !conceptsText &&
-      !buildPlan &&
-      !captionText;
-    if (snapshotIsEmpty) return;
+    // server-side "is this a draft?" predicate. The predicate is the pure
+    // helper at src/utils/isEmptySnapshot.ts; the helper additionally
+    // treats `undefined` arrays as empty (vs. crashing on `.length` here,
+    // which is the loadProject → malformed-doc crash path the previous
+    // implementation did NOT survive).
+    if (isEmptySnapshot({
+      inputs,
+      mockupHistory,
+      carouselSlides,
+      batchResults,
+      batchCaptions,
+      batchHookGroups,
+      tovText,
+      conceptsText,
+      buildPlan,
+      captionText,
+    })) return;
 
     const uid = effectiveUidRef.current;
     if (!uid) return;
