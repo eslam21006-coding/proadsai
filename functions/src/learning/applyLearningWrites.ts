@@ -39,6 +39,7 @@ import {
     applyHookAggregatesDelta,
     applyHookAggregateWithdrawal,
     applyVisualAggregatesDelta,
+    decrementEfficiencyByFunnelType,
 } from "./aggregateDelta.js";
 import { decideContribution } from "./contributionLedger.js";
 import type { ContributionDecision } from "./contributionLedger.js";
@@ -49,6 +50,13 @@ import {
     type VisualPerformanceAggregate,
 } from "../learningAggregates.js";
 import { resolveFunnelTypeBucketKey } from "../learningAggregates.js";
+import {
+    computeEfficiencyFigure,
+    decideEfficiencyWrite,
+    isEligibleForEfficiency,
+    type EfficiencyRow,
+} from "./efficiencyFigure.js";
+import { resolveCreativeSealedContext } from "./sealedContext.js";
 
 // `DbLike` is the same loose contract the lease acquire accepts.
 // Kept loose here because the consumer-cast to `Parameters<...>` is what
@@ -59,8 +67,19 @@ type DbLike = unknown;
 // read). The full type lives in `../metaSync/shared.ts`; the bounded
 // read returns `Partial<AdDoc>` and the ledger only needs the
 // `ledger` field.
+//
+// Batch 5 (T052a) — the eligibility walk reads Batch 1's
+// `dayAccrual`, Batch 1's `adStatus`, and Batch 2's `sealedTarget`
+// off the same `existingByAdId` cache. The shape is widened to
+// carry those fields; the bounded read at `shared.ts:339` already
+// populates them.
 interface AdDocLike {
     ledger?: ContributionLedgerEntry;
+    dayAccrual?: import("./types.js").DayAccrual | null;
+    sealedTarget?: number | null;
+    sealedAt?: number | null;
+    sealedFunnelType?: import("./sealedContext.js").WorkspaceFunnelType | null;
+    adStatus?: string | null;
 }
 type ExistingByAdId = Map<string, AdDocLike>;
 
@@ -202,6 +221,14 @@ export function applyVisualAggregateWithdrawal(
         clone.efficiencyContributingCount = efficiencyRemaining.size;
         clone.efficiencyContributingKeys = [...efficiencyRemaining];
     }
+
+    // Batch 5 (FR-030) — funnel-type symmetry: the same key was
+    // incremented by the parallel visual addition path; mirror the
+    // decrement here. `decrementEfficiencyByFunnelType` is a no-op
+    // when `efficiencyFigure` is unset (this row never contributed)
+    // OR when the bucket count is already 0, so this is safe to
+    // call unconditionally.
+    decrementEfficiencyByFunnelType(clone, ad);
 
     return clone;
 }
@@ -444,11 +471,110 @@ export async function applyLearningWrites(
             });
         }
 
-        // 4. Additive pass.
+        // 4. Eligibility walk (Batch 5 — T052a) — the per-creative post-
+        // withdrawal pass that turns Batch 3's pure functions into
+        // aggregate-side state. Runs AFTER the withdrawal pass (so
+        // the per-row state is final) and BEFORE the additive pass
+        // (so Batch 4's aggregator reads `efficiencyFigure` on each
+        // row). Builds `EfficiencyRow`s ONCE per sync from the bounded-
+        // read cache (`existingByAdId`), groups by `creativeKey`, and
+        // runs Batches 1-3's pure functions per creative:
+        //   - `isEligibleForEfficiency` — FR-077's threshold (5
+        //     combined conversions across placements, or stopped with
+        //     ≥1 conversion). Reads `creativeConversionTotal` (the
+        //     accrual sum), NEVER `metrics.conversions3d` — that
+        //     would be the defect the accrual was built to prevent.
+        //   - `computeEfficiencyFigure` — FR-002a/FR-003's
+        //     aggregate-then-divide. Returns `null` for ineligible
+        //     creatives (no figure); the loop guards on `null`.
+        //   - `decideEfficiencyWrite` — FR-005c's efficiency-side
+        //     guard. First write permitted; subsequent refused. The
+        //     FR-005c carve-out's FIRST real consumer. Confirmed here.
+        //
+        // The walk mutates `learnedAds` in two places:
+        //   - `learnedAds[i].efficiencyFigure = figure` — Batch 4's
+        //     aggregator reads this on the additive pass.
+        //   - `learnedAds[i].ledger.efficiencyContributed /
+        //     efficiencyValue = figure` — Batch 3's FR-005c writes
+        //     these on the ledger entry.
+        const eligibilityRows: EfficiencyRow[] = params.learnedAds.map((ad) => {
+            const existing = params.existingByAdId.get(ad.adId);
+            return {
+                dayAccrual: existing?.dayAccrual ?? null,
+                sealedTarget: existing?.sealedTarget ?? null,
+                // Batch 5 wiring: carry `sealedAt` and `sealedFunnelType`
+                // through to the eligibility walk so
+                // `resolveCreativeSealedContext` (Batch 2) can pick the
+                // earliest-sealing row (FR-012a). Without these fields the
+                // resolver returns `null` and the walk refuses every row
+                // as "no-sealed-target" — the wiring would exist but never
+                // fire. The bounded read at `shared.ts:1097` populates
+                // both fields on the `AdDoc`; the bounded read is the
+                // sole source of truth here.
+                sealedAt: existing?.sealedAt ?? null,
+                sealedFunnelType: existing?.sealedFunnelType ?? null,
+                adStatus: existing?.adStatus,
+            };
+        });
+
+        // Build a per-creative lookup once for the walk. Order is
+        // irrelevant — each creative's rows are independent.
+        const efficiencyByCreative = new Map<string, EfficiencyRow[]>();
+        for (let i = 0; i < params.learnedAds.length; i++) {
+            const ad = params.learnedAds[i];
+            const ck = ad.creativeKey ?? ad.adId;
+            const list = efficiencyByCreative.get(ck);
+            if (list) list.push(eligibilityRows[i]);
+            else efficiencyByCreative.set(ck, [eligibilityRows[i]]);
+        }
+
+        // FR-012a — the creative's single sealed target. Resolved by
+        // Batch 2's helper. The walk uses it as the single sealed
+        // target for every row of the creative; rows that don't carry
+        // a sealed target are filtered out by `isEligibleForEfficiency`'s
+        // "no sealed target" branch.
+        for (const [creativeKey, rows] of efficiencyByCreative) {
+            const sealedContext = resolveCreativeSealedContext(rows);
+            const eligibility = isEligibleForEfficiency(rows, sealedContext);
+            if (!eligibility.eligible) continue;
+            const fig = computeEfficiencyFigure(rows, sealedContext);
+            if (fig === null) continue;
+
+            // Per-row write — Batch 5's first real consumer of the
+            // FR-005c carve-out. The guard reads the EXISTING ledger
+            // entry's `efficiencyContributed` flag (from the bounded-
+            // read cache). First-write permitted (Batch 4's test 031
+            // [shape] pins that the guard exists; this is the proof
+            // it fires on the path the worker takes).
+            for (let i = 0; i < params.learnedAds.length; i++) {
+                const ad = params.learnedAds[i];
+                const ck = ad.creativeKey ?? ad.adId;
+                if (ck !== creativeKey) continue;
+                const existingLedger = params.existingByAdId.get(ad.adId)?.ledger;
+                const writeVerdict = decideEfficiencyWrite(
+                    existingLedger as { efficiencyContributed: boolean | undefined } | undefined,
+                    fig.value,
+                );
+                if (!writeVerdict.allowed) continue;
+                // Thread the figure onto the per-row `AdForLearning` so
+                // Batch 4's aggregator reads it on the additive pass.
+                ad.efficiencyFigure = fig.value;
+                // Mirror onto the ledger entry the merge write persists.
+                const ledger = (ad as unknown as { ledger?: { efficiencyContributed?: boolean; efficiencyValue?: number | null } }).ledger
+                    ?? ((ad as unknown as { ledger: { efficiencyContributed?: boolean; efficiencyValue?: number | null } }).ledger = {
+                        efficiencyContributed: false,
+                        efficiencyValue: null,
+                    });
+                ledger.efficiencyContributed = true;
+                ledger.efficiencyValue = fig.value;
+            }
+        }
+
+        // 5. Additive pass.
         //
         // FR-021's additive delta semantics. Each entry in newHook /
         // newVisual received a contribution this sync, so writing it
-        // is non-redundant. Use set with merge=true so concurrent
+        // non-redundant. Use set with merge=true so concurrent
         // updates to other dimensions don't clobber.
         const newHook = applyHookAggregatesDelta(hookBase, params.learnedAds, params.nowMs);
         const newVisual = applyVisualAggregatesDelta(visualBase, params.learnedAds, params.nowMs);

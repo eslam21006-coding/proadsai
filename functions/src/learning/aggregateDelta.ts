@@ -136,6 +136,11 @@ export function applyHookAggregatesDelta(
                         agg.efficiencyContributingCreatives.size;
                 }
             }
+            // Batch 5 (FR-030) — fire the funnel-type efficiency
+            // increment ONCE per creative that contributed an
+            // efficiency figure. Mirrors the aggregate-level
+            // increment and follows the same first-time gate.
+            incrementEfficiencyByFunnelType(agg, angleRows[0]);
             // FR-020: counts never decrease. All eligible rows of the
             // creative contribute their values to the angle's sums.
             for (const ad of angleRows) {
@@ -290,6 +295,10 @@ export function applyVisualAggregatesDelta(
                         agg.efficiencyContributingCreatives.size;
                 }
             }
+            // Batch 5 (FR-030) — visual parallel. Mirror the hook
+            // call above — fire the funnel-type efficiency increment
+            // ONCE per creative that contributed an efficiency figure.
+            incrementEfficiencyByFunnelType(agg, ad);
             applyAdToVisual(agg, ad);
             agg.lastUpdated = syncAt;
             byPatternKey.set(patternKey, agg);
@@ -476,6 +485,11 @@ export function applyHookAggregateWithdrawal(
     if (isConversion) {
         decrementByFunnelType(clone, ad);
     }
+
+    // Batch 5 (FR-030) — symmetric efficiency-funnel decrement. Same
+    // gate as the addition (only fires for efficiency contributors)
+    // and the same `?? 0` boundary on the bucket count.
+    decrementEfficiencyByFunnelType(clone, ad);
 
     // Batch 28 (Fix B, FR-036): a withdrawn creative stops being counted.
     // The key is dropped and `creativeCount` re-derived from the set, so
@@ -820,7 +834,23 @@ function incrementByFunnelType(agg: ByFunnelTypeAgg, ad: AdForLearning): void {
         ? cloneByFunnelType(agg.byFunnelType)
         : cloneByFunnelType(EMPTY_BY_FUNNEL_TYPE);
     const bucket = existing[key];
-    existing[key] = { count: bucket.count + 1 };
+    existing[key] = { count: bucket.count + 1, efficiencyCount: bucket.efficiencyCount };
+    agg.byFunnelType = existing;
+}
+
+function incrementEfficiencyByFunnelType(agg: ByFunnelTypeAgg, ad: AdForLearning): void {
+    // Batch 5 (FR-030) — fire ONLY when this row contributed an
+    // efficiency figure (the parallel gate to the FR-037
+    // efficiency-contribution increment at the aggregate level).
+    // Mirrors the existing incrementByFunnelType so the
+    // add/withdraw symmetry invariant applies in both directions.
+    if (typeof ad.efficiencyFigure !== "number") return;
+    const key = resolveFunnelTypeBucketKey(ad.funnelType);
+    const existing: ByFunnelTypeBreakdown = agg.byFunnelType
+        ? cloneByFunnelType(agg.byFunnelType)
+        : cloneByFunnelType(EMPTY_BY_FUNNEL_TYPE);
+    const bucket = existing[key];
+    existing[key] = { count: bucket.count, efficiencyCount: (bucket.efficiencyCount ?? 0) + 1 };
     agg.byFunnelType = existing;
 }
 
@@ -830,5 +860,19 @@ function decrementByFunnelType(agg: ByFunnelTypeAgg, ad: AdForLearning): void {
     if (!existing) return;
     const bucket = existing[key];
     if (bucket.count <= 0) return;
-    existing[key] = { count: bucket.count - 1 };
+    existing[key] = { count: bucket.count - 1, efficiencyCount: bucket.efficiencyCount };
+}
+
+export function decrementEfficiencyByFunnelType(agg: ByFunnelTypeAgg, ad: AdForLearning): void {
+    // Batch 5 (FR-030) — parallel to incrementEfficiencyByFunnelType.
+    // `delete`'s return value guards the absent-key case (the same
+    // correction the user named for the aggregate-level withdrawal):
+    // an absent key is a no-op, so the bucket count is unchanged.
+    const key = resolveFunnelTypeBucketKey(ad.funnelType);
+    const existing = agg.byFunnelType;
+    if (!existing) return;
+    const bucket = existing[key];
+    const current = bucket.efficiencyCount ?? 0;
+    if (current <= 0) return;
+    existing[key] = { count: bucket.count, efficiencyCount: current - 1 };
 }

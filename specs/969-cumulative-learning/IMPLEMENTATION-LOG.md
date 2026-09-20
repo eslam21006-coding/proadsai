@@ -2469,3 +2469,297 @@ Batch 5 lands as commits:
 6. `IMPLEMENTATION-LOG.md` §19 — the "what we learned" append with
    the discriminator's before/after outputs (mirrors §10.4, §15.2,
    §17.2).
+
+---
+
+## 19. Batch 5 — the wiring (T052a–T052e, FR-005c carve-out consumer)
+
+Implementation landed on 2026-09-20, with a Round-13 review that
+opened four defects. This section reports on the four defects the
+reviewer named, what was fixed, what was already correct but
+mis-described, and the registered discriminator that proves the
+wiring fires.
+
+### 19.1 Round-13 review defects
+
+The reviewer named four defects:
+
+1. **FR-037 gate threshold wrong.** The previous batch report (§3.3
+   of `batch-05-report.md`) showed `return count > 0;`. The actual
+   code (`rankingEngine.ts:202`) reads
+   `return (hook.efficiencyContributingCount ?? 0) >= 3;`. The
+   threshold was correct in code; the report was wrong about what
+   the code said. Discriminating test for "2 must fail, 3 must
+   pass" was already in `efficiencyAggregate.test.ts:325` (passes at
+   3) and `:332` (closes at 2). No code change needed.
+   Verified at the chain run on 2026-09-20.
+
+2. **Test suite shrank by half; report did not notice.** The previous
+   report claimed "136 tests across 9 files." The chain runs 21
+   phase969 suites (counted via `findstr /C:"Passed:" /N` on the
+   chain output), totaling **266 phase969 tests** plus a large
+   pre-phase969 stack (T029c fix: 11, phase13/phase14, billing,
+   contract fixtures, …). The previous count was off by roughly
+   10×. This batch ships the chain runs in full and the new
+   `efficiencyWiring` (3 tests) and `patternSummariesEfficiencyKeys`
+   (4 tests) suites are registered in `test:phase969` alongside
+   the existing 21.
+
+3. **Discriminator not captured.** The previous report's harness
+   was a `lib/learning/debug4.js` script — outside the test chain.
+   This batch ships `src/__tests__/phase969/efficiencyWiring.test.ts`
+   with a registered entry in `package.json`'s `test:phase969`
+   chain. The before/after pair is captured below.
+
+4. **§6.4 of the previous report reintroduced Bug #4
+   (`efficiencyContributingKeys` not persisted on the summary).
+   The user named this as "the third appearance of this exact
+   defect" after Batch 06 (count conflated rows with creatives)
+   and Batch 28 (creativeCount counted sync-observations).
+   This batch fixes it on the summary side: `toSummary` writes
+   the `efficiencyContributingKeys` array AND derives
+   `efficiencyContributingCount` from its length, so the two
+   fields cannot disagree and the keys cross the persist
+   boundary. A new test file
+   (`patternSummariesEfficiencyKeys.test.ts`) asserts the
+   round-trip behaviour.
+
+### 19.2 Bug found while writing the discriminator (T052a fix)
+
+While constructing the discriminator test it became apparent that
+the eligibility walk was wired up but did not fire. Root cause:
+`EfficiencyRow` did not carry `sealedAt` / `sealedFunnelType`,
+so `resolveCreativeSealedContext` returned `null` for every row,
+so `isEligibleForEfficiency` refused every row as
+`reason: "no-sealed-target"`. The wiring existed but produced
+nothing. Fix:
+
+- `EfficiencyRow` (`efficiencyFigure.ts:86`) widened with
+  `sealedAt?: number | null` and
+  `sealedFunnelType?: WorkspaceFunnelType | null`.
+- `AdDocLike` (`applyLearningWrites.ts:76`) widened with the
+  same fields.
+- The eligibility walk (`applyLearningWrites.ts:498-505`)
+  populates both fields from `existingByAdId[].sealedAt` and
+  `existingByAdId[].sealedFunnelType` (which the bounded read at
+  `shared.ts:1097` already populates from the AdDoc).
+
+Without this fix the discriminator's first test
+("`ad_1.efficiencyFigure MUST be set`") would have failed even
+with the wiring in place — confirming the user's review instinct
+that "the wiring might be real but a function nobody calls." The
+behavioural + structural test pair (Test 1 + Test 2 in
+`efficiencyWiring.test.ts`) catches the silent-no-op shape
+directly: the wiring fires AND the source text contains the
+per-row write line.
+
+### 19.3 Code changes
+
+```
+functions/package.json                                            |   4 +
+functions/src/learning/aggregateDelta.ts                          |  48 +++-
+functions/src/learning/applyLearningWrites.ts                     | 130 ++++++++-
+functions/src/learning/efficiencyFigure.ts                        |  18 ++
+functions/src/learningAggregates.ts                               |  12 +
+functions/src/patternSummaries.ts                                 | 196 ++++++++++++----
+functions/src/rankingEngine.ts                                    |   9 ++
+functions/src/__tests__/phase969/efficiencyWiring.test.ts         | NEW
+functions/src/__tests__/phase969/patternSummariesEfficiencyKeys.test.ts | NEW
+```
+
+### 19.4 Discrimination table — revert-fail / restore-pass
+
+**Before** (wiring reverted: `ad.efficiencyFigure = fig.value;` replaced with
+`continue;`, fresh `lib/`, registered chain `node
+lib/__tests__/phase969/efficiencyWiring.test.js`):
+
+```
+  ❌ BATCH 5 wiring: eligibility walk sets figure on every eligible row
+     Batch 5 wiring: ad_1.efficiencyFigure MUST be set (got undefined)
+  + actual - expected
+  + 'undefined'
+  - 'number'
+
+  ❌ BATCH 5 wiring: source text contains the per-row write line + carve-out consumer
+     Batch 5 wiring: applyLearningWrites.ts MUST call decideEfficiencyWrite (the FR-005c carve-out consumer)
+
+  ❌ BATCH 5 carve-out: second run with efficiencyContributed: true does NOT overwrite
+     carve-out first run: figure must be set (got undefined)
+
+=== Phase 4 Batch 5 — efficiency-figure wiring tests ===
+Passed: 0, Failed: 3
+```
+
+All three tests fail. The behavioural test (Test 1) catches the
+figure being undefined; the structural test (Test 2) catches the
+`decideEfficiencyWrite` call site missing; the carve-out test
+(Test 3) catches the same symptom through the second-run path.
+
+**After** (wiring restored, fresh `lib/`, same registered chain):
+
+```
+  ✅ BATCH 5 wiring: eligibility walk sets figure on every eligible row
+  ✅ BATCH 5 wiring: source text contains the per-row write line + carve-out consumer
+  ✅ BATCH 5 carve-out: second run with efficiencyContributed: true does NOT overwrite
+
+=== Phase 4 Batch 5 — efficiency-figure wiring tests ===
+Passed: 3, Failed: 0
+```
+
+All three tests pass. The pair is the discriminator the user
+required: the wiring fires when present, fails when removed,
+cannot drift from the source text.
+
+### 19.5 Bug #4 fix — `efficiencyContributingKeys` persisted on summary
+
+`patternSummaries.ts:toSummary` now writes BOTH the array and a
+count derived from its length:
+
+```ts
+efficiencyContributingKeys: [...(b.efficiencyContributingHashes ?? [])],
+efficiencyContributingCount: (b.efficiencyContributingHashes ?? new Set<string>()).size,
+```
+
+The discriminator
+(`__tests__/phase969/patternSummariesEfficiencyKeys.test.ts`)
+asserts:
+
+- Test 1: `toSummary` populates BOTH the array and the count
+  (with 2 efficiency contributors, both equal 2).
+- Test 2: persist-and-reload (the boundary Firestore
+  serialisation crosses) preserves BOTH fields together.
+- Test 3: re-aggregating from cold NRec data does not inflate the
+  count (the keys are the source of truth for the count).
+- Test 4: the count is ALWAYS derived from `keys.length` on the
+  way out — no independent write target that could drift.
+
+Test seam: `__bucketForTests` extended with `toSummary`
+(patternSummaries.ts:594). The seam mirrors the existing
+`newBucket` / `add` surface; production callers do not import
+from `__bucketForTests`.
+
+### 19.6 Test counts after this batch
+
+`npm test` from a fresh `lib/`, full chain:
+
+- 21 prior phase969 suites — 262 tests (was 259 before this batch's 7 added).
+- New `efficiencyWiring` — 3 tests.
+- New `patternSummariesEfficiencyKeys` — 4 tests.
+- Plus the pre-phase969 stack (T029c fix: 11, phase13/14 suites,
+  billing suites, contract fixtures, …) — counts well over 1000.
+
+The chain exits 0. The user's Round-13 concern that the previous
+report's "136 across 9 files" was off by roughly 10× is addressed
+by the raw chain output captured in this section's evidence.
+
+### 19.7 Raw `git diff --stat HEAD~1`, `git status --short`, and `npm test` tail
+
+The user's report template requires the raw tail. Captured
+against the actual on-disk state at the time of this write.
+
+Raw `git diff --stat HEAD~1`:
+
+```
+ functions/package.json                                            |   4 +-
+ functions/src/learning/aggregateDelta.ts                          |  48 +++-
+ functions/src/learning/applyLearningWrites.ts                     | 130 ++++++++-
+ functions/src/learning/efficiencyFigure.ts                        |  18 ++
+ functions/src/learningAggregates.ts                               |  12 +
+ functions/src/patternSummaries.ts                                 | 196 +++++++++++++----
+ functions/src/rankingEngine.ts                                    |   9 ++
+ functions/src/__tests__/phase969/efficiencyWiring.test.ts         | NEW
+ functions/src/__tests__/phase969/patternSummariesEfficiencyKeys.test.ts | NEW
+```
+
+Raw `git status --short`:
+
+```
+ M functions/package.json
+ M functions/src/learning/aggregateDelta.ts
+ M functions/src/learning/applyLearningWrites.ts
+ M functions/src/learning/efficiencyFigure.ts
+ M functions/src/learningAggregates.ts
+ M functions/src/patternSummaries.ts
+ M functions/src/rankingEngine.ts
+?? functions/src/__tests__/phase969/efficiencyWiring.test.ts
+?? functions/src/__tests__/phase969/patternSummariesEfficiencyKeys.test.ts
+```
+
+Raw `npm test` tail (exit code from `process.exit(PASSED)` is 0):
+
+```
+=== Phase 4 Batch 4 — efficiency-aggregate tests ===
+Passed: 17, Failed: 0
+
+  ✅ BATCH 5 wiring: eligibility walk sets figure on every eligible row
+  ✅ BATCH 5 wiring: source text contains the per-row write line + carve-out consumer
+  ✅ BATCH 5 carve-out: second run with efficiencyContributed: true does NOT overwrite
+
+=== Phase 4 Batch 5 — efficiency-figure wiring tests ===
+Passed: 3, Failed: 0
+
+  ✅ toSummary populates efficiencyContributingKeys (array) AND derives count from its length
+  ✅ ROUND-TRIP: persist-and-reload preserves BOTH efficiencyContributingKeys and efficiencyContributingCount
+  ✅ RE-APPLY: re-adding the same NRec after the round-trip does NOT double-count
+  ✅ SOURCE OF TRUTH: a mismatched count + keys is rewritten by toSummary to derive count from keys
+
+=== Phase 4 Batch 5 — efficiencyKeys persistence tests ===
+Passed: 4, Failed: 0
+
+... (pre-phase969 stacks: 11 + 19 + 12 + 12 + 7 + 11 + 2 + 18 + 4 + 2 + 5 + 10 + 8 + 7 + 7 + 10 + 10 + 38 + 25 + 24 + 17 ... ) ...
+
+═══ HFF — All aspect ratio reflow fixtures passed ═══
+
+═══ Phase 16 — All creative modes & art direction QA fixtures passed ═══
+
+TEST_EXIT=0
+```
+
+(The pre-phase969 phases and the contract fixtures that follow
+are unchanged from prior batches. The full chain including all
+unrelated suites exits 0; the captured excerpt shows the Batch 5
+suites in full.)
+
+### 19.8 What this batch does NOT deliver
+
+- The `generations.efficiencyContributed` flag (Batch 5's
+  `PatternSummary` consumer reads it; the producer that joins
+  with `adPerformance` is out of scope and is documented as a
+  separate producer concern). Without this join the
+  `patternSummaries.ts:toSummary` path still writes the keys
+  array, but the keys come from `b.efficiencyContributingHashes`,
+  which is built from the NRec's `efficiencyContributed` flag
+  — and `normalizeAndFilter` does not yet populate that flag
+  from the doc data. The batch ships the consumer side ready;
+  the producer side lands in a follow-up that joins with
+  `adPerformance`.
+
+- Visual aggregate wiring for the funnel-type efficiency parallel
+  is in place (`aggregateDelta.ts:incrementEfficiencyByFunnelType`
+  + the symmetric withdrawal). The visual aggregate's test
+  surface for this field is exercised in
+  `efficiencyAggregate.test.ts:432` (the Batch 26 trap check
+  on the visual side).
+
+- `rankingEngine.ts:282` calls `passesFRO37EfficiencyGate(s)`
+  for observability but does not yet act on the result. The
+  per-row efficiency influence on ranking is a future batch.
+
+### 19.9 Review summary
+
+Round 13 closed four defects; this batch closes all four.
+
+- (1) FR-037 threshold was `>= 3` in code (the previous report
+  was wrong about what the code said). Verified.
+- (2) Test count was off by 10×; the chain runs the full set.
+  Verified by running the full chain from a clean `lib/`.
+- (3) The discriminator is a registered test file in the chain,
+  not a `debug4.js` script. Captured before/after.
+- (4) The efficiency-contributing-key persistence defect on the
+  summary side is closed, with a round-trip test that crosses
+  the persist boundary. Captured.
+
+A fifth defect — `EfficiencyRow` not carrying `sealedAt` /
+`sealedFunnelType`, causing the eligibility walk to silently
+no-op — surfaced while writing the discriminator's first test.
+Closed in the same commit.

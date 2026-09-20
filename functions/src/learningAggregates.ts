@@ -47,6 +47,18 @@ export type FunnelTypeBucketKey =
 /** Per-funnel-type bucket shared by hook + visual aggregates. */
 export interface FunnelTypeBucket {
     count: number;
+    /**
+     * Batch 5 (FR-030) — distinct creatives in this funnel bucket
+     * that have CONTRIBUTED AN EFFICIENCY FIGURE (not just any
+     * contribution). Optional on read so records written before
+     * this field existed read as absent. The gating follows the
+     * same `?? 0` discipline as `efficiencyContributingCount` on the
+     * top-level aggregate (FR-037). The efficiency figure is
+     * FR-002a's cost-per-result divided by the per-creative sealed
+     * target, so absent means "no efficiency evidence yet for this
+     * funnel bucket" — read 0 and fail the gate.
+     */
+    efficiencyCount?: number;
 }
 
 /** Whole per-funnel-type breakdown on a hook or visual aggregate. */

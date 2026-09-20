@@ -89,6 +89,24 @@ export interface EfficiencyRow {
     dayAccrual: DayAccrual | null;
     /** Batch 2's seal. `null` for an unsealed row. */
     sealedTarget: number | null;
+    /**
+     * Batch 2's seal timestamp. Required by
+     * `resolveCreativeSealedContext` (Batch 2) to pick the earliest-
+     * sealing row across the creative's rows (FR-012a). Without it
+     * the sealed-context resolver returns `null` and the eligibility
+     * walk refuses every row as "no-sealed-target". The wiring in
+     * `applyLearningWrites.ts` populates this from the bounded-read
+     * cache (`existingByAdId[].sealedAt`).
+     */
+    sealedAt?: number | null;
+    /**
+     * Batch 2's seal funnel type. Required by
+     * `resolveCreativeSealedContext` for the same reason as
+     * `sealedAt`. Without it the resolver returns `null` and the
+     * eligibility walk refuses every row. Populated from
+     * `existingByAdId[].sealedFunnelType` in the wiring.
+     */
+    sealedFunnelType?: WorkspaceFunnelType | null;
     /** Batch 1's stopped-running signal (FR-077(b)). */
     adStatus: string | null | undefined;
     /** TEST ONLY — the wrong impl's data source. The right impl

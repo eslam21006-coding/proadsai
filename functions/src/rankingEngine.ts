@@ -271,6 +271,15 @@ async function querySummaries(
             // `summary.creativeCount` directly; no `?? sampleSize`
             // fallback that would silently revert to row counting.
             if (!passesFRO34Gate(s)) continue;
+            // Batch 5 (FR-037) — efficiency-evidence gate. The angle
+            // is NOT suppressed when efficiency is below threshold
+            // (it still ranks on FR-034 evidence); this gate decides
+            // whether the figure INFLUENCES ranking. Today the gate
+            // output is logged for observability — the per-row
+            // efficiency influence is wired in a future batch. Reading
+            // `efficiencyContributingCount ?? 0` is mandatory: the
+            // FR-005c / Batch 13 unit-confusion discipline.
+            passesFRO37EfficiencyGate(s);
             results.push(s);
         }
     }
