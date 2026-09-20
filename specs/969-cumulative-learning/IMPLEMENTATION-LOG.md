@@ -2281,3 +2281,191 @@ Per §16.6, unchanged:
 The shape is complete; Batch 5 wires it.
 discrimination table captured once, against the wrong impl,
 with the actual failure output pasted.
+
+---
+
+## 18. Batch 5 plan — the wiring (FR-005c carve-out consumer, FR-037 gate, FR-030 efficiency)
+
+**What this batch delivers.** Every pure function from Batches 1
+through 4 is built and tested. No caller invokes any of them on
+the worker's behalf. Batch 5 is the call site — the piece that
+turns the figure from "a value that exists" to "a value that
+influences ranking". The discriminator discipline is the user's:
+**the test must fail when the wiring is reverted, pass when it
+is restored** (T021a / T025a's failure mode from the first PR).
+A test that supplies its own efficiencyFigure proves the aggregator
+works; it does NOT prove the worker computes and passes the figure.
+
+### 18.1 Where the eligibility walk goes — line numbers
+
+`applyLearningWrites.ts:445` is the close of step 3 (the withdrawal
+application block), and line 447 is the call to the additive
+pass:
+
+```
+   445              return next;
+   446          });
+   447
+   448          // 4. Additive pass.
+   449          //
+   450          // FR-021's additive delta semantics. ...
+   451          // ...
+   452          const newHook = applyHookAggregatesDelta(hookBase, params.learnedAds, params.nowMs);
+   453          const newVisual = applyVisualAggregatesDelta(visualBase, params.learnedAds, params.nowMs);
+```
+
+The eligibility walk lands between lines 446 and 448 — **after
+the consult, after the withdrawal pass, before the additive pass**.
+This is inside the lease (the `try` block at line 281 was opened
+after the lease was acquired by the caller; see the function header
+at lines 254-258).
+
+### 18.2 Why there rather than upstream or downstream
+
+- **Not upstream of step 1 (the consult, line 316)**. The
+  per-row consult mutates `learnedAds` via `decideContribution`
+  (lines 322, 347). The eligibility walk needs the post-consult
+  row set — the rows that will actually contribute this sync. A
+  pre-consult walk would run on rows that step 1 then strips via
+  `params.learnedAds.splice(i, 1)`.
+- **Not downstream of step 4 (the additive pass)**. Step 4 calls
+  `applyHookAggregatesDelta(hookBase, params.learnedAds, ...)`
+  which reads `ad.efficiencyFigure` per row. Mutating the figure
+  AFTER step 4 would mean the aggregator already ran without it —
+  the field would not affect the written aggregates.
+
+The user's phrase "after the consult and the withdrawal pass,
+before the additive pass" lands exactly at lines 446-448.
+
+### 18.3 Whether the sealed target is available without a new read
+
+Yes. `existingByAdId: ExistingByAdId` (line 219) is the
+bounded-read cache populated by the caller (`shared.ts:339` reads
+`adPerformance` for every ad in the batch). It carries Batch 1's
+`dayAccrual`, Batch 2's `sealedTarget` / `sealedAt` /
+`sealedFunnelType` / `contributionState`, and Batch 1's
+`adStatus`. The walk reads from it via `existingByAdId.get(adId)`
+— zero new Firestore reads.
+
+The walk's per-row input shape is `EfficiencyRow` from Batch 3
+(`learning/sealedContext.ts:75-79`): `{ dayAccrual, sealedTarget,
+adStatus }`. Built on the fly from `existingByAdId.get(adId)`.
+The pre-creative-walk step constructs:
+
+```ts
+const efficiencyRows: EfficiencyRow[] = learnedAds.map((ad) => {
+    const existing = existingByAdId.get(ad.adId);
+    return {
+        dayAccrual: existing?.dayAccrual ?? null,
+        sealedTarget: existing?.sealedTarget ?? null,
+        adStatus: existing?.adStatus,
+    };
+});
+```
+
+This map runs ONCE per sync, before the per-creative eligibility
+walks. The walks then group `efficiencyRows` by `creativeKey`.
+
+### 18.4 Existing efficiency gate call sites (and what they read today)
+
+`rankingEngine.ts:251` calls `passesFRO34Gate(s)` for the
+FR-034/034a activation/per-item-floor path; reads `s.creativeCount`
+(post-Batch 13, no `?? sampleSize` fallback). Line 406 has the
+inline FR-034a floor: `((s.creativeCount ?? 0) >= 3) && s.negativeCount >= 2`.
+
+**Neither reads efficiency today.** `passesFRO37EfficiencyGate`
+(exported at `rankingEngine.ts:194`) is invoked by nobody. For
+Batch 5 to wire it, `PatternSummary` needs `efficiencyContributingCount?: number`,
+populated by `patternSummaries.ts:441 toSummary` (paralleling the
+existing `creativeCount = b.n` line at `patternSummaries.ts:463`).
+
+The wiring mirrors `creativeCount`'s plumbing:
+
+```
+  learningAggregates.ts: PatternSummary adds
+    `efficiencyContributingCount?: number`
+  patternSummaries.ts: toSummary adds the parallel population
+    (`b.efficiencyContributingCreatives.size`)
+  rankingEngine.ts: line 251 + line 406 read it via
+    `passesFRO37EfficiencyGate({ efficiencyContributingCount })`
+```
+
+### 18.5 Behaviour with no efficiency contributions
+
+FR-037's gate is positive (`>= 3`). With
+`efficiencyContributingCount: 0` or `undefined`, the gate returns
+`false` (`(0 ?? 0) < 3`). **The angle is NOT suppressed** — the
+ranking flow falls through to the FR-034 path (which can open
+without efficiency contributions). The efficiency figure's
+WEIGHTED contribution to the score is omitted when the gate is
+closed; the angle itself still ranks on the FR-034 evidence.
+Under FR-037 an angle with fewer than 3 efficiency contributors
+is unaffected, not suppressed — the gate controls whether
+efficiency INFLUENCES ranking, not whether the angle APPEARS.
+
+This matches the spec's wording: "efficiency influences
+ranking for an angle or pattern only once 3 creatives carry a
+sealed efficiency figure" — the gate gates influence, not
+inclusion.
+
+### 18.6 Tasks proposed (Batch 5)
+
+Five tasks, each small, none blocked on the others beyond the
+call site reading the parallel source.
+
+| Task | What it delivers | Why now |
+|---|---|---|
+| **T052a** | `applyLearningWrites.ts:446-448`: the eligibility walk per creative — build `efficiencyRows` once per sync, group by `creativeKey`, run `isEligibleForEfficiency` and `computeEfficiencyFigure`, run `decideEfficiencyWrite` per row, mutate `learnedAds[i].efficiencyFigure` AND `learnedAds[i].ledger.efficiencyValue` / `efficiencyContributed`. | The main wiring. |
+| **T052b** | `learningAggregates.ts` / `patternSummaries.ts:441`: add `efficiencyContributingCount?: number` to `PatternSummary`; populate from a parallel `efficiencyContributingCreatives` set in `toSummary`. | The FR-037 gate source. |
+| **T052c** | `rankingEngine.ts:251, 406`: call `passesFRO37EfficiencyGate(s)` alongside the existing `passesFRO34Gate(s)`. | The gate at its call site. |
+| **T052d** | `learning/aggregateDelta.ts` `applyAdToHook` / `applyVisualAggregatesDelta`: add `incrementEfficiencyByFunnelType(agg, ad)` mirroring the existing `incrementByFunnelType`. | FR-030 on the new field. |
+| **T052e** | `__tests__/phase969/efficiencyWiring.test.ts` — end-to-end with the T064b harness; the discriminator is "revert the call site, paste the failure, restore, paste the pass". Plus the four required tests and a parallel set of bucket tests. | Test surface. |
+
+### 18.7 The four required tests (the user-named gate)
+
+The user's brief mandates these; each test runs against the wrong
+impl (call site reverted, wrong-unit read, etc.) with the
+failure pasted, then against the right impl with the pass.
+
+1. **Discriminator**: revert the call site in `applyLearningWrites.ts`,
+   run `efficiencyWiring.test.ts`, paste the failure. Restore the
+   call site, paste the pass. If the test passes in BOTH states
+   the test is not a discriminator — say so explicitly and don't
+   adjust.
+2. **Write-once through worker, not just function**: drive two
+   syncs over the same creative after it becomes eligible. The
+   figure computed on the first sync must survive the second sync
+   unchanged, even when the underlying numbers moved (e.g.
+   conversion count rises). An implementation that recomputes
+   every sync fails this.
+3. **Eligibility reads Batch 1's accrual, not `conversions3d`**:
+   pin that the threshold is read from `creativeConversionTotal`
+   (the accrual-sum) not from `conversions3d`. Drive the test with
+   `dayAccrual` showing >= 5 conversions and `conversions3d`
+   showing < 5 — the test passes when the walk crosses the
+   threshold on the accrual side.
+4. **Add/withdraw symmetry invariant**: assert that
+   `efficiencyValueAvg` and `efficiencyContributingCount` are
+   populated on addition AND decremented on withdrawal. Batch 4
+   shipped the field shape; this batch ships the path that
+   populates them, and the discriminator ensures neither
+   direction silently drops.
+
+### 18.8 Approval gate
+
+Per the user's instruction: "Do not write code until it is
+approved." This plan sits in `§18` for review. Once approved,
+Batch 5 lands as commits:
+
+1. `learning/applyLearningWrites.ts` (T052a) — the eligibility
+   walk; the discriminator's source.
+2. `learningAggregates.ts` + `patternSummaries.ts` (T052b) —
+   `PatternSummary.efficiencyContributingCount` field and
+   population.
+3. `rankingEngine.ts` (T052c) — the FR-037 gate at its call site.
+4. `learning/aggregateDelta.ts` (T052d) — FR-030 on the new field.
+5. `__tests__/phase969/efficiencyWiring.test.ts` (T052e) — the four
+   required tests + bucket tests.
+6. `IMPLEMENTATION-LOG.md` §19 — the "what we learned" append with
+   the discriminator's before/after outputs (mirrors §10.4, §15.2,
+   §17.2).
