@@ -45,6 +45,7 @@ import {
     accrueDays,
     countDayConversions,
     creativeConversionTotal,
+    creativeCostTotal,
     daysLostToGaps,
     isStopped,
     type InsightsDailyRow,
@@ -76,17 +77,22 @@ function test(name: string, fn: () => void): void {
 
 // ─── Fixture helpers ──────────────────────────────────────────
 
-function day(isoDate: string, conversions: number): InsightsDailyRow {
+function day(isoDate: string, conversions: number, spend: number = 0): InsightsDailyRow {
     return {
         date_start: isoDate,
         actions: [
             { action_type: "purchase", value: conversions },
         ],
+        spend,
     };
 }
 
 function emptyDay(isoDate: string): InsightsDailyRow {
     return { date_start: isoDate, actions: [] };
+}
+
+function spendDay(isoDate: string, spend: number): InsightsDailyRow {
+    return { date_start: isoDate, spend };
 }
 
 function window(since: string, until: string): ObservedWindow {
@@ -169,36 +175,39 @@ test("FR-082 [structural]: no occurrence of the forbidden words in the module", 
 
 test("FR-083 raise: a higher observation replaces the recorded value", () => {
     const existing: DayAccrual = {
-        days: { "2025-01-03": 2 },
-        finalisedTotal: 0,
+        days: { "2025-01-03": { conversions: 2, spend: 0 } },
+        finalisedConversions: 0,
+        finalisedSpend: 0,
         finalisedDayCount: 0,
         lastObservedWindow: null,
     };
     const out = accrueDays(existing, [day("2025-01-03", 5)], window("2025-01-01", "2025-01-07"));
-    assert.equal(out.days["2025-01-03"], 5);
-    assert.equal(out.finalisedTotal, 0, "raise must not touch finalised figures");
+    assert.equal(out.days["2025-01-03"].conversions, 5);
+    assert.equal(out.finalisedConversions, 0, "raise must not touch finalised figures");
 });
 
 test("FR-083 no-lower: a lower observation is a no-op (the test that fails against a plain-overwrite)", () => {
     const existing: DayAccrual = {
-        days: { "2025-01-03": 5 },
-        finalisedTotal: 0,
+        days: { "2025-01-03": { conversions: 5, spend: 0 } },
+        finalisedConversions: 0,
+        finalisedSpend: 0,
         finalisedDayCount: 0,
         lastObservedWindow: null,
     };
     const out = accrueDays(existing, [day("2025-01-03", 2)], window("2025-01-01", "2025-01-07"));
-    assert.equal(out.days["2025-01-03"], 5, "no-lower must NOT overwrite the higher recorded value with 2");
+    assert.equal(out.days["2025-01-03"].conversions, 5, "no-lower must NOT overwrite the higher recorded value with 2");
 });
 
 test("FR-083 no-lower equal: equal observations don't move the value", () => {
     const existing: DayAccrual = {
-        days: { "2025-01-03": 5 },
-        finalisedTotal: 0,
+        days: { "2025-01-03": { conversions: 5, spend: 0 } },
+        finalisedConversions: 0,
+        finalisedSpend: 0,
         finalisedDayCount: 0,
         lastObservedWindow: null,
     };
     const out = accrueDays(existing, [day("2025-01-03", 5)], window("2025-01-01", "2025-01-07"));
-    assert.equal(out.days["2025-01-03"], 5);
+    assert.equal(out.days["2025-01-03"].conversions, 5);
 });
 
 test("FR-083 finalised untouched: re-observing a finalised day is a no-op in BOTH directions", () => {
@@ -207,12 +216,13 @@ test("FR-083 finalised untouched: re-observing a finalised day is a no-op in BOT
     // the recorded value (already in finalisedTotal) is untouched.
     const existing: DayAccrual = {
         days: {},
-        finalisedTotal: 7,
+        finalisedConversions: 7,
+        finalisedSpend: 0,
         finalisedDayCount: 1,
         lastObservedWindow: window("2024-12-23", "2024-12-29"),
     };
     const out = accrueDays(existing, [day("2024-12-30", 999)], window("2025-01-01", "2025-01-07"));
-    assert.equal(out.finalisedTotal, 7, "finalised total must NOT change on a re-observation");
+    assert.equal(out.finalisedConversions, 7, "finalised total must NOT change on a re-observation");
     assert.equal(out.finalisedDayCount, 1, "finalised count must NOT change");
     assert.equal(out.days["2024-12-30"], undefined, "must not write an out-of-window date");
     assert.equal(out.days["2025-01-01"], undefined, "absent in-window day was not observed; no record");
@@ -221,7 +231,8 @@ test("FR-083 finalised untouched: re-observing a finalised day is a no-op in BOT
 test("FR-083 monotonic: a sequence of syncs at stable values never decreases the row's total", () => {
     let cur: DayAccrual = {
         days: {},
-        finalisedTotal: 0,
+        finalisedConversions: 0,
+        finalisedSpend: 0,
         finalisedDayCount: 0,
         lastObservedWindow: null,
     };
@@ -261,15 +272,15 @@ test("FR-085a absent-day: a missing daily row leaves the key ABSENT, not 0", () 
     // A subsequent observation on 2025-01-02 — without touching
     // 2025-01-01 — must only write the new key.
     const out2 = accrueDays(out, [day("2025-01-02", 1)], window("2025-01-01", "2025-01-07"));
-    assert.equal(out2.days["2025-01-01"], 3, "prior day preserved");
-    assert.equal(out2.days["2025-01-02"], 1, "new day added");
+    assert.equal(out2.days["2025-01-01"].conversions, 3, "prior day preserved");
+    assert.equal(out2.days["2025-01-02"].conversions, 1, "new day added");
 });
 
 test("FR-085a empty actions: a row that arrived for the date has no actions is recorded as observed-with-zero, not absent", () => {
     // Distinction: empty-day-with-date IS observed (count 0 for
     // the day); not-arrived is NOT observed.
     const out = accrueDays(null, [emptyDay("2025-01-01")], window("2025-01-01", "2025-01-07"));
-    assert.equal(out.days["2025-01-01"], 0, "row arrived with empty actions → 0");
+    assert.equal(out.days["2025-01-01"].conversions, 0, "row arrived with empty actions → 0");
 });
 
 // ─── FR-084a — bounded retention ─────────────────────────────
@@ -282,7 +293,7 @@ test("FR-084a finalise: a day leaving the window moves to finalisedTotal", () =>
         [day("2024-12-30", 4), day("2024-12-31", 6), day("2025-01-01", 2)],
         window("2024-12-25", "2025-01-01"),
     );
-    assert.equal(cur.finalisedTotal, 0);
+    assert.equal(cur.finalisedConversions, 0);
     assert.equal(cur.finalisedDayCount, 0);
     assert.equal(Object.keys(cur.days).length, 3);
 
@@ -294,7 +305,7 @@ test("FR-084a finalise: a day leaving the window moves to finalisedTotal", () =>
         [],
         window("2025-01-01", "2025-01-07"),
     );
-    assert.equal(cur.finalisedTotal, 10);
+    assert.equal(cur.finalisedConversions, 10);
     assert.equal(cur.finalisedDayCount, 2);
     assert.deepEqual(Object.keys(cur.days).sort(), ["2025-01-01"]);
 });
@@ -361,7 +372,7 @@ test("FR-084 (ad-row, date) key: same row re-observed twice in one sync → stor
         [day("2025-01-01", 3), day("2025-01-01", 7), day("2025-01-01", 5)],
         window("2025-01-01", "2025-01-07"),
     );
-    assert.equal(out.days["2025-01-01"], 7, "highest observation wins; lower no-ops");
+    assert.equal(out.days["2025-01-01"].conversions, 7, "highest observation wins; lower no-ops");
 });
 
 test("FR-084 vs ad-id-only key: the same row across two syncs accrues ONCE per day, not twice", () => {
@@ -377,7 +388,7 @@ test("FR-084 vs ad-id-only key: the same row across two syncs accrues ONCE per d
     cur = accrueDays(cur, [a], window("2025-01-01", "2025-01-07"));
     assert.ok(cur !== null, "cur must be a DayAccrual after one sync");
     const cur2 = cur as DayAccrual;
-    assert.equal(cur2.days["2025-01-01"], 3, "three identical observations accumulate as 3, not 9");
+    assert.equal(cur2.days["2025-01-01"].conversions, 3, "three identical observations accumulate as 3, not 9");
 });
 
 // ─── FR-077 — creativeConversionTotal ─────────────────────────
@@ -385,14 +396,16 @@ test("FR-084 vs ad-id-only key: the same row across two syncs accrues ONCE per d
 test("FR-077(a) creative total: sum across a creative's rows (finalised + in-window)", () => {
     // Two rows, each with a finalised total and a current-days value.
     const rowA: DayAccrual = {
-        days: { "2025-01-05": 2 },
-        finalisedTotal: 1,
+        days: { "2025-01-05": { conversions: 2, spend: 0 } },
+        finalisedConversions: 1,
+        finalisedSpend: 0,
         finalisedDayCount: 1,
         lastObservedWindow: window("2025-01-01", "2025-01-07"),
     };
     const rowB: DayAccrual = {
-        days: { "2025-01-06": 1 },
-        finalisedTotal: 0,
+        days: { "2025-01-06": { conversions: 1, spend: 0 } },
+        finalisedConversions: 0,
+        finalisedSpend: 0,
         finalisedDayCount: 0,
         lastObservedWindow: window("2025-01-01", "2025-01-07"),
     };
@@ -401,8 +414,9 @@ test("FR-077(a) creative total: sum across a creative's rows (finalised + in-win
 
 test("FR-077(a) creative total: a missing-row contribution does not poison the sum", () => {
     assert.equal(creativeConversionTotal([null, undefined, {
-        days: { "2025-01-01": 4 },
-        finalisedTotal: 0,
+        days: { "2025-01-01": { conversions: 4, spend: 0 } },
+        finalisedConversions: 0,
+        finalisedSpend: 0,
         finalisedDayCount: 0,
         lastObservedWindow: null,
     }]), 4);
@@ -495,6 +509,129 @@ test("FR-086a days-lost: counts STRICTLY-BETWEEN dates, not dates with no row", 
 const beforeExit = failed === 0 ? PASSED : FAILED;
 
 console.log("");
+// ─── Batch 3 — spend alongside conversions in the same per-day entry ───
+
+test("spend: a higher spend observation replaces the recorded spend in the per-day entry", () => {
+    const existing: DayAccrual = {
+        days: { "2025-01-03": { conversions: 0, spend: 5 } },
+        finalisedConversions: 0,
+        finalisedSpend: 0,
+        finalisedDayCount: 0,
+        lastObservedWindow: null,
+    };
+    const out = accrueDays(
+        existing,
+        [{ date_start: "2025-01-03", spend: "10" }],
+        window("2025-01-01", "2025-01-07"),
+    );
+    assert.equal(out.days["2025-01-03"].spend, 10);
+});
+
+test("spend: a lower spend observation is a no-op (FR-083 upward-only)", () => {
+    const existing: DayAccrual = {
+        days: { "2025-01-03": { conversions: 0, spend: 10 } },
+        finalisedConversions: 0,
+        finalisedSpend: 0,
+        finalisedDayCount: 0,
+        lastObservedWindow: null,
+    };
+    const out = accrueDays(
+        existing,
+        [{ date_start: "2025-01-03", spend: "5" }],
+        window("2025-01-01", "2025-01-07"),
+    );
+    assert.equal(out.days["2025-01-03"].spend, 10, "no-lower must not overwrite the higher recorded spend");
+});
+
+test("spend: conversions and spend live in the same per-day entry — independent upward-only", () => {
+    const existing: DayAccrual = {
+        days: { "2025-01-03": { conversions: 5, spend: 10 } },
+        finalisedConversions: 0,
+        finalisedSpend: 0,
+        finalisedDayCount: 0,
+        lastObservedWindow: null,
+    };
+    const out = accrueDays(
+        existing,
+        [{ date_start: "2025-01-03", spend: "20" }],
+        window("2025-01-01", "2025-01-07"),
+    );
+    assert.equal(out.days["2025-01-03"].conversions, 5, "conversions untouched when only spend revised");
+    assert.equal(out.days["2025-01-03"].spend, 20, "spend updated upward");
+});
+
+test("spend: a missing `spend` field on a row contributes 0, NOT a missing key (FR-085a absence rule)", () => {
+    const out = accrueDays(
+        null,
+        [{ date_start: "2025-01-03", actions: [] }],
+        window("2025-01-01", "2025-01-07"),
+    );
+    assert.equal(out.days["2025-01-03"].spend, 0, "absent spend must contribute 0");
+    assert.equal(out.days["2025-01-03"].conversions, 0);
+});
+
+test("spend: finalisation folds BOTH conversions and spend into their running totals", () => {
+    // The day's entry has spend=5 and conversions=2. When the day
+    // leaves the window, BOTH numbers must move into the running
+    // totals — finalisedDayCount moves by exactly one, regardless of
+    // how many numbers the entry carries.
+    const out = accrueDays(
+        null,
+        [{ date_start: "2024-12-30", spend: "5", actions: [{ action_type: "purchase", value: "2" }] }],
+        window("2024-12-30", "2024-12-30"),
+    );
+    // Now slide the window. The day is OUTSIDE the new window, so
+    // it must be finalised.
+    const out2 = accrueDays(out, [], window("2025-01-01", "2025-01-07"));
+    assert.equal(out2.finalisedSpend, 5, "spend moved to finalisedSpend");
+    assert.equal(out2.finalisedConversions, 2, "conversions moved to finalisedConversions");
+    assert.equal(out2.finalisedDayCount, 1, "day count moves by exactly one");
+    assert.equal(Object.keys(out2.days).length, 0, "the day is no longer in the days map");
+});
+
+test("spend: a creative 90 days old reads cost and result from the same per-day window (FR-002a / §14.2 of the plan)", () => {
+    // This is the test the owner named in the §14.2 correction.
+    // A creative running 90 days has 90 days of conversions and 90
+    // days of spend. The accumulator carries both per-day. The
+    // total cost figure MUST use the accrued spend — the
+    // aggregate-then-divide's numerator — not `metrics.spend7d`,
+    // which would be the rolling 7-day sum and would produce a
+    // figure roughly an order of magnitude off (12.86× cheaper
+    // than the true figure, by the ratio 90/7).
+    //
+    // We construct the per-day data for a 90-day-old creative with
+    // 4 placements, then sum via the public aggregator. This is
+    // the surface that the efficiency figure's test will exercise.
+    const rows: DayAccrual[] = [];
+    const numPlacements = 4;
+    const numDays = 90;
+    const conversionsPerDayPerRow = 0.5;
+    const spendPerDayPerRow = 12.5;
+    for (let r = 0; r < numPlacements; r++) {
+        const days: { [iso: string]: { conversions: number; spend: number } } = {};
+        for (let d = 0; d < numDays; d++) {
+            const day = new Date(2025, 8, 1);
+            day.setDate(day.getDate() + d);
+            const iso = day.toISOString().slice(0, 10);
+            days[iso] = { conversions: conversionsPerDayPerRow, spend: spendPerDayPerRow };
+        }
+        rows.push({
+            days,
+            finalisedConversions: 0,
+            finalisedSpend: 0,
+            finalisedDayCount: 0,
+            lastObservedWindow: null,
+        });
+    }
+    const totalConversions = creativeConversionTotal(rows);
+    const totalSpend = creativeCostTotal(rows);
+    // The figures are floats — round to integer for assertion
+    // cleanliness. The exact counts are 4 placements × 90 days ×
+    // 0.5/day = 180 conversions and 4 × 90 × 12.5 = $4500.
+    assert.equal(totalConversions, 180, "90 days × 4 placements × 0.5/day = 180");
+    assert.equal(totalSpend, 4500, "90 days × 4 placements × $12.50/day = $4500");
+});
+
 console.log(`=== Phase 4 Batch 1 — conversion-accrual tests ===`);
 console.log(`Passed: ${passed}, Failed: ${failed}`);
 

@@ -1582,3 +1582,194 @@ as §10.4's "three discriminating tests with before/after pairs":
 each batch's pure functions get their discrimination table
 captured once, against the wrong impl, with the actual failure
 output pasted.
+
+---
+
+## 15. Batch 3 — eligibility + efficiency figure (T039–T043/T046) implementation
+
+**What landed.** Six pure functions in `learning/efficiencyFigure.ts`,
+the spend added to Batch 1's per-day accrual, the `efficiencyRaw`
+field on `AdDoc`, and 24 behavioural tests in
+`__tests__/phase969/efficiencyFigure.test.ts`. The
+`applyLearningWrites.ts` wiring is deferred to Batch 5 per the
+plan's §14.1 / §14.6.
+
+### 15.1 The §14.2 correction — spend accrued alongside conversions
+
+The plan proposed `metrics.spend7d` as the realised cost. The owner
+rejected this on the correct ground that the conversion accrual
+grows without bound (FR-083's upward-only rule) while `spend7d`
+is the rolling 7-day sum — and a creative running ninety days
+divides ninety days of conversions into seven days of spend,
+producing a figure roughly twelve times too cheap and drifting
+worse the longer the creative runs.
+
+**The fix.** `DayAccrual` now carries spend alongside conversions in
+the same per-day entry. `accrueDays` reads `row.spend` (Meta's
+`spend` field, available on every `last7DaysDaily` row) into the
+same `days[date]` key, under the same FR-083 upward-only rule,
+and finalises both numbers together. `creativeCostTotal(rows)`
+sums the new field across rows — mirroring `creativeConversionTotal`
+on the conversion side. The cost figure's numerator and
+denominator windows are now identical by construction.
+
+**Storage impact against FR-084a.** The original `DayAccrual` had
+two scalars per entry (one number per day). The new shape has
+one number per day PLUS one number per day (the spend), plus
+two running totals instead of one — at most seven in-window days,
+so the bound per ad row goes from ≤ 7 numbers to ≤ 14 numbers
+plus a `finalisedSpend` next to `finalisedConversions`. The
+**structural** bound — at most one entry per in-window day, with
+older days folded into the running totals — is unchanged. The
+storage cost roughly doubles; nothing is pushed past FR-084a's
+mandate. **No concern; the bound holds.**
+
+**Pre-Batch-3 records on disk.** The new shape's `days` value
+becomes `{ conversions, spend }` where the old shape had a
+`number`. The migration path is lazy: `accrueDays` rehydrates
+legacy `number` values as `{ conversions: legacy, spend: 0 }` on
+the next sync. The cost figure for those days starts at 0 until
+the next sync re-observes the spend — which is acceptable because
+the efficiency figure is computed once (FR-079) and the affected
+creatives are immediately re-eligible on the next sync.
+
+**Discriminator — the user's named test.** The §14.2 test
+supplies `spend7d` on each row of the fixture (the test-only
+seam — see `EfficiencyRow.spend7d?: number` doc, "the right
+impl does not read this field"). With the wrong impl in place
+(`totalCost = rows.reduce((acc, r) => acc + (r.spend7d ?? 0), 0)`),
+the test runs against a 90-day-old creative with 4 placements
+and produces:
+
+| | Real impl (accrued) | Wrong impl (spend7d) | Ratio |
+|---|---|---|---|
+| `totalCost` | **4500** (= 4 placements × 90 days × $12.50/day) | **350** (= 4 placements × $87.50 spend7d) | **12.86×** |
+| `totalResults` | **180** (= 4 × 90 × 0.5) | 180 | 1.0× |
+| `figure` | **1.25** | **0.0972** | **12.86×** |
+
+The wrong impl produces a figure roughly an order of magnitude
+smaller than the right one, exactly as the user's spec named.
+The discriminator assertion:
+
+```
+❌ §14.2 correction: the figure uses ACCRUED spend, not metrics.spend7d (a 90-day-old creative)
+   90 days × 4 placements × $12.50/day = $4500
+   350 !== 4500
+```
+
+After revert, the same test passes (and so does the rest of the
+24-test suite). **The test discriminates against `spend7d`-
+based impl by an order of magnitude**, exactly the user's named
+shape.
+
+### 15.2 Other discriminating tests with before/after pairs
+
+The wrong impl was a spend7d-based `computeEfficiencyFigure`; it
+also exercises other tests because they share the same function.
+Below are all five failures from the wrong-impl run, against the
+real impl's value on the same fixture:
+
+| Test | Real | Wrong (spend7d) | Discriminator |
+|---|---|---|---|
+| SC-030 (aggregate-then-divide) | `totalCost=1005, figure≈0.985` | `totalCost=40, figure≈0.039` | Wrong impl returns 40, real returns 1005 — different cost sums. |
+| SC-030 discriminator | `figure=0.985` | `figure=0.039` | The two formulas diverge on materially different per-row cost-per-result; wrong reads spend7d for both rows. |
+| **§14.2 correction** | `4500, 1.25` | **`350, 0.097`** | **The user's named test.** ~12.86× off. |
+| SC-048 (merge — earliest wins, recompute over union) | `figure=0.667` | `figure=0.467` | Wrong impl reads spend7d (28 + 28 + 42 + 42 = 140) instead of accrued (80 + 120 = 200), producing a different numerator. |
+| SC-048 discriminator | `figure=0.667` | `figure=0` | Wrong impl reads `existingA.efficiencyValue` directly (or absent spend7d) — fails on a fixture that constructs an `existingA` value the wrong impl cannot reproduce. |
+
+The discriminator catches each wrong impl by an order of magnitude
+or by outright zero. **Five tests, five discriminators.**
+
+### 15.3 Pure functions shipped (T039–T043)
+
+- `computeEfficiencyFigure(rows, sealedContext) → { value, totalCost, totalResults } | null` —
+  FR-002 / FR-002a / FR-003. Aggregate-then-divide. Returns `null`
+  on zero conversions (FR-006's explicitly-absent guard) or no
+  sealed target (FR-005).
+- `isEligibleForEfficiency(rows, sealedContext) → { eligible, reason }` —
+  FR-077 / FR-077a. Both conditions, FR-006 zero-conversions guard,
+  FR-085 under-detect on (b). `reason` is one of six enumerated
+  values so the audit log is structured.
+- `decideEfficiencyWrite(existing, figure) → { allowed, firstWrite, figure } | { allowed: false, reason }` —
+  FR-005c carve-out efficiency-side. First write permitted;
+  subsequent refused; null figures don't lock the marker.
+- `applyEfficiencyRecompute(input) → { kind, figure }` —
+  FR-087's two-case dispatcher. Same row set → carry across;
+  changed row set → recompute.
+- `applyMergeRecompute(unionRows, earliestSealedTarget, existingA, existingB)` —
+  FR-013a's efficiency-side: recompute over the union against the
+  earliest sealed target.
+
+### 15.4 What landed in `applyLearningWrites.ts`
+
+Nothing. Per the plan's §14.1 and §14.6, the call site lands in
+Batch 5 alongside the FR-030 funnel-type weighting and the FR-038
+3.0 bound. Today's `applyLearningWrites.ts` is unchanged from
+Batch 2's state.
+
+### 15.5 `AdDoc.efficiencyRaw` field
+
+Added at `shared.ts:276-289` per `data-model.md §1`'s prescription.
+Distinct from `ledger.efficiencyValue` and
+`ledger.efficiencyContributed` — three different facets of the
+same contribution event, kept separate by FR-005e. The aggregate
+side will read the bounded value from the `applyLearningWrites`
+post-walk in Batch 5; FR-038's 3.0 cap goes there too.
+
+### 15.6 Test discipline
+
+`efficiencyFigure.test.ts` (24 tests) follows the same pattern as
+Batches 1 and 2:
+
+- Pure functions, direct assertions on returned values.
+- Discriminating test titles name the wrong implementation.
+- Structural guards (the discriminator uses a test-only `spend7d`
+  field that the right impl never reads — labelled as such in
+  the type's doc comment).
+- Test failure output captured once against a wrong impl, with
+  the specific numbers pasted (§15.2 above).
+- Both halves of FR-005c's carve-out tested separately (SC-035
+  first-half and second-half).
+- FR-006's zero-conversions guard is tested as a separate case.
+
+The chain (`npm run test:phase969`) is **`EXIT=0`** with
+efficiencyFigure at the end:
+
+```
+Passed: 11  (creativeHash + registrationGuard self-tests)
+Passed: 19  (creativeGrouping)
+Passed: 12  (learningLease)
+Passed: 12  (boundedLedgerRead)
+Passed:  7  (fr070)
+Passed: 11  (perAdActions)
+Passed:  2  (t021aWireup)
+Passed: 18  (learningAccumulation)
+Passed:  4  (learningCascade)
+Passed:  2  (t025aWorkerWiring)
+Passed:  5  (t029GateMigration)
+Passed: 10  (t064b)
+Passed:  8  (applyLearningWritesLease)
+Passed:  7  (multiFunnel)
+Passed:  7  (withdrawalAverage)
+Passed:  7  (creativeCount)
+Passed: 10  (symmetry)
+Passed: 10  (visualCreativeCount)
+Passed: 38  (conversionAccrual — Batch 1, with 6 new spend tests)
+Passed: 25  (sealedContext — Batch 2)
+Passed: 24  (efficiencyFigure — Batch 3)
+contractFixtures.test: PASS
+EXIT=0
+```
+
+### 15.7 What this batch does NOT deliver
+
+Per §14.6, unchanged:
+
+- The call site in `applyLearningWrites.ts`. Batch 5.
+- The aggregate-side `efficiencyContributingCount` field. Batch 5.
+- The FR-038 3.0 bound on the aggregate average. Batch 5.
+- Cross-funnel weighting (FR-030). Batch 5.
+- FR-074b's group-level merge wiring in `creativeGrouping.ts`
+  (the merge shape exists; the efficiency-side recompute is
+  already in Batch 3 via `applyMergeRecompute`; Batch 5 wires
+  the consumer).

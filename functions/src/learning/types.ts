@@ -88,15 +88,33 @@ export interface ObservedWindow {
     until: string;
 }
 
+/**
+ * One day in the per-(ad-row, date) accrual. Carries the conversion
+ * count AND the spend for that day, so the two windows match by
+ * construction (Batch 3's correction to §14.2 — `spend7d` is the
+ * wrong window; the cost figure must use the same per-day entries
+ * the conversion count uses). Both fields are summed into the
+ * running totals on finalisation; both are subject to FR-083's
+ * upward-only revision.
+ */
+export interface DayAccrualEntry {
+    conversions: number;
+    spend: number;
+}
+
 export interface DayAccrual {
     // FR-083, FR-084 — only days still inside the observed window.
     // An absent daily row is NOT recorded as zero — the key is simply
     // not written (FR-085a).
-    days: { [isoDate: string]: number };
+    days: { [isoDate: string]: DayAccrualEntry };
     // FR-084a — sum of days that have left the window. Collapsing is
     // mandatory (SC-023) and lossless (FR-083 makes finalised days
-    // immutable).
-    finalisedTotal: number;
+    // immutable). Two running totals because the conversion count and
+    // the spend are tracked alongside each other (FR-077's "5
+    // combined conversions" / FR-002's "realised cost" must read
+    // from the same window).
+    finalisedConversions: number;
+    finalisedSpend: number;
     // FR-084a — count of finalised days. Retained so the total can be
     // sanity-checked, and as input for FR-086's gap count.
     finalisedDayCount: number;

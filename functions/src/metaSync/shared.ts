@@ -272,6 +272,22 @@ export interface AdDoc {
      */
     sealedAt?: number | null;
     /**
+     * Batch 3 (FR-002 / FR-079) — the raw unbounded efficiency
+     * figure for THIS ROW's contribution to the creative. Stored at
+     * contribution time; never revised (FR-079 write-once; the
+     * creative's figure is locked at first eligibility). Distinct
+     * from `ledger.efficiencyValue` (`types.ts:77`), which is the
+     * same number at the same moment but lives on the contribution
+     * ledger entry — three different fields (`efficiencyRaw` here,
+     * `ledger.efficiencyValue`, `ledger.efficiencyContributed`),
+     * each carrying a different facet of FR-005e / FR-079.
+     *
+     * Bounded separately at the aggregate layer (FR-038's 3.0
+     * cap) — the per-row figure is unbounded so a freak row
+     * cannot dominate the creative's aggregate mean.
+     */
+    efficiencyRaw?: number | null;
+    /**
      * FR-005a — the per-row contribution state machine:
      *   - absent or null: never evaluated / no target ever resolvable.
      *   - `PROVISIONAL`: no target was resolvable at first sight. The

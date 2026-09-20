@@ -77,13 +77,23 @@ const RESULT_ACTION_TYPES: ReadonlySet<string> = new Set<string>([
 // ─── Insight-row contract ─────────────────────────────────────
 //
 // The narrow projection of `metaGraph.ts`'s `InsightsRow` that this
-// module reads: just `date_start` and `actions`. Both are the only
-// fields the conversion counter and the dedup key need, and keeping
-// the projection narrow keeps `accrueDays` testable with a plain
-// object literal.
+// module reads: `date_start`, `actions` (for conversions) and `spend`
+// (for cost). All three are the only fields the per-day accrual
+// needs, and keeping the projection narrow keeps `accrueDays`
+// testable with a plain object literal.
+//
+// `spend` was added in Batch 3 alongside the conversion count so
+// the cost figure and the result count read from the same window
+// (the per-day entries keyed by `(ad row id, date)`). Using a
+// rolling sum like `metrics.spend7d` would produce a figure
+// where the cost window is shorter than the result window and the
+// ratio drifts toward the wrong answer as the creative ages. The
+// per-day side carries both numbers under the same key, the same
+// FR-083 upward-only rule, and the same FR-084a finalisation.
 export interface InsightsDailyRow {
     date_start?: string;
     actions?: ReadonlyArray<{ action_type?: string; value?: string | number }>;
+    spend?: string | number;
 }
 
 // ─── Per-day counter (FR-081) ──────────────────────────────────
@@ -108,6 +118,18 @@ export function countDayConversions(row: InsightsDailyRow): number {
     return total;
 }
 
+// ─── Per-day spend (FR-002a cost input) ────────────────────────
+//
+// Sum of realised cost for the day's row. Meta emits `spend` as a
+// decimal string on every insights row (`insights.field` includes
+// "spend" — `metaGraph.ts:62`). The function is per-row and
+// returns 0 when `spend` is absent — same convention as
+// `countDayConversions` (FR-085a: absence is not zero).
+export function countDaySpend(row: InsightsDailyRow): number {
+    if (row.spend === undefined || row.spend === null) return 0;
+    return parseNumber(row.spend);
+}
+
 function parseNumber(v: unknown): number {
     if (typeof v === "number") return Number.isFinite(v) ? v : 0;
     if (typeof v === "string") {
@@ -117,7 +139,7 @@ function parseNumber(v: unknown): number {
     return 0;
 }
 
-// ─── The accrual function (FR-081/FR-083/FR-084) ──────────────
+// ─── The accrual function (FR-081/FR-083/FR-084 + Batch 3) ───
 //
 // Pure. Given:
 //   - `existing`: the row's persisted `DayAccrual` (or `null` on
@@ -133,11 +155,20 @@ function parseNumber(v: unknown): number {
 // Behaviour:
 //   - For each row in `dailyRows` whose `date_start` parses to a
 //     date inside `window`, write/replace `days[date]` with
-//     `Math.max(existingDays[date] ?? 0, countDayConversions(row))`.
+//     `Math.max(existingDays[date] ?? 0, countDayConversions(row))`
+//     for the conversion count AND `Math.max(...)` for the spend.
+//     Both numbers live in the same per-day entry, keyed on the
+//     same `(date)`, finalised at the same moment. The result is
+//     that `creativeConversionTotal(rows)` and `creativeCostTotal
+//     (rows)` read from windows that match by construction — the
+//     FR-002a efficiency figure has the same denominator and
+//     numerator window, regardless of how the creative has aged
+//     or what `Meta.last_7d` happened to return on this sync.
 //   - For each entry in `existing.days` whose date is OUTSIDE the
 //     window (BEFORE `since` or AFTER `until`): fold into
-//     `finalisedTotal`, increment `finalisedDayCount`, delete the
-//     map entry. (Window membership is inclusive on both sides.)
+//     `finalisedConversions` and `finalisedSpend`, increment
+//     `finalisedDayCount`, delete the map entry. (Window
+//     membership is inclusive on both sides.)
 //   - **An absent row is NOT written** — the key simply does not
 //     exist (FR-085a). An entry for the date in `existing.days`
 //     that this sync did not re-observe is preserved at its recorded
@@ -153,14 +184,31 @@ export function accrueDays(
     //    the input is never mutated. (FR-018 idempotency: calling
     //    accrueDays with the same existing + rows returns the same
     //    value, including on the no-prior-contribution shape.)
-    const days: { [isoDate: string]: number } = {};
-    let finalisedTotal = 0;
+    //
+    // The new shape carries both the conversion count and the spend
+    // for the day. Pre-Batch-3 records on disk carry the legacy
+    // shape (`days[date] = number`). They are migrated lazily on
+    // the next sync — a numeric legacy value becomes a `{ conversions:
+    // legacy, spend: 0 }` entry. This is a one-way migration that
+    // happens at read time; the cost stays at 0 until the day's
+    // spend is re-observed. Acceptable because the cost figure is
+    // computed once (FR-079) and the affected creatives are
+    // immediately re-eligible on the next sync.
+    const days: { [isoDate: string]: { conversions: number; spend: number } } = {};
+    let finalisedConversions = 0;
+    let finalisedSpend = 0;
     let finalisedDayCount = 0;
     if (existing !== null) {
-        finalisedTotal = existing.finalisedTotal;
+        finalisedConversions = existing.finalisedConversions;
+        finalisedSpend = existing.finalisedSpend;
         finalisedDayCount = existing.finalisedDayCount;
         for (const [isoDate, value] of Object.entries(existing.days)) {
-            days[isoDate] = value;
+            // Migration from pre-Batch-3 shape: numeric values are
+            // the legacy conversion count with no spend recorded.
+            // Object values are the new shape with both numbers.
+            days[isoDate] = typeof value === "number"
+                ? { conversions: value, spend: 0 }
+                : { conversions: value.conversions, spend: value.spend };
         }
     }
 
@@ -169,10 +217,14 @@ export function accrueDays(
     //    after `until` is no longer inside the observed window and
     //    its per-day figure is immutable from this point on. The
     //    map entry is deleted (FR-084a's "retention MUST NOT grow
-    //    with account age").
+    //    with account age"). Both finalisedConversions and
+    //    finalisedSpend move with the day; finalisedDayCount moves
+    //    by exactly one regardless of how many numbers live in the
+    //    entry — the day itself is one observation, not two.
     for (const isoDate of Object.keys(days)) {
         if (isoDate < window.since || isoDate > window.until) {
-            finalisedTotal += days[isoDate];
+            finalisedConversions += days[isoDate].conversions;
+            finalisedSpend += days[isoDate].spend;
             finalisedDayCount += 1;
             delete days[isoDate];
         }
@@ -185,6 +237,13 @@ export function accrueDays(
     //    upward-only revision); a lower value is a no-op (FR-083);
     //    a re-observation of an already-finalised day is a no-op in
     //    BOTH directions (the entry is no longer in `days`).
+    //
+    // Batch 3: each day's entry now tracks BOTH the conversion
+    // count and the spend, so the cost figure and the result count
+    // read from the same per-day window. Spending this number is
+    // cheap — it's the same Meta row the conversion count already
+    // came from — and the alternative (`metrics.spend7d`, the rolling
+    // 7-day sum) is the wrong window by construction.
     for (const row of dailyRows) {
         const isoDate = typeof row.date_start === "string" ? row.date_start.slice(0, 10) : null;
         if (!isoDate) continue;
@@ -195,22 +254,29 @@ export function accrueDays(
         // recorded", FR-082/FR-083). The window check here is the
         // guard that keeps the design from depending on it.
         if (isoDate < window.since || isoDate > window.until) continue;
-        const observed = countDayConversions(row);
+        const observedConversions = countDayConversions(row);
+        const observedSpend = countDaySpend(row);
         const prior = days[isoDate];
         if (prior === undefined) {
-            days[isoDate] = observed;
-        } else if (observed > prior) {
-            // FR-083 — upward-only. A re-observation reporting a
-            // higher figure replaces; a lower figure is a no-op.
-            days[isoDate] = observed;
+            days[isoDate] = { conversions: observedConversions, spend: observedSpend };
+        } else {
+            // FR-083 — upward-only, applied to BOTH numbers in the
+            // entry. A higher value replaces; a lower value is a
+            // no-op. This is independent for conversions and spend:
+            // a spend revision does not lower the conversion count
+            // and vice versa.
+            const nextConversions = observedConversions > prior.conversions
+                ? observedConversions : prior.conversions;
+            const nextSpend = observedSpend > prior.spend
+                ? observedSpend : prior.spend;
+            days[isoDate] = { conversions: nextConversions, spend: nextSpend };
         }
-        // else: lower or equal — no-op, preserves FR-020's
-        // never-decreases guarantee unconditionally.
     }
 
     return {
         days,
-        finalisedTotal,
+        finalisedConversions,
+        finalisedSpend,
         finalisedDayCount,
         lastObservedWindow: { since: window.since, until: window.until },
     };
@@ -263,15 +329,35 @@ export function isStopped(adStatus: string | null | undefined): boolean {
 //
 // Sum the per-row conversion totals across a creative's rows.
 // Each `DayAccrual` carries the row's own running total:
-// `finalisedTotal + Σ days[isoDate]`. The sum is the creative's
-// combined conversions across all placements.
+// `finalisedConversions + Σ days[isoDate].conversions`. The sum is
+// the creative's combined conversions across all placements — the
+// FR-077(a) eligibility count.
+//
+// Pre-Batch-3 records carry `days[iso] = number`; the migration
+// path at `accrueDays` re-hydrates those into the new shape with
+// `spend: 0`. Production data is post-Batch-3.
 export function creativeConversionTotal(rows: ReadonlyArray<DayAccrual | null | undefined>): number {
     let total = 0;
     for (const row of rows) {
         if (!row) continue;
-        total += row.finalisedTotal;
+        total += row.finalisedConversions;
         for (const v of Object.values(row.days)) {
-            if (typeof v === "number" && Number.isFinite(v)) total += v;
+            const c = typeof v === "number" ? v : v.conversions;
+            if (typeof c === "number" && Number.isFinite(c)) total += c;
+        }
+    }
+    return total;
+}
+
+// New total — spend. See header comment above.
+export function creativeCostTotal(rows: ReadonlyArray<DayAccrual | null | undefined>): number {
+    let total = 0;
+    for (const row of rows) {
+        if (!row) continue;
+        total += row.finalisedSpend;
+        for (const v of Object.values(row.days)) {
+            const s = typeof v === "number" ? 0 : v.spend;
+            if (typeof s === "number" && Number.isFinite(s) && s > 0) total += s;
         }
     }
     return total;
