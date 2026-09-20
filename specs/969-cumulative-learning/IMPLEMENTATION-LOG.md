@@ -1337,3 +1337,248 @@ The functions suite is untouched by this frontend-only change. The same exit cod
 - `src/__tests__/isEmptySnapshot.test.ts` — **new**. 227 lines. 30 tests across 5 `describe` blocks.
 - `src/App.tsx` — imported the helper (one line added to the existing utils-import block at line 15); replaced the ten-line inline predicate with a ten-line helper call (lines 4754-4773). Net change +18 / -13.
 - No schema, rules, or backend changes. No changes to any other file.
+
+---
+
+## 14. Batch 3 plan — eligibility + efficiency figure (T039–T043/T046)
+
+**What this batch delivers, in plain terms.** Today learning knows
+which angles get clicked. After Batch 3 it knows which creatives
+get sales, cheaply. A creative becomes eligible to contribute its
+cost figure when either it reaches **5 combined conversions** across
+all its placements or it has **stopped running with at least 1
+conversion**. Zero conversions never contributes. Once eligible,
+its cost-per-result is calculated **once** against the target sealed
+in Batch 2 and locked — never revised, whatever comes later.
+
+§11 paused this work pending owner review of an unrelated
+workspace-isolation defect. §12 and §13 are frontend work in the
+App monolith that landed during the pause. The pure
+cumulative-learning work was not advanced by §12/§13 and remains
+where Batch 2 left it. Batch 3 is the resumption.
+
+### 14.1 Tasks proposed
+
+| Task | What it delivers | Why now |
+|---|---|---|
+| **T039** | `computeEfficiencyFigure(creative, rows, dailyRowsByAdId, window, sealedContext): number \| null` — aggregate-then-divide per FR-002a/FR-003. | The figure itself. Nothing else can land without it. |
+| **T040** | `isEligibleForEfficiency(creative, rows, dailyRowsByAdId, window, adStatusByAdId, sealedContext): { eligible, reason }` — both FR-077 conditions, returning false on zero. | Eligibility is a precondition of the figure. Build it next so the figure's tests can use a known-eligible fixture. |
+| **T041** | `decideEfficiencyWrite(existing, newValue): { allowed: true; firstWrite } \| { allowed: false }` — the FR-005c carve-out's efficiency-side guard. Write-once; first write permitted, subsequent rejected. | The seal-side guard already exists (Batch 2). This is its first real consumer. |
+| **T042** | `applyEfficiencyRecompute(creative, rowSetBefore, rowSetAfter, sealedContext, ledgerEntries): { value, didRecompute }` — FR-087's two-case decision: re-attribution → carry across; merge → recompute over the union. | FR-087's two cases are different operations. Build the dispatcher, then the consumers (the actual call sites land in Batch 5/6 once the aggregate side reads the figure). |
+| **T043** | `applyMergeRecompute(unionRows, earliestSealedTarget, ledgerEntries): number` — FR-013a's withdraw-both-recompute-add-one for FR-074b's merge case. | The merge path that Batch 2's FR-036c documented; the efficiency-figure side of the same merge. |
+| **T046** | `efficiencyFigure.test.ts` — pure-function behavioural suite with the five discriminating tests (one per "thing that will bite"). | Test surface; locked into `test:phase969:efficiencyFigure` and the chain. |
+
+Six tasks, all pure-function except T041's call site wiring (which is
+in `applyLearningWrites.ts` alongside the existing consult). The
+reason for the pure split: Batch 1 established that pure modules
+are the unit-testable surface; the worker in `applyLearningWrites`
+is the consumer. Same pattern again.
+
+**Tasks deliberately NOT in this batch.** The actual write site in
+`applyLearningWrites.ts` is **not** in Batch 3. Two reasons:
+
+1. The post-withdrawal walk that needs the per-creative grouping
+   requires `learnedAds` to be in its post-consult, post-withdrawal
+   state — that wiring lands in Batch 5 alongside the FR-030
+   funnel-type weighting, because Batch 5 is the "first time the
+   aggregate side reads the figure" batch. Putting it in Batch 3
+   would split the per-creative grouping wiring across two batches
+   for no gain.
+2. The aggregate-side bound at 3.0 (FR-038) lands in Batch 5 too —
+   it's the same call site that reads `efficiencyContributingCount`.
+
+Until then, `efficiencyValue` is computed but not wired to a
+write site. The pure functions exist, the tests exist, and
+`applyLearningWrites` is unchanged in Batch 3. Batch 5 wires them
+together.
+
+This matches the user's prompt: "Batch 5 (FR-030 weighting) lands
+the wiring." It also matches the audit's §8 Phase 5 entry where
+the weighting and bound are paired with the read-side consumer.
+
+### 14.2 Where the realised cost comes from
+
+**Field:** `metrics.spend7d` per ad row, available **without a new
+read**. The value is computed once per ad at the per-ad block via
+`aggregateAdMetrics(windows)` at `shared.ts:375`:
+
+```
+const spend7d = sumField(windows.last7DaysDaily.map((r) => ({ ...r })), "spend");
+```
+
+`windows.last7DaysDaily` is the per-day Meta insights batch
+(7 rows per ad, with `time_increment=1` set at `metaGraph.ts:389-396`).
+The sum is computed at the per-ad block — the same loop where
+`metrics.conversions3d` is computed and the same place Batch 1's
+per-ad data already lives.
+
+**Per-row availability:** yes. `metrics.spend7d` is already in
+`AdForLearning` (or threaded into it; will verify at write site).
+Each row in the creative's set carries its own 7-day daily sum.
+
+**Why not `conversions3d`-equivalent for spend.** The user's
+"Use it" rule applies: the conversion count comes from Batch 1's
+stable `creativeConversionTotal(rows)`, NOT from `conversions3d`.
+For spend, the matching discipline is: use the per-day sum over
+the same window Batch 1's accrual uses, so cost and result live
+in the same observation window. `spend7d` already provides that.
+
+**Per-day, not per-row:** I'm using `metrics.spend7d` (the
+7-day daily sum) per row, summed across the creative's rows —
+not a parallel per-day spend accrual. The reason is that the
+efficiency figure is computed **once** per creative (write-once,
+FR-079), so the cost window only needs to match the conversion
+window at the **moment of eligibility**. `spend7d` already does
+that. A parallel `costAccrual` shape would be storing state we
+never read again after the eligibility moment, which is the same
+class of over-engineering Batch 1's bounded retention explicitly
+forbids.
+
+### 14.3 Where the eligibility check belongs
+
+**It belongs in `applyLearningWrites.ts`, alongside the existing
+ledger consult, but as a NEW step between the per-row apply and
+the aggregate additive pass.** Not upstream.
+
+Why not upstream: the eligibility check is **per-creative**, not
+per-row. Per-creative grouping requires `learnedAds` to be in its
+post-consult, post-withdrawal state. Upstream of the consult means
+running on the un-consulted input, which is wrong (the post-withdrawal
+state determines which rows are still contributing).
+
+Why inside `applyLearningWrites` rather than the worker
+(`shared.ts`): the worker reads Batch 1's accrual (per-row
+`AdDoc.dayAccrual`) and Batch 2's seal (`AdDoc.sealedTarget`).
+Both are read via the existing `existingByAdId` bounded read, which
+is already inside the lease window at `applyLearningWrites.ts:339`
+("The caller is responsible for: Acquiring the lease").
+
+**The new step's place in `applyLearningWrites.ts`:**
+
+```
+1. Ledger consult (per-row)    ← existing
+2. ExistingByAdId read         ← existing
+3. Withdrawal application      ← existing
+4. NEW: per-creative eligibility walk:
+   - group post-withdrawal learnedAds by creativeKey
+   - for each creative, run isEligibleForEfficiency
+   - if eligible: compute figure, run decideEfficiencyWrite per
+     row, mutate ledgerEntries[i].efficiencyValue / efficiencyContributed
+   - this step is also where applyEfficiencyRecompute / applyMergeRecompute
+     are CONSUMED (Batch 5's call sites; Batch 3 only ships the
+     pure functions)
+5. Additive pass                ← existing
+6. Build writes                 ← existing
+7. Chunked commit               ← existing
+```
+
+The new step is **inside the lease** by inheritance — the
+existing per-row consult and withdrawal pass already are. No
+new Firestore reads are added at this point either (the
+eligibility/figure computation reads only `existingByAdId`,
+which is already cached in memory).
+
+### 14.4 Anything stale from Batches 1 and 2
+
+**Five small things**, all expected:
+
+1. **`AdDoc.efficiencyRaw` is not yet a field.** `data-model.md §1`
+   lists `efficiencyRaw: number | null` as a per-row field; it is
+   the raw unbounded figure per FR-002. Batch 3 adds it on
+   `AdDoc` (per the spec). It is distinct from the existing
+   `ledger.efficiencyValue` slot on `ContributionLedgerEntry` —
+   the ledger's slot is "the figure as contributed" (per
+   `types.ts:77`'s doc comment); the `efficiencyRaw` field is
+   the row's record of the same number at the same moment, for
+   audit purposes. Both are written; both contain the same
+   value at write-once time.
+
+2. **`funnel_type_buckets` and `creativeCount` aggregation
+   fields are unchanged.** Batch 3 does not touch the aggregate
+   side. FR-030/FR-037/FR-038's wiring lands in Batch 5.
+
+3. **`sealedTarget` is read from `AdDoc.sealedTarget`, not
+   `ledger.efficiencySealedTarget`.** Batch 2 puts sealed fields
+   on `AdDoc` directly. The efficiency figure's sealed-target
+   is the per-CREATIVE sealed target from FR-012a — Batch 2's
+   `resolveCreativeSealedContext` provides it. The pure function
+   reads from the row-level fields and the Batch 2 helper, not
+   from a new field.
+
+4. **FR-005c carve-out's efficiency-side guard is new.** Batch 2
+   shipped the SEAL guard (`decideSealedTransition`). Batch 3
+   ships the EFFICIENCY guard (`decideEfficiencyWrite`). The two
+   are deliberately separate, per Batch 2's "FR-005e separation"
+   note in §10.6. The carve-out test (`SC-031 [shape]` at
+   `sealedContext.test.ts:236-265`) pins that they do not collide.
+
+5. **`ledger.efficiencyContributed` and `ledger.efficiencyValue`
+   on `ContributionLedgerEntry` already exist as type-level slots
+   (`types.ts:75-77`) with no consumers.** Batch 3 makes them
+   real. The `decideAdWriteActions.ts:224-225` placeholders
+   (`efficiencyContributed: false, efficiencyValue: null`) are
+   replaced by the per-creative post-pass's writes when
+   eligibility is met — but in Batch 3 the WRITE SITE doesn't
+   exist (deferred to Batch 5), so for now those placeholders
+   stay. They are replaced at the call site in Batch 5.
+
+No spec citations need correction. The locked decision text
+("FR-002 ... aggregate-then-divide") is verbatim and Batch 3
+implements it.
+
+### 14.5 Five discriminating tests, one per "thing that will bite"
+
+These mirror Batch 2's `sealedContext.test.ts` pattern: each test
+title names the wrong implementation it catches; each test is
+run against a deliberate wrong impl and the failure captured.
+T046 is the test file.
+
+| # | Discriminator | Wrong impl tested against |
+|---|---|---|
+| 1 | **Aggregate-then-divide, not divide-then-average.** | A `computeAveragePerRowRatio(rows)` shape that produces a different number than the real implementation on a fixture where the two formulas diverge. |
+| 2 | **Use Batch 1's accrual, not `conversions3d`.** | An `isEligibleForEfficiency` that pulls from `conversions3d` and returns false when the rolling window oscillates — fails the user's "5 stays 5" assertion. |
+| 3 | **Condition (b) under-detects by design.** | An `isStopped` that consults an imagined `effective_status` field and refuses on ACTIVE — passes the user's "parent-paused is not stopped" assertion. |
+| 4 | **Write-once in both directions.** | A `decideEfficiencyWrite` that always allows — fails the user's "second write rejected" assertion. A `decideEfficiencyWrite` that always denies — fails the "first write permitted" assertion. |
+| 5 | **FR-087's two cases are different.** | A single `recomputeOrCarry(creative, oldRows, newRows, target)` that always returns the per-row ratio average (a single implementation cannot be right for both); the test asserts the re-attribution case carries across AND the merge case recomputes over the union. |
+
+The sixth "thing that will bite" is FR-077a's split-creative effect
+— a record-only requirement. It lands as a doc comment in
+`efficiencyFigure.ts`'s header, not as a test, per the user's
+explicit guidance ("This is a recording requirement; state it in
+the spec text, not in code").
+
+### 14.6 What this batch does NOT deliver
+
+- The call site in `applyLearningWrites.ts`. Per §14.1, this
+  lands in Batch 5 alongside the funnel-type weighting and the
+  FR-038 bound — they all need the per-creative post-walk that
+  Batch 5 introduces.
+- The aggregate-side `efficiencyContributingCount` field. Batch 5.
+- The FR-005c carve-out's first WRITE PERMISSION. The guard
+  (T041) lands in Batch 3; the actual call site that uses it
+  lands in Batch 5.
+- Cross-funnel weighting. Batch 5.
+- The FR-038 3.0 bound. Batch 5.
+
+Pure functions in this batch, consumer wiring in Batch 5. Same
+pattern as Batch 1 (accrual pure, ledger consult wired) and
+Batch 2 (seal pure, worker integration wired).
+
+### 14.7 Approval gate
+
+Per the user's instruction: "Do not write code until it is
+approved." This plan sits in `§14` for review. Once approved,
+Batch 3 implementation lands as commits:
+
+1. `learning/efficiencyFigure.ts` (pure module, T039–T043)
+2. `__tests__/phase969/efficiencyFigure.test.ts` (T046, registered
+   in `functions/package.json`)
+3. `AdDoc.efficiencyRaw` field addition
+4. `IMPLEMENTATION-LOG.md` §15 (any "what we learned during
+   implementation" notes)
+
+The "what we learned" append in §15 will use the same shape
+as §10.4's "three discriminating tests with before/after pairs":
+each batch's pure functions get their discrimination table
+captured once, against the wrong impl, with the actual failure
+output pasted.
