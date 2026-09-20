@@ -182,6 +182,27 @@ export function applyVisualAggregateWithdrawal(
     clone.contributedCreativeKeys = [...remaining];
     clone.creativeCount = remaining.size;
 
+    // Batch 4 (FR-037) — parallel efficiency-side withdrawal. Same
+    // `delete`-returns-as-guard pattern as the hook equivalent: a
+    // withdrawal for a creative that never contributed an efficiency
+    // figure is a no-op (the underlying `Set.delete` is already a
+    // no-op when the key is absent, and we use the return value to
+    // avoid recomputing the average against a fabricated count).
+    const efficiencyRemaining = new Set(clone.efficiencyContributingKeys ?? []);
+    const wasEfficiencyContributor = efficiencyRemaining.delete(ad.creativeKey ?? ad.adId);
+    if (wasEfficiencyContributor) {
+        const priorCount = efficiencyRemaining.size + 1;
+        const priorAvg = clone.efficiencyValueAvg ?? 0;
+        const withdrawnFigure = typeof ad.efficiencyFigure === "number"
+            ? ad.efficiencyFigure
+            : 0;
+        clone.efficiencyValueAvg = priorCount <= 1
+            ? 0
+            : (priorAvg * priorCount - withdrawnFigure) / (priorCount - 1);
+        clone.efficiencyContributingCount = efficiencyRemaining.size;
+        clone.efficiencyContributingKeys = [...efficiencyRemaining];
+    }
+
     return clone;
 }
 

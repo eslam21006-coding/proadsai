@@ -180,6 +180,28 @@ export function passesFRO34Gate(summary: PatternSummary): boolean {
     return true;
 }
 
+/**
+ * FR-037 efficiency-evidence gate. The owner's locked 10/3/3 decision
+ * (Batch 4) — the third "3" is "3 distinct creatives carrying a
+ * sealed efficiency figure". Reads `efficiencyContributingCount ?? 0`
+ * with the `?? 0` MANDATORY: `undefined < 3` evaluates to `false`
+ * in JavaScript and would open the gate rather than close it (the
+ * failure mode Batch 13 closed on `creativeCount` and the same one
+ * this predicate inherits).
+ *
+ * The hook aggregate's `efficiencyContributingCount` is populated by
+ * `aggregateDelta.ts:cloneHook` from the persisted key array, and
+ * by `applyAdToHook` when a row's `efficiencyFigure` first contributes.
+ * Batch 5 wires the call site that USES this predicate; the
+ * predicate itself is pure and tested in isolation here.
+ */
+export function passesFRO37EfficiencyGate(
+    hook: Pick<import("./learningAggregates.js").HookPerformanceAggregate,
+        "efficiencyContributingCount">,
+): boolean {
+    return (hook.efficiencyContributingCount ?? 0) >= 3;
+}
+
 const SCOPE_WEIGHTS: Record<SummaryScope, number> = {
     user: 1.0,
     niche: 0.75,

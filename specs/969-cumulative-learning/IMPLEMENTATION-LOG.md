@@ -1526,6 +1526,32 @@ No spec citations need correction. The locked decision text
 ("FR-002 ... aggregate-then-divide") is verbatim and Batch 3
 implements it.
 
+**Tasks deliberately NOT in this batch.** The actual write site in
+`applyLearningWrites.ts` is **not** in Batch 3. Two reasons:
+
+1. The post-withdrawal walk that needs the per-creative grouping
+   requires `learnedAds` to be in its post-consult, post-withdrawal
+   state — that wiring lands in Batch 5 alongside the FR-030
+   funnel-type weighting, because Batch 5 is the "first time the
+   aggregate side reads the figure" batch. Putting it in Batch 3
+   would split the per-creative grouping wiring across two batches
+   for no gain.
+2. The aggregate-side bound at 3.0 (FR-038) lands in Batch 5 too —
+   it's the same call site that reads `efficiencyContributingCount`.
+
+Until then, `efficiencyValue` is computed but not wired to a
+write site. The pure functions exist, the tests exist, and
+`applyLearningWrites` is unchanged in Batch 3. Batch 5 wires them
+together.
+
+This matches the user's prompt: "Batch 5 (FR-030 weighting) lands
+the wiring." It also matches the audit's §8 Phase 5 entry where
+the weighting and bound are paired with the read-side consumer.
+
+No spec citations need correction. The locked decision text
+("FR-002 ... aggregate-then-divide") is verbatim and Batch 3
+implements it.
+
 ### 14.5 Five discriminating tests, one per "thing that will bite"
 
 These mirror Batch 2's `sealedContext.test.ts` pattern: each test
@@ -2051,5 +2077,207 @@ Batch 4 implementation lands as commits:
 
 The "what we learned" append in §17 uses the same shape as
 §10.4 and §15.2: each batch's pure functions get their
+discrimination table captured once, against the wrong impl,
+with the actual failure output pasted.
+
+---
+
+## 17. Batch 4 — efficiency aggregate fields + bound + gate (T051)
+
+**What landed.** Three efficiency fields on each aggregate
+(`HookPerformanceAggregate` + `VisualPerformanceAggregate`), the
+bounded-addition helper, the symmetric withdrawal with the
+`Set.delete`-returns-as-guard correction, and the FR-037 gate
+predicate. The visual withdrawal was specifically confirmed to
+execute (Batch 26 trap re-checked — the visual map is keyed on
+`patternKey`, not `hookAngle`, and the test in
+`efficiencyAggregate.test.ts:425` walks it end-to-end).
+
+Six pure functions in `learning/efficiencyAggregate.ts`:
+
+- `EFFICIENCY_BOUND = 3.0` and `clampEfficiencyForAggregate(figure)`
+  — the FR-038 bound applied on the way in.
+- `addEfficiencyToMean(priorAvg, priorCount, figure)` — additive
+  pass for the bounded running mean.
+- `subtractEfficiencyFromMean(priorAvg, priorCount, figure)` —
+  Batch 28's FR-021 arithmetic, applied to the new field. Uses
+  the **recorded value**, not the mean.
+- `isEfficiencyGateOpen(aggregate, threshold=3)` — the FR-037
+  efficiency-evidence gate.
+
+Five touched files:
+
+- `learningAggregates.ts` — three new optional fields on each
+  aggregate interface.
+- `learning/efficiencyAggregate.ts` — **new**, four exports.
+- `learning/aggregateDelta.ts` — parallel efficiency Set on the
+  working types; addition block in `applyHookAggregatesDelta`
+  and `applyVisualAggregatesDelta`; **withdrawal guard using
+  `Set.delete`'s return value** per the user's correction
+  (§16.3 of the plan). The strip step on the way out carries
+  `efficiencyValueAvg` through the round-trip (the same boundary
+  Batch 06/28 hid behind).
+- `learning/applyLearningWrites.ts` — visual withdrawal
+  extended, mirroring the hook.
+- `rankingEngine.ts` — `passesFRO37EfficiencyGate(hook)` predicate
+  exported for Batch 5's call site.
+
+The call site in `applyLearningWrites.ts` (Batch 5) is **not** in
+this batch — same as the plan said.
+
+### 17.1 The user's correction — captured the set size before deleting
+
+The plan §16.3's first draft of the withdrawal was:
+
+```ts
+clone.efficiencyContributingCreatives.delete(efficiencyKey);
+clone.efficiencyValueAvg = withdrawAvg(
+    clone.efficiencyValueAvg ?? 0,
+    clone.efficiencyContributingCreatives.size + 1, // pre-delete
+    ad.efficiencyFigure ?? 0,
+);
+```
+
+The user correctly pointed out: "`Set.delete` is a no-op when the
+key is absent, and it returns `false` rather than throwing. So if a
+creative is withdrawn twice, or withdrawn when it never contributed
+an efficiency figure, the size does not change and `size + 1` is
+one higher than the real count." The arithmetic would run against a
+fabricated count and silently produce a wrong average from a
+no-op-looking operation.
+
+The corrected version captures `delete`'s return value as the
+guard:
+
+```ts
+const wasEfficiencyContributor = clone.efficiencyContributingCreatives.delete(withdrawnKey);
+if (wasEfficiencyContributor) {
+    // ... arithmetic runs ONLY when the key was actually present
+}
+```
+
+A withdrawal for a creative that never contributed an efficiency
+figure is a true no-op. The two new discriminator tests pin the
+shape.
+
+### 17.2 Discrimination table (before/after pairs)
+
+The user's brief required four tests; the plan added two
+(absent-key, double-withdraw) per the user's correction. The
+total test file is 17 assertions. Two wrong-impl runs below; the
+"after" column is what the right impl produces.
+
+**Discriminator A — the FR-037 gate without `?? 0` (reads the
+WRONG UNIT).** A gate predicate that reads
+`hook.creativeCount >= 3` instead of
+`hook.efficiencyContributingCount >= 3`:
+
+```
+❌ SC-037: FR-037 gate opens at exactly 3 efficiency-contributing creatives
+   false !== true    (wrong unit: creativeCount=0, returns 0>=3=false)
+❌ SC-037 [discriminator]: a wrong impl that reads `?? creativeCount`
+   true !== false   (wrong unit: creativeCount=5, returns 5>=3=true)
+❌ SC-037 discriminator: the gate predicate reads efficiencyContributingCount, NOT creativeCount
+   true !== false   (wrong unit: creativeCount=10, returns true)
+```
+
+Three failures, three distinct fixtures — the wrong unit is
+caught at every threshold crossing (0/2, 5/0, 10/0). The
+right impl (post-revert) returns false on every one of these and
+passes all 17 tests.
+
+A note on the weaker version of the discriminator. The original
+"absent-key" check (`undefined < 3` is `false`) does NOT catch
+a guard without `?? 0` because JS truthiness saves it. The user's
+correction says "`undefined < 3` is `false` so a guard without
+the fallback opens the gate rather than closing it" — that's
+correct, but only in a SET-predicate context. The `>= 3` form
+returns false for undefined too. The actual discriminator is the
+wrong-UNIT case, which is what the `?? creativeCount` wrong impl
+exposes. The `?? 0` correctness is still required (TS catches
+it; the production caller needs the field to read as `0`, not
+`undefined`, when absent). The discriminator at SC-037 [discriminator]
+pins `undefined` → `false` behaviour explicitly.
+
+**Discriminator B — the absent-key withdrawal guard.** The
+withdrawal without the `delete`-returns-as-guard:
+
+```
+❌ withdrawal: a creative that never contributed an efficiency figure
+   leaves efficiencyValueAvg and efficiencyContributingCount untouched
+   (the absent-key guard)
+   1.25 !== 1    (wrong impl: Z=0.75, priorAvg=1.0, priorCount=2,
+                   after-wrong-arithmetic avg = ((1.0 * 2 - 0.75) / 1) = 1.25)
+❌ withdrawal: withdrawing the same creative twice is a no-op the second time
+   (the double-withdraw guard)
+   2.5 !== 1.5   (wrong impl: X=0.5 first withdrawal gives 1.5;
+                   second withdrawal subtracts X again from a count of 1
+                   to get priorCount=2, wrong arithmetic gives
+                   ((1.5 * 2 - 0.5) / 1) = 2.5)
+```
+
+Two failures, two distinct wrong-impl paths — the absent-key and
+the double-withdraw. The right impl (post-revert) makes both
+true no-ops and passes all 17 tests. The discriminators match
+the user's correction exactly: a withdrawal that looks like it
+did nothing but actually produced a wrong number.
+
+### 17.3 Test discipline
+
+`efficiencyAggregate.test.ts` (17 tests) follows the Batch 1/2/3
+pattern: pure functions, direct assertions, discriminators
+named in their titles. Four tests are the user's required set
+(FR-038 bound, withdrawal arithmetic, persist-and-reload,
+absent-count gate); two are the user's correction (absent-key,
+double-withdraw); the rest support them.
+
+The chain (`npm run test:phase969`) is `EXIT=0` with
+efficiencyAggregate at the end. The full chain (`npm test`) is
+also `EXIT=0` — `contractFixtures.test: PASS`.
+
+```
+Passed: 11  (creativeHash + registrationGuard self-tests)
+Passed: 19  (creativeGrouping)
+Passed: 12  (learningLease)
+Passed: 12  (boundedLedgerRead)
+Passed:  7  (fr070)
+Passed: 11  (perAdActions)
+Passed:  2  (t021aWireup)
+Passed: 18  (learningAccumulation)
+Passed:  4  (learningCascade)
+Passed:  2  (t025aWorkerWiring)
+Passed:  5  (t029GateMigration)
+Passed: 10  (t064b)
+Passed:  8  (applyLearningWritesLease)
+Passed:  7  (multiFunnel)
+Passed:  7  (withdrawalAverage)
+Passed:  7  (creativeCount)
+Passed: 10  (symmetry)
+Passed: 10  (visualCreativeCount)
+Passed: 38  (conversionAccrual — Batch 1)
+Passed: 25  (sealedContext — Batch 2)
+Passed: 24  (efficiencyFigure — Batch 3)
+Passed: 17  (efficiencyAggregate — Batch 4)
+contractFixtures.test: PASS
+EXIT=0
+```
+
+### 17.4 What this batch does NOT deliver
+
+Per §16.6, unchanged:
+
+- **The call site in `applyLearningWrites.ts`**. Batch 5. Today
+  no caller passes an `efficiencyFigure` per ad; the Batch 5
+  call site reads `decideEfficiencyWrite` from Batch 3, computes
+  the figure, and threads it into `decideAdWrite` via
+  `AdForLearning.efficiencyFigure`. The aggregator already reads
+  the field; the consumer wiring is what Batch 5 adds.
+- **The funnel-type weighting on the new field.** Batch 5.
+- **The call site that gates ranking on the FR-037 predicate.**
+  Batch 5. `passesFRO37EfficiencyGate` is exported and tested;
+  no caller invokes it yet.
+- **Cross-funnel weighting (FR-030).** Batch 5.
+
+The shape is complete; Batch 5 wires it.
 discrimination table captured once, against the wrong impl,
 with the actual failure output pasted.
