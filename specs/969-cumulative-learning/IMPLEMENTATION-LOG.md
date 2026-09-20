@@ -1771,5 +1771,285 @@ Per §14.6, unchanged:
 - Cross-funnel weighting (FR-030). Batch 5.
 - FR-074b's group-level merge wiring in `creativeGrouping.ts`
   (the merge shape exists; the efficiency-side recompute is
-  already in Batch 3 via `applyMergeRecompute`; Batch 5 wires
-  the consumer).
+   already in Batch 3 via `applyMergeRecompute`; Batch 5 wires
+   the consumer).
+
+---
+
+## 16. Batch 4 plan — efficiency aggregate fields + bound + gate (T051 + FR-037 wiring)
+
+**What this batch delivers.** The place Batch 3's figure goes.
+Three new fields on the hook and visual aggregates, the
+withdrawal arithmetic that keeps the average honest, the FR-038
+3.0 bound applied on the way in, and the FR-037 gate that
+decides when efficiency is allowed to influence ranking. After
+this, the figure has somewhere to land and somewhere to be
+read; Batch 5 wires the call site and the consumers.
+
+§15.7 named the FR-037 gate, the bound, and the
+`efficiencyContributingCount` field as "Batch 5". This plan
+moves them to Batch 4 because they are the AGGREGATE-SIDE
+plumbing, and the user's brief is explicit: "This batch builds
+the place it goes". Batch 5 still owns the
+`applyLearningWrites` call site (per Batch 3's plan §14.6) but
+the field types and the gate predicate land here.
+
+### 16.1 Where the new fields live on the aggregate
+
+The two existing aggregates already carry the parallel Batch 28
+landed:
+
+```ts
+// HookPerformanceAggregate (learningAggregates.ts:110-187)
+interface HookPerformanceAggregate {
+    angleKey: string;
+    schemaVersion?: number;
+    creativeCount?: number;
+    contributedCreativeKeys?: string[];
+    sampleSize: number;
+    lastUpdated: number;
+    byObjective: { conversion: { ... }; other: { ... } };
+    byFunnelType?: ByFunnelTypeBreakdown;
+    byGeoTier: { ... };
+    byAudienceType: { ... };
+}
+
+// VisualPerformanceAggregate (learningAggregates.ts:190-246) —
+//   same shape, keyed by patternKey instead of angleKey.
+```
+
+**Three new fields, on BOTH aggregates, in this order:**
+
+```ts
+// NEW for Batch 4 — efficiency-side fields. Mirrors the existing
+// creativeCount / contributedCreativeKeys pair.
+efficiencyContributingKeys?: string[];
+efficiencyContributingCount?: number;
+efficiencyValueAvg?: number;
+```
+
+The parallel with `creativeCount` / `contributedCreativeKeys`
+is intentional and visible. `efficiencyContributingCount` is
+**derived from the array's length** (`size` of the persisted
+key list); the array is the state, the count is the readout.
+This is the same fix Batch 28 made for the per-row count (the
+synopsis audit at §3 of the report: "Neither repeated
+observation across syncs nor multiplicity of ad rows may inflate
+the count."). `efficiencyValueAvg` is the bounded mean — see
+§16.2 below for the bound rule.
+
+Both fields are optional on read. Optional is the migration
+shape: every aggregate written before this batch carries
+neither field. A reader treats absent as "no efficiency
+evidence yet"; the gate must `?? 0` it (which it does anyway).
+
+**The FR-037 gate reads `efficiencyContributingCount` with
+`?? 0` — NEVER `?? creativeCount`, NEVER `?? sampleSize`.** The
+existing `rankingEngine.ts:179` already uses `?? 0` for
+`creativeCount` (Batch 13's migration removed the `?? sampleSize`
+fallback). The same discipline applies here. Absent must
+**fail** the gate, not silently fall back to a different unit:
+`undefined < 3` evaluates to `false` and would open the gate
+when there is no efficiency evidence, which is the precise
+failure mode Batch 13 closed. Pin the pattern in code AND in
+the test (`SC-037 gate with absent count: undefined must fail,
+not pass`).
+
+### 16.2 The 3.0 bound and the withdrawal arithmetic
+
+**Bound on the way in, not on the way out.** When a creative
+contributes its efficiency figure to the aggregate's
+`efficiencyValueAvg`, the contribution is `Math.min(figure, 3.0)`
+BEFORE it enters the running mean. The stored aggregate figure
+is bounded; the stored `AdDoc.efficiencyRaw` (Batch 3's
+unbounded audit field at `shared.ts:276-289`) stays
+unbounded. The discriminator test asserts:
+
+- A creative with `efficiencyRaw = 8.0` contributes **3.0** to the aggregate average.
+- The same creative's `AdDoc.efficiencyRaw` field is still 8.0 (read-only audit value, untouched by the bound).
+
+Clamping at read time means the stored average is unbounded and
+a single freak row permanently skews it. Clamping at write time
+(before it enters the mean) means the average stays in [0, 3.0]
+forever. The user's `FR-038` is explicit: "**bounded at 3.0
+when folded into an aggregate average**" — folded in, not
+folded out.
+
+**Withdrawal arithmetic.** Use `withdrawAvg(avg, count, A)`,
+the same function that already exists in
+`aggregateDelta.ts:448-451` and the duplicate in
+`applyLearningWrites.ts:104-107` (`withdrawAvgLocal`). Both
+are correct; both compute `(M·n − A)/(n − 1)` with the
+`count <= 1` guard. The discriminator test asserts the exact
+arithmetic AND the cycle-stability (5 stable withdraw-then-add
+cycles leave the average unchanged) — that is the test shape
+Batch 28 wrote to catch the original defect, and it is the
+shape Batch 4 re-runs on the new field.
+
+### 16.3 Withdrawal-path reachability — the Batch 26 trap
+
+Batch 26 found the visual withdrawal keyed by `hookAngle` and
+therefore a no-op for every visual aggregate. Before I add the
+new field I need to confirm the visual withdrawal actually runs
+when an efficiency contribution changes. Two ways I confirmed:
+
+1. **Direct read of the call chain.** `applyLearningWrites.ts:404`
+   calls `applyHookAggregateWithdrawal(next, wad)` and `:420`
+   calls `applyVisualAggregateWithdrawal(next, wad)` for every
+   withdrawal in `withdrawalHookAds` (filtered by the
+   `withdrawalByAngle` and `withdrawalByPattern` maps
+   respectively). Batch 26's fix (§10 of the implementation
+   log) is in place: the visual map is keyed on `patternKey`,
+   not `hookAngle`, so the visual pass executes. Both functions
+   MUTATE THE CLONE in place and return the new aggregate;
+   Batch 26's wrong-impl test (`applyLearningWritesLease.test.ts`,
+   BATCH 26 visual-withdrawal case) pins this.
+2. **Existing-failure-mode coverage.** The Batch 26 test
+   asserts `OLD(oldP_zzz).count=0, NEW(1bnqphs).count=1` on a
+   re-attribution from one pattern to another. The test's
+   shape — walk the per-creative withdrawal chain — is what
+   Batch 4's new field will inherit. If Batch 4's
+   `efficiencyValueAvg` decrement never fires on the visual side,
+   the same test would catch it (Batch 4 adds an
+   `efficiencyValueAvg` assertion alongside the existing
+   `count` one).
+
+**Signature widening.** Neither `applyHookAggregateWithdrawal`
+nor `applyVisualAggregateWithdrawal` needs its signature
+widened for the new field. Both take `(existing, ad)` and
+return a clone; Batch 4 adds the new field's decrement
+**inside** the existing function bodies (mirroring how
+`bestVerdictCount` / `worstVerdictCount` are decremented today).
+The single-argument change is "the function now also touches
+this new field", which fits the existing pattern. No caller
+signature change, no contract change.
+
+**Concrete shape of the change.** Mirror the existing
+`contributedCreatives.delete(withdrawnKey)` pattern (lines
+422-423 of `aggregateDelta.ts`) on a parallel set:
+
+```ts
+const efficiencyKey = ad.creativeKey ?? ad.adId;
+clone.efficiencyContributingCreatives.delete(efficiencyKey);
+clone.efficiencyValueAvg = withdrawAvg(
+    clone.efficiencyValueAvg ?? 0,
+    clone.efficiencyContributingCreatives.size + 1, // pre-delete
+    ad.efficiencyFigure ?? 0,                       // row's recorded value (FR-002a's stored number)
+);
+```
+
+The `efficiencyContributingCreatives` Set is the internal
+working-state parallel of the existing `contributedCreatives`
+Set; both hydrate from the persisted key array on read and
+strip to the array on write. The `efficiencyValueAvg`
+decrement uses the **recorded value** of the row's figure —
+not the mean — so the average is exact, the same way
+`avgLinkCtr`'s decrement does today.
+
+### 16.4 The FR-037 gate
+
+**One call site, with `?? 0` fallback.** Where Batch 13 migrated
+FR-034 / FR-034a to read `creativeCount`, this batch migrates
+FR-037 to read `efficiencyContributingCount`:
+
+```ts
+// Before Batch 4 (FR-037 absent):
+//   if ((s.creativeCount ?? 0) >= 3) ...  // WRONG — reads the wrong unit
+// After Batch 4:
+//   if ((s.efficiencyContributingCount ?? 0) >= 3) ...
+```
+
+The "absent count fails" discriminator is the test:
+
+```ts
+// SC-037: gate with absent count: undefined must fail, not pass.
+const empty: { efficiencyContributingCount?: number } = {};
+const result = isEfficiencyEligible(empty); // returns false
+```
+
+`undefined < 3` is `false`, so a guard written as
+`(summary.efficiencyContributingCount < 3)` would return `true`
+("absent count meets the threshold") when in fact the gate
+should refuse. `(summary.efficiencyContributingCount ?? 0) < 3`
+returns `true` for absent. The discriminator test pins the
+fallback.
+
+### 16.5 Tasks proposed (Batch 4)
+
+| Task | What it delivers | Why now |
+|---|---|---|
+| **T051** | Add `efficiencyContributingKeys`, `efficiencyContributingCount`, `efficiencyValueAvg` to both `HookPerformanceAggregate` and `VisualPerformanceAggregate` in `learningAggregates.ts`. Update `cloneHook` / `cloneVisual` to hydrate the parallel `Set`. Update `emptyHook` / `emptyVisual`. | The shape every other Batch 4 task builds on. |
+| **T051a** | Add the bounded-addition helper `withEfficiencyBoundAndAverage(figure) → Math.min(figure, 3.0)`. Pure function. | The bound is the discriminator; a separate helper makes it testable and explicit. |
+| **T051b** | Extend `applyAdToHook` and `applyAdToVisual` to add `efficiencyContributingCreatives.add(...)` and `efficiencyValueAvg += bounded`. | The add-side of the add/withdraw invariant. |
+| **T051c** | Extend `applyHookAggregateWithdrawal` and `applyVisualAggregateWithdrawal` to subtract `efficiencyContributingCreatives.delete(...)` and `efficiencyValueAvg = withdrawAvg(...)`. | The withdraw-side. Both directions of the invariant. |
+| **T051d** | Add the `efficiencyAggregate.test.ts` with the four named tests + supporting cases. | Test surface; registered as `test:phase969:efficiencyAggregate` in the chain. |
+| **T051e** | Update `rankingEngine.ts`'s FR-037 line to read `efficiencyContributingCount ?? 0` (the `?? 0` is mandatory — never `?? creativeCount` / `?? sampleSize`). | The gate migration. |
+
+Five tasks, all small, none Block on each other beyond T051a
+providing the helper that T051b uses.
+
+**Tasks deliberately NOT in this batch.**
+
+- **The `applyLearningWrites.ts` call site** (Batch 5).
+  Specifically the per-creative post-walk that reads
+  `decideEfficiencyWrite` from Batch 3 and writes the new
+  fields. Today, no caller passes an `efficiencyFigure` per ad.
+- **The funnel-type weighting on `efficiencyContributingCount`** —
+  no parallel field exists, so it's `?? 0` per Bucket. This
+  is a Batch 5 read-side decision once the consumer lands.
+- **`byFunnelTypeCreativeCount` parallel for efficiency.** Same
+  reason: Batch 5 reads.
+
+The work in this batch is the SHAPE; Batch 5 is the consumer
+wiring.
+
+### 16.6 The four required tests (the user-named gate)
+
+- **The 3.0 bound**: a creative with `efficiencyRaw = 8.0`
+  contributes 3.0; `efficiencyRaw` stays 8.0.
+- **The withdrawal arithmetic**: withdraw a creative whose
+  figure differs from the running mean, assert
+  `(M·n − A)/(n − 1)` exactly. Then cycle one creative
+  through withdraw-then-add five times at a stable value and
+  assert the average is **unchanged** (the same shape that
+  caught Batch 28's defect).
+- **`efficiencyContributingCount` across persist-and-reload**:
+  round-trip the aggregate, re-apply the same creative, assert
+  the count is unchanged. This is the boundary Batch 06 and
+  Batch 28 hid behind — the discriminator's job is to cross
+  it.
+- **The gate with an absent count**: `undefined` must fail, not
+  pass.
+
+Plus the FR-038-bound helper (`Math.min(figure, 3.0)`) as
+two pure-function tests (raw < 3 → pass-through; raw >= 3 →
+clamp).
+
+Plus the FR-037-gate failing-case discriminators: the
+"guard that checks `?? creativeCount`" wrong impl (silently
+lets the threshold through with an adjacent count) and the
+"guard that omits the `?? 0`" wrong impl (`undefined < 3` is
+`false`, opens the gate). Three discriminator failures total
+for the gate alone.
+
+### 16.7 Approval gate
+
+Per the user's instruction: "Do not write code until it is
+approved." This plan sits in `§16` for review. Once approved,
+Batch 4 implementation lands as commits:
+
+1. `learningAggregates.ts` (T051) — three new fields on both
+   aggregates.
+2. `learning/aggregateDelta.ts` + `learning/applyLearningWrites.ts`
+   (T051b, T051c) — bounded addition + symmetric withdrawal.
+3. `rankingEngine.ts` (T051e) — FR-037 gate migration.
+4. `__tests__/phase969/efficiencyAggregate.test.ts` (T051d) —
+   registered as `test:phase969:efficiencyAggregate`.
+5. `IMPLEMENTATION-LOG.md` §17 (the "what we learned during
+   implementation" append with the four-test discrimination
+   table).
+
+The "what we learned" append in §17 uses the same shape as
+§10.4 and §15.2: each batch's pure functions get their
+discrimination table captured once, against the wrong impl,
+with the actual failure output pasted.
