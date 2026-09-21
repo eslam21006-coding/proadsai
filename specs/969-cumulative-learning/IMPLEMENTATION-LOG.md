@@ -4416,6 +4416,222 @@ Round-21 pre-merge check lands:
   addressed. No new fixes required.
 
 The owner can merge through the GitHub UI once this check
+is reviewed.
+
+---
+
+## 27. Round-22 — Stub tightening and chain re-run
+
+Round 21 was accepted. Two small items remained:
+(1) the `t064bEndToEnd` stub's `getAll` accepted refs whose
+`path` was missing, hiding a real-Firestore-rejected shape;
+(2) the chain was not shown after the round-21 commit.
+
+### 27.1 Bounded-read stub tightening
+
+Five stubs across four files now throw `TypeError` on any
+ref whose `path` is missing or empty, matching real
+Firestore's SDK-boundary rejection. The error message is:
+
+```ts
+throw new TypeError(
+    `db.getAll: ref "${ref.id}" is not a DocumentReference (missing path); ` +
+    `this matches what the real Firestore SDK would reject`,
+);
+```
+
+| File | Lines | What tightened |
+|---|---|---|
+| `t064bEndToEnd.discriminator.test.ts` | 142–177 | Stub `getAll` throws on missing `path`. |
+| `applyLearningWritesLease.test.ts` | 64–82 | `StubDocRef` class now exposes `path` (`parentPath/id`). |
+| `applyLearningWritesLease.test.ts` | 171–207 | Outer stub `getAll` throws on missing `path`. |
+| `applyLearningWritesLease.test.ts` | 802–833 | Per-test stub `getAll` (BATCH 26 commit-failure test) throws on missing `path`. |
+| `efficiencyWiring.test.ts` | 82–95 | `StubDocRef` class now exposes `path`. |
+| `efficiencyWiring.test.ts` | 165–193 | Outer stub `getAll` throws on missing `path`. |
+| `boundedLedgerRead.test.ts` | 73–114 | Canonical `makeDb` helper throws on missing `path`. |
+| `boundedLedgerRead.test.ts` | 136–142 | `refs()` helper returns refs with `path` populated. |
+
+Without the `path` field on the `StubDocRef` class itself,
+`makeAdAccountRef().collection("adPerformance").doc(id)`
+would have returned refs whose `path` was undefined; the
+tightened stub would then have thrown. Adding `path` to
+`StubDocRef` matches real Firestore's `DocumentReference`
+shape (`{id, path, parent, firestore}`).
+
+### 27.2 Discriminator demonstration
+
+**Step 1 — revert the ref construction** at
+`applyLearningWrites.ts:436-440` back to the round-18
+shape:
+
+```ts
+const refsForRead = params.learnedAds.map((ad) =>
+    ({ id: ad.adId }) as { id: string; path?: string },
+);
+```
+
+**Step 2 — rebuild from clean `lib/` and run** — exit
+code 1. Chain output:
+
+```
+=== T064b end-to-end: SC-049 + worker-output (Phase 7) ===
+Passed: 4, Failed: 7
+```
+
+The 7 failures are exactly the "lease-acquired run writes
+the aggregate" cases:
+
+```
+❌ Round-19: lease-refused then normal run — exactly one contribution, no phantom withdrawal
+   Round-19: hook aggregate must exist after the lease-acquired run (bucket=[])
+✅ BATCH 20: lease-refused run writes operational state and NO aggregate document
+❌ BATCH 20: lease-acquired run writes BOTH operational and aggregate documents
+   Batch 19 item 1: lease-acquired must commit hookPerformance writes (found 0)
+❌ BATCH 19: twice-over-same-input leaves the aggregate unchanged on the second pass (FR-018)
+   Batch 19 item 2: first pass must produce a hook aggregate document
+❌ BATCH 21 item 2: ad angle change A→B leaves A's count at prior and increments B
+   BATCH 21 item 2: first sync must write a hook aggregate for 'urgency'
+✅ T021a worker-output: queued adDoc's ledger.creativeKey is the actual creative key (not ad.id)
+❌ T025a worker-output: queued adDoc's ledger.angleKey/patternKey are the post-pass resolved values (not null)
+   T025a: contributing ad must carry a ledger entry
+❌ T047 worker-output: workspace funnelType=paid_event → byFunnelType.paid_event.count > 0 AND byFunnelType.unknown.count === 0
+   T047 case A: hook aggregate must be written after a successful sync
+❌ T047 worker-output (inverse): no resolvable funnelType → byFunnelType.unknown.count > 0 AND every real-funnel bucket is exactly 0
+   T047 case B (inverse): hook aggregate must be written after a successful sync
+```
+
+The tightened stub threw on every ref the production code
+passed, every ad landed in `failedIds`, and round-18's
+failed-read abort skipped all of them. **No learning would
+have been written** in production, on any sync, for any
+account. The chain caught the regression.
+
+**Step 3 — restore the ref construction** to round-21:
+
+```ts
+const refsForRead = params.learnedAds.map((ad) =>
+    (params.adAccountRef as unknown as {
+        collection(name: string): { doc(id: string): { id: string; path?: string } };
+    }).collection("adPerformance").doc(ad.adId),
+);
+```
+
+**Step 4 — rebuild from clean `lib/` and run** — exit
+code 0. Chain output:
+
+```
+=== T064b end-to-end: SC-049 + worker-output (Phase 7) ===
+Passed: 11, Failed: 0
+=== BATCH 24/25/26 — applyLearningWrites function-level (Step 3) ===
+Passed: 13, Failed: 0
+```
+
+The discriminator is genuine. The tightened stub now sees
+this class of defect: any future regression that passes
+`{id}`-only refs to `db.getAll` will throw the same
+TypeError and the tests will fail with the exact "lease-
+acquired run writes the aggregate" messages above.
+
+### 27.3 Audit: other phase969 stubs
+
+| Stub | File | Method | Verdict |
+|---|---|---|---|
+| Outer `getAll` | `t064bEndToEnd.discriminator.test.ts:142` | `db.getAll(...refs)` | FIXED (round-22) |
+| Outer `getAll` | `applyLearningWritesLease.test.ts:171` | `db.getAll(...refs)` | FIXED (round-22) |
+| Per-test `getAll` | `applyLearningWritesLease.test.ts:802` | BATCH 26 commit-failure test | FIXED (round-22) |
+| Outer `getAll` | `efficiencyWiring.test.ts:165` | `db.getAll(...refs)` | FIXED (round-22) |
+| `makeDb` `getAll` | `boundedLedgerRead.test.ts:86` | canonical | FIXED (round-22) |
+| `StubDocRef` | `applyLearningWritesLease.test.ts:64` | constructor | FIXED (round-22; now exposes `path`) |
+| `StubDocRef` | `efficiencyWiring.test.ts:82` | constructor | FIXED (round-22; now exposes `path`) |
+| `runTransaction` | `learningLease.test.ts:125` | lease primitive | REPORTED — stub doesn't simulate Firestore retry semantics or read-after-write rejection. Lease primitive is read-then-write, so the leak is small. Out of scope for bounded-read tightening. |
+| `runTransaction` | `t064bEndToEnd.discriminator.test.ts:181` | end-to-end lease primitive | REPORTED — same caveat. Out of scope. |
+| `StubBatch.set` | `applyLearningWritesLease.test.ts:117`, `t064bEndToEnd.discriminator.test.ts:106` | batch write | REPORTED — accepts `any` data without validation. TypeScript narrows `ref` to `StubDocRef`. Trivial. Out of scope. |
+| `StubBatch.commit` | `applyLearningWritesLease.test.ts:121` | batch commit | REPORTED — always succeeds by default; tests override explicitly when needed. Out of scope. |
+| `StubCollection.where/limit/orderBy` | `applyLearningWritesLease.test.ts:108–110`, `t064bEndToEnd.discriminator.test.ts:89–91` | query chain | REPORTED — returns `this`, ignoring filters. Tests don't chain `where().get()` against the bounded read. Out of scope. |
+| `StubCollection.get` | 4 sites | collection read | REPORTED — returns all docs regardless of filter. Same. Out of scope. |
+| `doc(path)` | every stub | path construction | NOT over-permissive (real Firestore accepts any string). |
+| `FieldValue.serverTimestamp/increment` | every stub | field-value helpers | REPORTED — returns client-side equivalents. Trivial. Out of scope. |
+
+The user's constraint: "Do not fix them in this round
+unless they touch the bounded read; list them." Five
+bounded-read stubs were tightened. Nine other stub methods
+are over-permissive in minor ways, listed for the next
+round's audit, not fixed here.
+
+### 27.4 The four items fixed in `1f6f63f`
+
+The user noted that the previous round-21 report
+attributed only Comment 10 to commit `1f6f63f` and asked
+to name all four with the lines changed.
+
+#### Fix 1 — `applyLearningWrites.ts:436-440` (REAL BUG)
+
+The in-lease bounded re-read constructed refs as
+`{id: ad.adId}` only, without `path`. Production `getAll`
+expects real `DocumentReference` objects. Constructing via
+`params.adAccountRef.collection("adPerformance").doc(ad.adId)`
+matches the ledger-write path and gives production-shaped
+refs.
+
+#### Fix 2 — `IMPLEMENTATION-LOG.md:3020` (REAL BUG)
+
+The Phase 969 suite table at §20.7 listed the
+`patternSummariesEfficiencyKeys` row with empty cells.
+Suite has 4 tests. Filled in the row count.
+
+#### Fix 3 — `IMPLEMENTATION-LOG.md:2895 + 2923-2925` (REAL BUG — security/privacy)
+
+The Round-14 reply table at §20.3 row #12 and the
+verification table quoted literal production identifiers
+from the pre-fix state of commit `27a34f1`
+(`ZbGPvZbrAAFl8afG41dG`, `Moataz Mashal`,
+`ywpCgWsXqVP4tlNwfhSoTqMjRw52`, `act_1069240099193713`,
+`act_995888422231015`, `act_1180773537404268`). Redacted
+with placeholders matching the round-14 convention.
+
+#### Fix 4 — `sealedTransitionRaceDiscriminator.test.ts:108-114` (STYLE)
+
+The `runner` function at lines 108-114 was unused (the
+actual summary lives inline at lines 294-298). Removed.
+
+### 27.5 Chain re-run — clean `lib/` from HEAD
+
+```powershell
+Remove-Item -Recurse -Force lib
+npm run build
+npm test
+```
+
+**Exit code: 0** (`TEST_PASSED`).
+
+**Total test count vs previous 296:** 296 (no change;
+tightening the stubs is behaviour-preserving for code that
+already constructs refs with `path`).
+
+**Phase 969 chain tail:**
+
+```
+=== T064b end-to-end: SC-049 + worker-output (Phase 7) ===
+Passed: 11, Failed: 0
+
+=== BATCH 24/25/26 — applyLearningWrites function-level (Step 3) ===
+Passed: 13, Failed: 0
+```
+
+### 27.6 Sign-off
+
+Round-22 lands:
+
+- **Item 1** — Five bounded-read stubs tightened across
+  four files. The discriminator demonstration proves the
+  tightened stub now sees this class of defect.
+- **Item 2** — Full chain re-run from clean `lib/`:
+  exit code 0, 296 tests pass. Total test count unchanged.
+- **Four items fixed in `1f6f63f`** — listed with the
+  lines changed and the diffs.
+
+The owner can merge through the GitHub UI once this check
 is reviewed. A matching standalone report is at
+`specs/969-cumulative-learning/reports/round-22-stub-and-chain.md`. A matching standalone report is at
 `specs/969-cumulative-learning/reports/round-21-pre-merge.md`.
 

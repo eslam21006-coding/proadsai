@@ -141,20 +141,30 @@ const stubFirestore = () => ({
     // module with `metaSyncOrchestrator.test.ts`, by Batch 15 design).
     getAll: (...refs: Array<{ id: string; path?: string }>): Promise<Array<{ id: string; exists: boolean; data: () => DocData }>> => {
         return Promise.all(refs.map((ref) => {
-            const id = ref.id;
-            // Round-18 — accept refs with `{id}` only (the shape
-            // `applyLearningWrites`'s in-lease re-read passes).
-            // Production refs (constructed via
-            // `adAccountRef.collection("adPerformance").doc(id)`)
-            // carry `{id, path}` and look up by full path.
-            let store: Map<string, DocData>;
-            if (ref.path) {
-                const pathParts = ref.path.split("/");
-                const parentPath = pathParts.slice(0, -1).join("/");
-                store = bucket(parentPath);
-            } else {
-                store = bucket(`users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/adPerformance`);
+            // Round-22 — match real Firestore's contract. The SDK's
+            // `getAll` accepts only `DocumentReference` instances,
+            // which always carry a `path`. The `{id}`-only shape that
+            // round-18's loose stub accepted would be rejected by
+            // production Firestore at the SDK boundary (a TypeError).
+            // A regression back to that shape would pass every test
+            // and break production silently — every in-lease chunk
+            // read would fail, every ad would land in `failedIds`,
+            // and round-18's failed-read abort would skip them all.
+            // The code at `applyLearningWrites.ts:436-440` now
+            // constructs refs via
+            // `adAccountRef.collection("adPerformance").doc(ad.adId)`,
+            // which carries `{id, path}`; this tightened stub will
+            // accept that shape and throw on any ref lacking `path`.
+            if (typeof ref.path !== "string" || ref.path.length === 0) {
+                throw new TypeError(
+                    `db.getAll: ref "${ref.id}" is not a DocumentReference (missing path); ` +
+                    `this matches what the real Firestore SDK would reject`,
+                );
             }
+            const id = ref.id;
+            const pathParts = ref.path.split("/");
+            const parentPath = pathParts.slice(0, -1).join("/");
+            const store = bucket(parentPath);
             const data = store.get(id);
             return Promise.resolve({
                 id,

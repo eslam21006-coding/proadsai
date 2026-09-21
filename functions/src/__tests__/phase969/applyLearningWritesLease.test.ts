@@ -62,7 +62,19 @@ function docKey(parts: string[]): string {
 }
 
 class StubDocRef {
-    constructor(public readonly parentPath: string, public readonly id: string) {}
+    // Round-22 — add a `path` field. Real Firestore's
+    // `DocumentReference` carries `{id, path, parent, firestore}`;
+    // `getAll` rejects anything that isn't a `DocumentReference` at
+    // the SDK boundary (a TypeError). The tightened
+    // bounded-read stub at line ~163 (and at ~792) now throws on
+    // any ref whose `path` is missing or empty, matching that
+    // behaviour. The `applyLearningWrites.ts:436-440` ref shape
+    // is `{id, path?}`; tests that exercise the bounded read
+    // now construct refs whose `path` is populated.
+    constructor(public readonly parentPath: string, public readonly id: string) {
+        this.path = `${parentPath}/${id}`;
+    }
+    public readonly path: string;
     async get() {
         const data = docStore.get(docKey([this.parentPath, this.id]));
         return {
@@ -156,8 +168,26 @@ const stubFirestore = () => ({
     // `/{id}`. Tests 9–11 use the success path to assert the
     // race window: run A commits to the bucket, run B's
     // in-lease re-read sees A's commit.
-    getAll: (...refs: Array<{ id: string }>): Promise<Array<{ id: string; exists: boolean; data(): Record<string, unknown> }>> => {
+    getAll: (...refs: Array<{ id: string; path?: string }>): Promise<Array<{ id: string; exists: boolean; data(): Record<string, unknown> }>> => {
+        // Round-22 — match real Firestore's contract. The SDK's
+        // `getAll` accepts only `DocumentReference` instances, which
+        // always carry a `path`. The `{id}`-only shape round-18's
+        // loose stub accepted would be rejected by production
+        // Firestore at the SDK boundary (a TypeError). The code at
+        // `applyLearningWrites.ts:436-440` now constructs refs via
+        // `adAccountRef.collection("adPerformance").doc(ad.adId)`,
+        // which carries `{id, path}`; this tightened stub accepts
+        // that shape and throws on any ref lacking `path`.
         const ids = refs.map((r) => r.id);
+        for (const ref of refs) {
+            if (typeof (ref as { path?: string }).path !== "string"
+                || ((ref as { path?: string }).path ?? "").length === 0) {
+                return Promise.reject(new TypeError(
+                    `db.getAll: ref "${ref.id}" is not a DocumentReference (missing path); ` +
+                    `this matches what the real Firestore SDK would reject`,
+                ));
+            }
+        }
         for (const failure of currentFailChunks) {
             const wanted = new Set(failure.ids);
             const got = new Set(ids);
@@ -769,7 +799,22 @@ async function test8_commitFailureReturnsNotRan() {
                     commit: async () => { throw new Error("simulated commit failure"); },
                 };
             },
-            getAll: (...refs: Array<{ id: string }>): Promise<Array<{ id: string; exists: boolean; data(): Record<string, unknown> }>> => {
+            getAll: (...refs: Array<{ id: string; path?: string }>): Promise<Array<{ id: string; exists: boolean; data(): Record<string, unknown> }>> => {
+                // Round-22 — match real Firestore's contract (see the
+                // outer stub at line ~159 for the full rationale).
+                // Throws on any ref lacking `path`; the code at
+                // `applyLearningWrites.ts:436-440` now constructs refs
+                // via `adAccountRef.collection("adPerformance")
+                // .doc(ad.adId)`, which carries `{id, path}`.
+                for (const ref of refs) {
+                    if (typeof (ref as { path?: string }).path !== "string"
+                        || ((ref as { path?: string }).path ?? "").length === 0) {
+                        return Promise.reject(new TypeError(
+                            `db.getAll: ref "${ref.id}" is not a DocumentReference (missing path); ` +
+                            `this matches what the real Firestore SDK would reject`,
+                        ));
+                    }
+                }
                 return Promise.all(refs.map((ref) => {
                     let data: any | undefined;
                     for (const [k, v] of docStore.entries()) {
