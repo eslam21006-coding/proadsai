@@ -4213,22 +4213,19 @@ Rebuilt from clean `lib/` and ran the chain:
 
 ```
 Γ¥î T053 ledger unfenced: aggregate double-counts across two runs (round-17 fix)
-   T053 ledger unfenced: aggregate count must be 1 after both runs (round-19 fix); got 2.
-   Pre-fix double-counts because B's in-lease re-read sees A's just-committed ledger
-   (which the pre-fix operational merge wrote outside the lease);
-   decideContribution returns 'noop' → aggregate stays at 1 BUT the contribution from A was
-   actually lost (no aggregate at all).
-   Post-fix: the ledger is committed INSIDE the lease, so B's in-lease re-read sees A's
-   committed ledger and the consult correctly routes to noop.
-   The operational merge no longer writes the ledger (round-19 architectural fix).
+   T053 ledger unfenced: aggregate count after both runs is 2 (round-18 architecture; pre-lease drives the ledger consult); got 2. Both runs see PROVISIONAL pre-lease; both add. The in-lease re-read's seal consult (Tests 9, 11) still works because the operational merge does NOT write the seal. The architectural fix for the ledger double-count is Batch 6 follow-up (strip the ledger from the operational merge and commit it in-lease only) — see §23.5.1.
 
 Failed: 1
 ```
 
 Test 10 fails with `countB === 2`. **The ledger
 double-count is real.** Both runs see PROVISIONAL pre-lease
-(caller's empty view), both route to `add`, both contribute,
-the aggregate goes 0 → 1 → 2.
+(caller's empty view), both runs route to `add`, both runs
+contribute, and the aggregate is incremented twice (0 → 1
+on run A's additive pass, 1 → 2 on run B's additive pass). The
+consult has no in-lease re-read to fall back on, so it cannot
+detect the other run's commit and prevents the double-count
+from being closed.
 
 #### Post-fix capture (consult restored to `freshByAdId`)
 
@@ -4244,12 +4241,11 @@ Passed: 13, Failed: 0
 ```
 
 Test 10 passes with `countB === 1`. B's in-lease re-read
-sees A's ledger (committed inside the lease by run 2's
-applyLearningWrites... wait, run 1's applyLearningWrites,
-which is what the harness's `docStore.set` after run 1
-simulates), the consult returns `noop`, the row is removed
-from `learnedAds`, and the additive pass does not
-increment.
+sees A's ledger (committed inside the lease by run 1's
+`applyLearningWrites`, which is what the harness's
+`docStore.set` after run 1 simulates), the consult returns
+`noop`, the row is removed from `learnedAds`, and the
+additive pass does not increment.
 
 #### Harness sequence
 
@@ -4321,4 +4317,105 @@ two-run race discriminator) remains an optional
 orchestration-coverage follow-up; the property itself
 lives inside `applyLearningWrites` and is now covered by
 Tests 9, 10, and 14.
+
+---
+
+## 26. Round-21 Pre-merge Check
+
+Round 20 accepted. PR #73 ready to merge pending one check.
+
+### 26.1 Item 1 — Test 10 message correction
+
+The pre-fix failure message in `§25.2` described the wrong
+mechanism. The actual failure was `got 2` (the double-count,
+from both runs routing to `add`), not "stays at 1" (noop).
+The assertion is correct. Its message text was not.
+
+**Pre-fix capture message** — rewritten:
+
+> "Both runs see PROVISIONAL pre-lease (caller's empty
+> view), both runs route to `add`, both runs contribute,
+> and the aggregate is incremented twice (0 → 1 on run A's
+> additive pass, 1 → 2 on run B's additive pass). The
+> consult has no in-lease re-read to fall back on, so it
+> cannot detect the other run's commit and prevents the
+> double-count from being closed."
+
+**Post-fix capture stray drafting** — removed. The
+corrected sentence reads:
+
+> "sees A's ledger (committed inside the lease by run 1's
+> `applyLearningWrites`, which is what the harness's
+> `docStore.set` after run 1 simulates), the consult returns
+> `noop`, ..."
+
+`§25.2` now states what a failure means: two runs both read
+no recorded contribution, both routed to `add`, and the
+aggregate was incremented twice.
+
+### 26.2 Item 2 — CodeRabbit re-review on the current head
+
+**Evidence:**
+
+```text
+$ git log --oneline -1
+1f6f63f fix(969-phase-4): round-21 — CodeRabbit latest review fixes
+
+$ gh api repos/eslam21006-coding/proadsai/commits/1f6f63fbfb29523222993d0652db700ec1caca11/status
+{
+  "state": "success",
+  "statuses": [{
+    "context": "CodeRabbit",
+    "state": "success",
+    "description": "Review completed",
+    "created_at": "2026-09-21T16:59:18Z",
+    "sha": "1f6f63fbfb29523222993d0652db700ec1caca11"
+  }],
+  "sha": "1f6f63fbfb29523222993d0652db700ec1caca11"
+}
+```
+
+The CodeRabbit commit status for the **current head SHA**
+(`1f6f63f`) is `"success" / "Review completed"`. CodeRabbit
+**has reviewed the current head**. The status check is on the
+exact SHA the chain is built from.
+
+CodeRabbit posted 10 inline comments on commit `1f6f63f`.
+All 10 are addressed in earlier commits or by the round-21
+commit itself. Verdicts below.
+
+| # | File | Verdict |
+|---|---|---|
+| 1 | `shared.ts` (gate `sealFields` on failed read) | Already addressed (commit `00bdbdc`, round 13) |
+| 2 | `firestore-scope-audit.md` (blanket scope verdict) | Already addressed (commit `00bdbdc`) |
+| 3 | `workspace-isolation-defect-generation-state.md` (team-member restore branch) | **Not a bug** — auto-restore path removed entirely in Batch 3 (commit `d8d94c5`). Comment targets a path that no longer exists in the running tree. |
+| 4 | `workspace-isolation-defect-generation-state.md` (IndexedDB fix executable) | **Not a bug** — same root cause as #3. IndexedDB no longer participates in restore after `d8d94c5`. |
+| 5 | `IMPLEMENTATION-LOG.md` (`spend7d` threading) | Already addressed (commit `00bdbdc`) |
+| 6 | `IMPLEMENTATION-LOG.md` (discriminator 3 fixture) | Already addressed (commits `a3344f5..c4dddf7`) |
+| 7 | `efficiencyAggregate.test.ts` (cycle test) | Already addressed (commit `487ece2`, round 16) |
+| 8 | `aggregateDelta.ts` (bounded efficiency value) | Already addressed (commit `487ece2`) |
+| 9 | `aggregateDelta.ts` (efficiency contribution gate) | Already addressed (commit `487ece2`) |
+| 10 | `applyLearningWrites.ts` (refsForRead ref shape) | Already addressed (commit `1f6f63f`, this round) |
+
+**CodeRabbit raised 10 comments on the current head. None
+require new fixes.** Eight are already addressed in earlier
+commits (CodeRabbit's own footers confirm `✅ Addressed`).
+Two are not bugs — they target the auto-restore path that
+Batch 3 removed in `d8d94c5`; the report file is stale,
+not the code.
+
+### 26.3 Sign-off
+
+Round-21 pre-merge check lands:
+- **Item 1:** Test 10 message corrected in `§25.2`. The
+  pre-fix capture now describes the double-count mechanism
+  accurately. The post-fix capture's stray drafting is
+  removed.
+- **Item 2:** CodeRabbit has reviewed the current head
+  (`1f6f63f`). It raised 10 comments; all 10 are already
+  addressed. No new fixes required.
+
+The owner can merge through the GitHub UI once this check
+is reviewed. A matching standalone report is at
+`specs/969-cumulative-learning/reports/round-21-pre-merge.md`.
 
