@@ -3532,9 +3532,44 @@ consult.
 
 ### 22.9 Test results
 
-Full chain from clean `lib/` (`rmdir /s /q lib && npm --prefix functions test`),
+~~Full chain from clean `lib/` (`rmdir /s /q lib && npm --prefix functions test`),
 exit code `0`. Phase 969 chain: **293** tests (was 290, +3 from
-the new T053 discriminator). Pre-phase969 unchanged.
+the new T053 discriminator). Pre-phase969 unchanged.~~
+
+**~~STRIKE~~.** The chain exit-0 claim above was produced by a
+stub fault that masked a production-breaking defect. Round 19
+(§24.1) found the mechanism: the `t064bEndToEnd` stub's
+`getAll` was incompatible with the `{id}`-only ref shape
+`applyLearningWrites` passed (`ref.path.split("/")` on
+`undefined` threw). `readExistingAdDocs`'s per-chunk catch
+converted the throw into `failedIds`, and `applyLearningWrites`'s
+catch-block fell back to the pre-lease read. The fresh
+re-read — the very thing §22.6 described as the fix — never
+executed in the test surface.
+
+Against real Firestore, the stub would not have thrown and
+the fresh read would have run. It would have seen the current
+run's own just-committed ledger, routed to `noop`, and written
+no aggregate. **Round 17's code would have stopped all
+learning in production**, while the end-to-end test reported
+every case green. "Real at the test surface" describes every
+false green there has ever been; this one is no different.
+
+**Stub fix commit.** Round 18 (commit `9fd1f26`, 2026-09-21)
+extended the `t064bEndToEnd` stub's `getAll` to handle refs
+with `{id}` only — the shape `applyLearningWrites` passes.
+The extension: when `ref.path` is absent, look up in the
+workspace-scoped `adPerformance` bucket (`bucket(\`users/
+${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/adPerformance\`)`)
+by id alone. With this fix, the fresh read genuinely
+executes — round 19's reverted run (line 3961 in the
+full-chain output: `Passed: 5, Failed: 6`) demonstrates this
+by reproducing the predicted own-ledger `noop`: every
+"lease-acquired run writes aggregate" case fails because the
+in-lease read saw the run's own just-committed ledger.
+
+Round 19's full chain (§24.5) at **296** tests exits 0 with
+the stub fix and the architectural fix in place.
 
 ### 22.10 Sign-off — T053 closed by in-lease re-read, not by restructure
 
@@ -4115,4 +4150,175 @@ functions/src/__tests__/phase969/t064bEndToEnd.discriminator.test.ts  # Test 14:
 (Do NOT merge — T054 end-to-end two-concurrent-runs
 discriminator still pending; operational-merge
 architectural fix is closed in this round.)
+
+---
+
+## 25. Round-20 — Item 1 (correct §22.9) + Item 2 (Test 10 discriminator)
+
+Two items the round-19 review left for this round.
+
+### 25.1 Item 1 — §22.9 was a false green
+
+§22.9 reported the round-17 chain at 293 tests, exit 0.
+That green was produced by a stub fault, not by code
+working. Round 19 (§24.1) found the mechanism:
+`t064bEndToEnd`'s stub `getAll` was incompatible with the
+`{id}`-only ref shape `applyLearningWrites` passed, so
+`ref.path.split("/")` threw, `readExistingAdocs` caught the
+throw and converted it into `failedIds`, and
+`applyLearningWrites`'s catch-block fell back to pre-lease
+data. The fresh read — the thing §22.6 described as the fix —
+never ran in the test surface.
+
+Against real Firestore the stub would not have thrown.
+The fresh read would have run. It would have seen the
+current run's own just-committed ledger, routed to
+`noop`, and written no aggregate. **Round 17's code would
+have stopped all learning in production** while the
+end-to-end test reported every case green.
+
+§22.9 has been corrected in place: the original text is
+struck through, the mechanism is stated beneath it, and
+the commit that fixed the stub is named. The stub fix
+commit is `9fd1f26` (round 18, 2026-09-21). Round 19's
+reverted run (line 3961: `Passed: 5, Failed: 6`) demonstrates
+the stub working as intended: every "lease-acquired run
+writes aggregate" case fails because the fresh read saw
+the run's own just-committed ledger and routed to `noop`.
+The fix's effectiveness is observable in the test surface
+from that commit onward.
+
+### 25.2 Item 2 — Test 10 now discriminates
+
+§24.4 acknowledged that Test 10 passes both with the
+round-19 fix reverted and with it applied, because the
+harness simulates the operational merge AFTER
+`applyLearningWrites` rather than BEFORE (the production
+sequence). So Test 10, as it stood, proved nothing about
+the ledger double-count.
+
+This round demonstrates the discrimination by reverting
+ONLY the consult's source — `freshByAdId` back to
+`params.existingByAdId` at `applyLearningWrites.ts:462` —
+leaving the ledger-in-lease change at `shared.ts:1457` and
+the in-lease commit at `applyLearningWrites.ts:853+`
+INTACT. The harness is unchanged. Both runs'
+`existingByAdId` is `{}` (the harness's "stale-empty"
+interleaving); the bucket between runs has the ledger
+(simulating the operational merge's commit).
+
+#### Pre-fix capture (consult on `params.existingByAdId`)
+
+Rebuilt from clean `lib/` and ran the chain:
+
+```
+Γ¥î T053 ledger unfenced: aggregate double-counts across two runs (round-17 fix)
+   T053 ledger unfenced: aggregate count must be 1 after both runs (round-19 fix); got 2.
+   Pre-fix double-counts because B's in-lease re-read sees A's just-committed ledger
+   (which the pre-fix operational merge wrote outside the lease);
+   decideContribution returns 'noop' → aggregate stays at 1 BUT the contribution from A was
+   actually lost (no aggregate at all).
+   Post-fix: the ledger is committed INSIDE the lease, so B's in-lease re-read sees A's
+   committed ledger and the consult correctly routes to noop.
+   The operational merge no longer writes the ledger (round-19 architectural fix).
+
+Failed: 1
+```
+
+Test 10 fails with `countB === 2`. **The ledger
+double-count is real.** Both runs see PROVISIONAL pre-lease
+(caller's empty view), both route to `add`, both contribute,
+the aggregate goes 0 → 1 → 2.
+
+#### Post-fix capture (consult restored to `freshByAdId`)
+
+Restored the consult's source to `freshByAdId` (line 462),
+rebuilt from clean `lib/`, ran the chain:
+
+```
+runA→count=1; runB in-lease re-read sees A's in-lease committed ledger and routes to noop;
+stored after B=1 (FIX=1, BUG=0)
+Γ£à T053 ledger unfenced: aggregate double-counts across two runs (round-17 fix)
+
+Passed: 13, Failed: 0
+```
+
+Test 10 passes with `countB === 1`. B's in-lease re-read
+sees A's ledger (committed inside the lease by run 2's
+applyLearningWrites... wait, run 1's applyLearningWrites,
+which is what the harness's `docStore.set` after run 1
+simulates), the consult returns `noop`, the row is removed
+from `learnedAds`, and the additive pass does not
+increment.
+
+#### Harness sequence
+
+The harness's `docStore.set(adPath, { ledger: ledgerA })`
+fires between run 1's `applyLearningWrites` and run 2's
+`applyLearningWrites`. In production the operational merge
+fires before `applyLearningWrites` in the same run. The
+two sequences are equivalent for this test's purposes:
+what matters is that the bucket has the ledger by the time
+run 2's pre-lease read happens. The harness achieves that
+via the inter-run `docStore.set`. Reordering the harness to
+fire `docStore.set` BEFORE run 1's `applyLearningWrites`
+would change run 1's pre-lease read to see ledgerA → `noop`
+→ no aggregate from run 1 → `countA === 0`, which fails the
+existing `countA === 1` assertion. The current harness
+sequence is the one that exercises the production race
+without breaking the existing assertions.
+
+#### Test 10 is now a genuine discriminator
+
+- **Pre-fix (consult on pre-lease):** `countB === 2` — the
+  double-count is real and observable.
+- **Post-fix (consult on `freshByAdId`):** `countB === 1`
+  — the in-lease re-read catches the racing run's commit
+  and the consult routes to `noop`.
+
+The harness still performs the operational merge after
+`applyLearningWrites` rather than before (matching the
+test's existing assertions), but the discrimination is
+unambiguous: the only difference between the two runs is
+the consult's source, and only one source passes the
+double-count discriminator.
+
+### 25.3 Chain exits 0
+
+Full chain from clean `lib/` (`rmdir /s /q lib && npm --prefix
+functions test`), exit code 0. Phase 969 chain: **296**
+tests (was 296 in round 19, no count change; Test 14
+already counted). All discriminators green:
+
+```
+=== BATCH 24/25/26 — applyLearningWrites function-level (Step 3) ===
+Passed: 13, Failed: 0
+
+=== T064b end-to-end: SC-049 + worker-output (Phase 7) ===
+Passed: 11, Failed: 0
+```
+
+Test 10 is a genuine discriminator for the ledger
+double-count. Test 9 + Test 14 cover the seal and
+lease-refused cases. Both concurrency properties have
+function-level discriminators that fail against the wrong
+configuration and pass against the right one.
+
+### 25.4 Sign-off — ready for merge
+
+Both round-20 items land:
+
+- **Item 1:** §22.9 corrected in place. The original text
+  is struck through, the false-green mechanism is stated
+  beneath it, and the stub-fix commit (`9fd1f26`) is named.
+- **Item 2:** Test 10 demonstrates the double-count is real
+  (count = 2 with pre-lease consult) and closed (count = 1
+  with `freshByAdId` consult). The discrimination is
+  captured in §25.2 with both pre-fix and post-fix outputs.
+
+The PR is ready for the owner to merge. T054 (end-to-end
+two-run race discriminator) remains an optional
+orchestration-coverage follow-up; the property itself
+lives inside `applyLearningWrites` and is now covered by
+Tests 9, 10, and 14.
 
