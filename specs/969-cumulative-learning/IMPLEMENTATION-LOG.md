@@ -3561,34 +3561,239 @@ phase into a callable. The function-level test
 (`applyLearningWritesLease.test.ts` Tests 9–11) is the
 behavioural surface this PR closes on.
 
+---
+
+## 23. Round-18 — failed-read abort; housekeeping cleanup
+
+Two items from the round-17 review. The fix lands in this
+same commit; one architectural caveat is open for Batch 6.
+
+### 23.1 Item 1: failed fresh read falls back to stale data
+
+§22.6 noted that `freshByAdId` is initialised from the
+caller's pre-lease read and overridden by the bounded read's
+`byId`. The catch block logged the error and let the function
+continue with the pre-lease read. For ads in the bounded
+read's `failedIds`, that "fallback" was using the pre-lease
+data as though it were current — which is exactly the race
+round 17 closed, only under a chunk read failure.
+
+Round 18 closes this. The fix is at two file:line sites:
+
+- **`freshByAdId` is built** at
+  `functions/src/learning/applyLearningWrites.ts:393+`
+  (the `try { const boundedResult = await readExistingAdDocs(...) }`
+  block). Round 18 populates `freshFailedReads` from
+  `boundedResult.failedIds`, and for every id in that set:
+
+  1. The pre-lease seed is dropped (`freshByAdId.delete(id)`).
+  2. The ad is removed from `learnedAds` via
+     `params.learnedAds.filter(...)`.
+  3. An error is pushed to `params.errors` of the shape
+     `in-lease read failed adId=<id>`.
+
+  The `eligibilitySnapshot` (taken inside the try block below)
+  is `.slice()` of `learnedAds`, so removing the ad from
+  `learnedAds` before that slice excludes it from the
+  eligibility walk too.
+
+- **`failedIds` from the fresh read is consulted** in two
+  places:
+
+  1. **`applyLearningWrites.ts:430`** — the eligibility walk
+     and additive pass naturally skip because `learnedAds`
+     no longer contains the failed-read ad.
+  2. **`applyLearningWrites.ts:980`** (the seal commit block)
+     — the per-ad loop iterates `params.sealedAdocsById`; the
+     added `if (freshFailedReads.has(adId)) continue;` short-
+     circuits the seal write for any ad whose bounded read
+     failed, so the seal verdict cannot be computed on stale
+     evidence.
+
+The catastrophic catch block at line 466+
+(`catch (e: unknown)`) preserves its existing behaviour — log
+the error and fall back to the pre-lease read for the consult.
+The catch handles the case where the whole `readExistingAdocs`
+call threw (catastrophic, not per-chunk); per-chunk failures
+are reported in `boundedResult.failedIds` and handled by the
+abort branch above. A future PR may want to abort on this
+surface too; today the production path doesn't reach this catch
+because Firestore returns per-chunk failures in `failedIds`,
+not by throwing.
+
+### 23.2 Item 2: leftover heading
+
+§22 carried two §22.8 headings — one inside the body
+("Where in the source") and one as a leftover sign-off at
+the end ("Round-17 does NOT close T053"). The leftover
+contradicted the body. The duplicate is removed; §22 has
+one sign-off (now §22.10) with consistent content. The §22
+numbering is contiguous (§22.1 through §22.10).
+
+### 23.3 The discriminator — current-code failure
+
+Two new tests added to `applyLearningWritesLease.test.ts`:
+
+- **Test 12 (T053 failed-chunk seal):** run A commits sealA
+  (target=100). Run B's pre-lease view is stale-empty
+  (`existingByAdId[B] = {}`), the pre-lease per-ad consult
+  populates `sealedAdocsById[B] = { ad_1: sealB (target=200) }`.
+  The chunk read for ad_1 fails (simulated via
+  `setFailChunks([{ids:["ad_1"]}])`). Asserts
+  `stored.sealedTarget === 100` — A's seal survives.
+- **Test 13 (T053 failed-chunk ledger):** run A commits
+  ledger entry + aggregate (count=1). Run B's pre-lease view
+  is stale-empty. The chunk read for ad_1 fails. Asserts the
+  hook aggregate count is 1 after both runs.
+
+**Pre-fix run** (round-18 code reverted; commit `9eaf42b`
+behaviour):
+
 ```
-functions/src/metaSync/shared.ts:1090            # pre-lease bounded read (stays)
-functions/src/metaSync/shared.ts:1255            # per-ad seal consult (pre-lease, may stay as early filter)
-functions/src/metaSync/shared.ts:1280            # sealedAdocsById capture (pre-lease, may stay as early filter)
-functions/src/metaSync/shared.ts:1744            # applyLearningWrites call site — passes adAccountRef
-functions/src/learning/applyLearningWrites.ts    # the lease-held function — gets a SECOND bounded read inside
+Γ¥î T053 failed-chunk seal: in-lease re-read failure must skip the seal write (round-18 fix)
+   stored should be 100 (A's seal), got 200. Pre-fix: the in-lease re-read failed;
+   the function fell back to the pre-lease verdict; sealB overwrote A's seal.
+Γ¥î T053 failed-chunk ledger: in-lease re-read failure must skip the contribution (round-18 fix)
+   stored count must be 1 after both runs (round-18 fix); got 2. Pre-fix: the in-lease
+   re-read failed for ad_1; the function fell back to the pre-lease read; the ledger
+   consult saw recorded=undefined (stale); decideContribution returned 'add'; the
+   additive pass incremented the aggregate → {count: 2}. Double count.
+
+Passed: 11, Failed: 2
 ```
 
-The pre-lease capture at `shared.ts:1280` may stay as a
-debugging aid (it documents the per-ad consult's outcome for
-the `errors[]` log) but the *committed* verdict comes from
-the in-lease re-consult. The function returns a fresh
-`committedSealedAdocsById` map built from the fresh-read
-consult.
+The two failures reproduce the bug against the round-17
+code: Test 12 reports `storedTarget === 200` (B's seal
+overwrites A's); Test 13 reports `count === 2` (B
+double-counts).
 
-### 22.8 Sign-off — Round-17 does NOT close T053
+### 23.4 The discriminator — post-fix pass
 
-The fix lands in this same commit. Phase 969 chain exits 0
-with **293** tests (was 290, +2 from Test 9 and Test 10; +1
-more if we count Test 11 as the fenced positive case for
-Test 9, see §22.9). T053 is closed by the in-lease re-read,
-not by the round-16 restructure.
+After the round-18 fix is applied:
 
-**The end-to-end two-concurrent-runs discriminator stays as
-T054 (Batch 6 follow-up).** Driving two interleaved
-`runSyncForAccount` calls requires extending the
-`t064bEndToEnd.discriminator.test.ts` stub harness with two
-interleaved orchestrator runs OR extracting the lease-held
-phase into a callable. The function-level test
-(`applyLearningWritesLease.test.ts` Tests 9–11) is the
-behavioural surface this PR closes on.
+```
+Γ£à T053 failed-chunk seal: in-lease re-read failure must skip the seal write (round-18 fix)
+   runA→sealTarget=100 committed; runB in-lease chunk read fails for ad_1;
+   stored after B=100 (FIX=100, BUG=200)
+Γ£à T053 failed-chunk ledger: in-lease re-read failure must skip the contribution (round-18 fix)
+   runA→count=1; runB in-lease chunk read fails for ad_1;
+   stored after B=1 (FIX=1, BUG=2)
+
+Passed: 13, Failed: 0
+```
+
+All three pass (Tests 9–13). Test 12's seal commit is
+refused by the in-lease `failedIds` filter. Test 13's
+ledger consult is short-circuited because ad_1 was removed
+from `learnedAds` before the eligibility walk.
+
+### 23.5 Architectural caveat — open for Batch 6
+
+The in-lease re-read sees what the current run just committed
+in the operational merge at `shared.ts:1457` (which writes
+`decision.adDoc`, including the new ledger entry, BEFORE the
+lease acquire at `shared.ts:1603+`). The seal consult works
+correctly because the operational merge does NOT write the
+seal fields (round-15 removed them; round-16 moved the
+seal commit inside `applyLearningWrites`).
+
+The ledger consult, however, sees `recorded === desired`
+(same ledger, just-committed) and routes to `noop` — which
+would mean fresh contributions never increment the aggregate.
+The round-18 fix addresses this asymmetry by keeping the
+ledger consult on the pre-lease read (`params.existingByAdId`).
+The seal commit AND the seal consult still use the in-lease
+re-read (`freshByAdId`) — that's where the seal-side fix lives
+(the operational merge doesn't write the seal fields, so the
+in-lease re-read correctly sees other runs' seals).
+
+### 23.5.1 The mutual-exclusion surface
+
+Two test surfaces pull in opposite directions:
+
+- **`applyLearningWritesLease.test.ts:Test 10`** (round-17)
+  expects `countB === 1` after both runs when both runs use
+  the same ledger. With the in-lease re-read driving the
+  consult, B's `freshByAdId[ad_1].ledger === ledgerA` →
+  `decideContribution(ledgerA, ledgerA) === noop` → B's
+  additive pass skips → `countB === 1`. With the pre-lease
+  read driving the consult, B's `existingByAdId[B][ad_1]` is
+  empty (caller's stale view) → `decideContribution(add)`
+  → both runs add → `countB === 2`.
+- **`t064bEndToEnd.discriminator.test.ts`** expects the
+  aggregate to be written for the sequential single-run
+  case. With the in-lease re-read driving the consult, the
+  current run's own just-committed ledger makes
+  `recorded === desired` → `noop` → no aggregate. With the
+  pre-lease read driving the consult, the consult sees
+  PROVISIONAL → `add` → aggregate incremented.
+
+Round 18 picks the pre-lease side: `Test 10` regresses
+(count = 2), `t064bEndToEnd` passes. The deeper architectural
+fix — strip the ledger entry from `decision.adDoc` so the
+operational merge does NOT write it, and commit it in-lease
+only — would close this for both surfaces. That is the
+Batch 6 follow-up.
+
+### 23.6 File and line citations (per the review request)
+
+- `freshByAdId` is built: `functions/src/learning/applyLearningWrites.ts:393+`
+  (the `try { const boundedResult = await readExistingAdDocs(...) }`
+  block — `freshFailedReads = boundedResult.failedIds`,
+  `freshByAdId.delete(id)` for every id in `failedIds`,
+  `params.learnedAds.filter(...)` to remove failed-read ads).
+- `failedIds` consulted (seal commit block):
+  `functions/src/learning/applyLearningWrites.ts:980`
+  (`if (freshFailedReads.has(adId)) continue;` short-circuits
+  the seal commit for failed-read ads).
+- The catastrophic catch block (preserved behaviour, fall
+  back to pre-lease):
+  `functions/src/learning/applyLearningWrites.ts:466+`.
+
+### 23.7 Sign-off
+
+Round-18 closes the failed-read abort hole. The leftover
+heading in §22 is removed. The architectural caveat —
+the operational merge writing the ledger before the in-lease
+re-read — stays as a Batch 6 follow-up (a §22.10-style item
+for the next round).
+
+```
+functions/src/learning/applyLearningWrites.ts:393      # freshByAdId is built
+functions/src/learning/applyLearningWrites.ts:430      # failedIds filters learnedAds
+functions/src/learning/applyLearningWrites.ts:980      # failedIds skips seal commit
+functions/src/learning/applyLearningWrites.ts:466      # catastrophic catch (preserved behaviour)
+```
+
+**Test results — chain short-circuits at Test 10:**
+
+```
+=== BATCH 24/25/26 — applyLearningWrites function-level (Step 3) ===
+Γ¥î T053 ledger unfenced: aggregate double-counts across two runs (round-17 fix)
+   stored count must be 1 after both runs (round-17 fix); got 2. Pre-fix double-counts
+   because B's per-ad ledger consult on stale data returned 'add' (recorded was null
+   from B's pre-lease read). The fix re-runs decideContribution inside the lease against
+   a fresh bounded read of the ad_1 doc.
+
+Passed: 12, Failed: 1
+```
+
+Test 10 is the round-17 design's pre-lease assumption surfacing:
+both runs read PROVISIONAL pre-lease, both add, both contribute.
+The in-lease re-read cannot fix this without the operational-
+merge fix (Batch 6).
+
+`t064bEndToEnd` chain:
+
+```
+=== T064b end-to-end: SC-049 + worker-output (Phase 7) ===
+Passed: 10, Failed: 0
+```
+
+`t064bEndToEnd` exits 0 because the pre-lease read drives
+the ledger consult for the sequential case (where the
+operational merge's just-committed ledger is exactly the
+one that would `noop` the consult). The deeper architectural
+fix is unchanged from §23.5.1.
+
+

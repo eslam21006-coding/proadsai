@@ -139,6 +139,31 @@ const stubFirestore = () => ({
         return new StubDocRef(segs.join("/"), id);
     },
     batch: () => new StubBatch(),
+    // Round-18 — T053 in-lease re-read. `applyLearningWrites`
+    // calls `readExistingAdDocs(db, refs)` after the lease is held.
+    // The stub's `getAll` resolves each ref by scanning the
+    // in-memory bucket for any key ending in `/{id}`. Without this
+    // the per-chunk catch in `readExistingAdocs` converts the
+    // TypeError into `failedIds = {ad_1, ad_2}` and round-18's
+    // abort filters them out of `learnedAds` — the eligibility
+    // walk would never see the rows. With this stub the re-read
+    // returns the seeded data and the consult sees the
+    // eligibility-walk fields (`dayAccrual`, `sealedTarget`,
+    // `sealedAt`, `sealedFunnelType`, `adStatus`).
+    getAll: (...refs: Array<{ id: string }>): Promise<Array<{ id: string; exists: boolean; data(): Record<string, unknown> }>> => {
+        return Promise.all(refs.map((ref) => {
+            const id = ref.id;
+            let data: any | undefined;
+            for (const [k, v] of docStore.entries()) {
+                if (k.endsWith(`/${id}`)) { data = v; break; }
+            }
+            return Promise.resolve({
+                id,
+                exists: data !== undefined,
+                data: () => data ?? {},
+            });
+        }));
+    },
 });
 
 Object.defineProperty(admin, "firestore", { value: stubFirestore, configurable: true });
@@ -313,7 +338,7 @@ async function test1_wiringInPlace_setsFigureOnEveryRow() {
     ]);
 
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad1, ad2],
         ledgerAdDocsByAdId: ledgerAdocsByIdFor_test1,
@@ -419,7 +444,7 @@ async function test3_secondWriteIsNoOp() {
 
     // First run: fresh ledger, no efficiencyContributed flag set.
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad1, ad2],
         ledgerAdDocsByAdId: new Map([
@@ -451,7 +476,7 @@ async function test3_secondWriteIsNoOp() {
     const ad2b = makeAd("ad_2", "creative_CARVEOUT");
 
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad1b, ad2b],
         ledgerAdDocsByAdId: new Map([
@@ -512,7 +537,7 @@ async function test4_ledgerWriteCommittedToDocStore() {
     ]);
 
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad1, ad2],
         ledgerAdDocsByAdId: ledgerDocs,
@@ -589,7 +614,7 @@ async function test4b_operationalFieldChangedBetweenCommitsSurvives() {
     ]);
 
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad3],
         ledgerAdDocsByAdId: ledgerDocs,
@@ -645,7 +670,7 @@ async function test5_noopRowStillGetsFigureAfterThreshold() {
     };
 
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad1],
         ledgerAdDocsByAdId: new Map([

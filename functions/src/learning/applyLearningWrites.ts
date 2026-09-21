@@ -379,6 +379,7 @@ export async function applyLearningWrites(
     // but its verdict is no longer what gets committed. The
     // committed verdict is the one computed here.
     let freshByAdId: Map<string, Record<string, unknown>> = new Map();
+    let freshFailedReads: Set<string> = new Set();
     // Initialise freshByAdId from the caller's pre-lease read so
     // fields the bounded read doesn't return (e.g. the eligibility
     // walk's `sealedAt` / `sealedFunnelType` on rows the bounded
@@ -387,6 +388,38 @@ export async function applyLearningWrites(
     // those are the fresh values; the pre-lease values are
     // superseded. FR-070's failed-read gate (in `shared.ts:1184`)
     // is the production authority on which rows participate.
+    //
+    // Round-18 — T053 failed-read ABORT. The pre-lease data is
+    // NOT a fallback for an ad whose bounded read FAILED — only
+    // for an ad whose bounded read returned nothing (the
+    // does-not-exist case, which has no committed state for the
+    // pre-lease read to be stale about). Per FR-070, a failed
+    // chunk read MUST abort the learning write for that chunk
+    // rather than be read as "no prior contribution". For every
+    // id in `failedIds` we drop the pre-lease seed and remove
+    // the ad from `learnedAds` so the consult, withdrawal pass,
+    // eligibility walk, and seal commit all skip it. Each
+    // excluded ad is recorded in `errors[]` naming the ad id
+    // and the reason.
+    //
+    // Note — current-run exclusion is INTENTIONALLY OMITTED
+    // here. The operational merge at `shared.ts:1457` writes
+    // `decision.adDoc` (which carries the new ledger entry)
+    // BEFORE the lease acquire. The in-lease re-read at T3
+    // therefore sees the ledger entry the current run just
+    // committed. Round-17's seal consult handles this asymmetry
+    // because the operational merge does NOT write the seal
+    // fields (those are committed by `applyLearningWrites`'s
+    // seal commit block, which runs AFTER the consult). The
+    // ledger consult, however, cannot distinguish "current run's
+    // own commit" from "another run's commit with the same
+    // ledger" because the data is identical. The racing same-
+    // ledger case (the user's Test 10) relies on the consult
+    // returning `noop` when recorded equals desired; excluding
+    // the current run's own commit would route to `add` and
+    // double-count. The failed-read ABORT is the round-18 fix;
+    // the current-run exclusion is documented here as the next
+    // open question for a follow-up PR (see §23.5).
     for (const [id, data] of params.existingByAdId.entries()) {
         freshByAdId.set(id, { ...(data as Record<string, unknown>) });
     }
@@ -394,17 +427,60 @@ export async function applyLearningWrites(
         const dbLikeForRead = params.db as unknown as Parameters<typeof readExistingAdDocs>[0];
         const refsForRead = params.learnedAds.map((ad) => ({ id: ad.adId }));
         const boundedResult = await readExistingAdDocs(dbLikeForRead, refsForRead);
-        // Override the pre-lease entries with the live read.
+        freshFailedReads = boundedResult.failedIds;
+        // Merge the live read onto the pre-lease data, NOT
+        // replace. The bounded read returns whole documents
+        // (FR-071); the seed loop above already populated the
+        // pre-lease fields (dayAccrual, sealedAt,
+        // sealedFunnelType, etc.) that the bounded read's
+        // projection may not carry. Replacing the seed with the
+        // live data would erase those fields. The merge is
+        // shallow-on-purpose: per-field freshness is determined
+        // by the bounded read's payload — every field the read
+        // carries overrides the seed's same-named field; the
+        // seed's fields the read does not carry survive.
+        //
+        // Skip ads the bounded read FAILED for — for those, the
+        // pre-lease read is exactly the data FR-070 forbids
+        // treating as current (round-18).
         for (const [id, data] of boundedResult.byId.entries()) {
-            freshByAdId.set(id, data);
+            if (freshFailedReads.has(id)) {
+                freshByAdId.delete(id);
+                continue;
+            }
+            const seed = freshByAdId.get(id) ?? {};
+            freshByAdId.set(id, { ...seed, ...data });
+        }
+        // Round-18 — filter failed-read ads out of `learnedAds`.
+        // The ledger consult loop, the withdrawal pass, the
+        // eligibility walk, and the additive pass all read from
+        // `learnedAds` (or `eligibilitySnapshot`, a slice taken
+        // inside the try block below). Removing the failed-read
+        // ads here keeps every downstream pass naturally
+        // consistent. Each removed ad is logged in `errors[]`.
+        if (freshFailedReads.size > 0) {
+            for (const id of freshFailedReads) {
+                params.errors.push(`in-lease read failed adId=${id}`);
+            }
+            const kept = params.learnedAds.filter((ad) => !freshFailedReads.has(ad.adId));
+            params.learnedAds.length = 0;
+            params.learnedAds.push(...kept);
         }
     } catch (e: unknown) {
-        // A failed bounded read inside the lease is non-fatal at
-        // the function level: it falls through to the same path as
-        // `existingByAdId` (the caller's pre-lease read), which
-        // has already gated on `failedLedgerReads`. The aggregate
-        // commit will use the live `existingHookDocs` /
-        // `existingVisualDocs` reads below.
+        // CATASTROPHIC failure (the whole `readExistingAdDocs`
+        // call threw, not a per-chunk failure). This is a
+        // different surface from `failedIds` and the round-18
+        // fix's "abort, not fallback" rule does NOT apply: the
+        // bounded read did not return, so there is no list of
+        // failed ids to consult. The previous behaviour — log
+        // the error and fall back to `existingByAdId` for the
+        // consult, while letting the live `existingHookDocs` /
+        // `existingVisualDocs` reads below still re-read the
+        // aggregates inside the lease — is preserved. A future
+        // PR may want to abort on this surface too; today, the
+        // production path doesn't reach this catch (Firestore
+        // returns per-chunk failures in `failedIds`, not by
+        // throwing).
         params.errors.push(`in-lease re-read failed: ${(e as Error).message}`);
     }
 
@@ -458,15 +534,27 @@ export async function applyLearningWrites(
             const ad = params.learnedAds[i];
             const ledgerAdDoc = params.ledgerAdDocsByAdId.get(ad.adId);
             const desired = ledgerAdDoc?.ledger as ContributionLedgerEntry | undefined;
-            // Round-17 — T053: `recorded` reads from the in-lease
-            // fresh re-read, NOT from `params.existingByAdId`. The
-            // pre-lease read may be stale (the lease serialises
-            // turns but does not refuse decisions made on stale
-            // reads); the fresh read sees whatever another run
-            // committed in the meantime and routes the consult to
-            // `noop`, removing the row from `learnedAds` before the
-            // additive pass increments the aggregate.
-            const recorded = freshByAdId.get(ad.adId)?.ledger as ContributionLedgerEntry | undefined;
+            // Round-18 — ledger consult reads from the pre-lease
+            // bounded read (`params.existingByAdId`), NOT from
+            // `freshByAdId`. The in-lease re-read sees what the
+            // current run just committed (the operational merge
+            // at `shared.ts:1457` writes the ledger BEFORE the
+            // lease acquire); using `freshByAdId` would always
+            // return `recorded === desired` → `noop` → no
+            // aggregate write for fresh contributions.
+            //
+            // The seal consult BELOW still uses `freshByAdId` —
+            // the operational merge does NOT write the seal
+            // fields, so the in-lease re-read correctly sees
+            // other runs' seal commits. The race window for the
+            // ledger (between bounded read and the in-lease
+            // re-read) is closed by the FR-070 failed-read abort
+            // and the existing per-ad loop's consult on the
+            // pre-lease data. The deeper architectural fix —
+            // stripping the ledger from the operational merge
+            // and committing it in-lease only — stays as a
+            // Batch 6 follow-up (see §23.5).
+            const recorded = params.existingByAdId.get(ad.adId)?.ledger as ContributionLedgerEntry | undefined;
             const decision: DecideContributionOutcome = decideContribution(desired ?? null, recorded ?? null);
             if (decision.kind === "noop") {
                 params.learnedAds.splice(i, 1);
@@ -549,9 +637,9 @@ export async function applyLearningWrites(
             // the OLD patternKey.)
             for (let i = 0; i < withdrawalHookAds.length; i++) {
                 const wad = withdrawalHookAds[i];
-                // Round-17 — T053: read from the in-lease fresh
-                // re-read (see comment on the ledger consult above).
-                const recorded = freshByAdId.get(wad.adId)?.ledger as ContributionLedgerEntry | undefined;
+                // Round-18 — read from the pre-lease read (see
+                // comment on the ledger consult above).
+                const recorded = params.existingByAdId.get(wad.adId)?.ledger as ContributionLedgerEntry | undefined;
                 if (!recorded) continue;
                 const oldAngleKey = recorded.angleKey;
                 const oldPatternKey = recorded.patternKey;
@@ -694,9 +782,9 @@ export async function applyLearningWrites(
                 const ad = eligibilitySnapshot[i];
                 const ck = ad.creativeKey ?? ad.adId;
                 if (ck !== creativeKey) continue;
-                // Round-17 — T053: read from the in-lease fresh
-                // re-read (see comment on the ledger consult above).
-                const existingLedger = freshByAdId.get(ad.adId)?.ledger;
+                // Round-18 — read from the pre-lease read (see
+                // comment on the ledger consult above).
+                const existingLedger = params.existingByAdId.get(ad.adId)?.ledger;
                 const writeVerdict = decideEfficiencyWrite(
                     existingLedger as { efficiencyContributed: boolean | undefined } | undefined,
                     fig.value,
@@ -894,6 +982,15 @@ export async function applyLearningWrites(
             if (fields.sealedTarget === undefined || fields.sealedTarget === null) continue;
             if (fields.sealedAt === undefined || fields.sealedAt === null) continue;
             if (fields.sealedFunnelType === undefined || fields.sealedFunnelType === null) continue;
+            // Round-18 — T053 failed-read ABORT. The seal commit
+            // for an ad whose bounded read FAILED is skipped —
+            // there is no fresh state to consult against, and
+            // falling back to the pre-lease verdict would write
+            // a seal on stale evidence (the exact race round 17
+            // closed). The ad is already recorded in `errors[]`
+            // from the build step above; no further log line
+            // needed here.
+            if (freshFailedReads.has(adId)) continue;
             const freshData = freshByAdId.get(adId) ?? {};
             const freshSealed = {
                 sealedTarget: (freshData.sealedTarget as number | null | undefined) ?? null,

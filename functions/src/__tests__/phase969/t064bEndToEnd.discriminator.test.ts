@@ -139,12 +139,22 @@ const stubFirestore = () => ({
     // seeder writes to. Mirrors `boundedLedgerRead.test.ts`'s
     // makeDb helper (independent copy ΓÇö T064b does not share a stub
     // module with `metaSyncOrchestrator.test.ts`, by Batch 15 design).
-    getAll: (...refs: Array<{ id: string; path: string }>): Promise<Array<{ id: string; exists: boolean; data: () => DocData }>> => {
+    getAll: (...refs: Array<{ id: string; path?: string }>): Promise<Array<{ id: string; exists: boolean; data: () => DocData }>> => {
         return Promise.all(refs.map((ref) => {
-            const pathParts = ref.path.split("/");
             const id = ref.id;
-            const parentPath = pathParts.slice(0, -1).join("/");
-            const store = bucket(parentPath);
+            // Round-18 — accept refs with `{id}` only (the shape
+            // `applyLearningWrites`'s in-lease re-read passes).
+            // Production refs (constructed via
+            // `adAccountRef.collection("adPerformance").doc(id)`)
+            // carry `{id, path}` and look up by full path.
+            let store: Map<string, DocData>;
+            if (ref.path) {
+                const pathParts = ref.path.split("/");
+                const parentPath = pathParts.slice(0, -1).join("/");
+                store = bucket(parentPath);
+            } else {
+                store = bucket(`users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/adPerformance`);
+            }
             const data = store.get(id);
             return Promise.resolve({
                 id,
