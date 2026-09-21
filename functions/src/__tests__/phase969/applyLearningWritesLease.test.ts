@@ -1052,13 +1052,13 @@ async function test10_unfenced_ledgerDoubleCounts() {
     const afterB = docStore.get(hookPath);
     const countB = afterB?.byObjective?.conversion?.count ?? -1;
 
-    assert.equal(countB, 2,
-        `T053 ledger unfenced: aggregate count after both runs is 2 (round-18 architecture; pre-lease drives the ledger consult); got ${countB}. ` +
-        `Both runs see PROVISIONAL pre-lease; both add. ` +
-        `The in-lease re-read's seal consult (Tests 9, 11) still works because the operational merge does NOT write the seal. ` +
-        `The architectural fix for the ledger double-count is Batch 6 follow-up (strip the ledger from the operational merge and commit it in-lease only) — see §23.5.1.`);
+    assert.equal(countB, 1,
+        `T053 ledger unfenced: aggregate count must be 1 after both runs (round-19 fix); got ${countB}. ` +
+        `Pre-fix double-counts because B's in-lease re-read sees A's just-committed ledger (which the pre-fix operational merge wrote outside the lease); decideContribution returns 'noop' → aggregate stays at 1 BUT the contribution from A was actually lost (no aggregate at all). ` +
+        `Post-fix: the ledger is committed INSIDE the lease, so B's in-lease re-read sees A's committed ledger and the consult correctly routes to noop. ` +
+        `The operational merge no longer writes the ledger (round-19 architectural fix).`);
 
-    console.log(`     runA→count=1; runB pre-lease read sees PROVISIONAL, ledger consult on pre-lease data returns add; stored after B=${countB} (round-18 architecture=2)`);
+    console.log(`     runA→count=1; runB in-lease re-read sees A's in-lease committed ledger and routes to noop; stored after B=${countB} (FIX=1, BUG=0)`);
 }
 
 // ─── Test 11 (T053 fenced positive case): sequential — second run sees first's commit ───

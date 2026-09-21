@@ -3796,4 +3796,323 @@ operational merge's just-committed ledger is exactly the
 one that would `noop` the consult). The deeper architectural
 fix is unchanged from §23.5.1.
 
+---
+
+## 24. Round-19 — ledger-in-lease; round-18 resolution was wrong
+
+Round 18 was rejected. The failed-read abort is right; the
+ledger resolution was wrong. §22.9's "round 17 chain green at
+293" was real at the test surface but the `t064bEndToEnd`
+cases passed by accident (the stub's `getAll` was incompatible
+with the `{id}`-only ref shape `applyLearningWrites` passed,
+so the in-lease re-read always threw and the function fell back
+to the pre-lease read — masking the defect that the in-lease
+re-read sees the current run's own just-committed ledger).
+
+Round 18 attempted to "close" the conflict by moving the
+ledger consult back to the pre-lease read and accepting Test
+10's regression (count = 2 instead of 1) plus
+`t064bEndToEnd`'s regression (5 of 11 failing). The chain
+exited non-zero. A red chain cannot merge.
+
+### 24.1 Phase 1 — round 17 chain status verified
+
+Checked out round 17's commit (`9eaf42b`), rebuilt from
+clean `lib/`, ran the chain. Result:
+
+```
+Line 303:  Passed: 11, Failed: 0   (T029c distinct-creative count)
+Line 3727: Passed: 11, Failed: 0   (T029c repeated)
+Line 3761: Passed: 19, Failed: 0   (creativeGrouping)
+Line 3784: Passed: 12, Failed: 0   (learningLease)
+Line 3807: Passed: 12, Failed: 0   (boundedLedgerRead)
+Line 3825: Passed: 7,  Failed: 0   (FR-070)
+Line 3847: Passed: 11, Failed: 0   (perAdActions)
+Line 3860: Passed: 2,  Failed: 0   (t021aWireup)
+Line 3889: Passed: 18, Failed: 0   (learningAccumulation)
+Line 3904: Passed: 4,  Failed: 0   (learningCascade)
+Line 3917: Passed: 2,  Failed: 0   (t025aWorkerWiring)
+Line 3933: Passed: 5,  Failed: 0   (t029GateMigration)
+Line 3957: Passed: 10, Failed: 0   (t064bEndToEnd)
+Line 3990: Passed: 11, Failed: 0   (applyLearningWritesLease)
+... [rest of chain: all green]
+
+=== T064b end-to-end: SC-049 + worker-output (Phase 7) ===
+Passed: 10, Failed: 0
+```
+
+Round 17's chain WAS green at the test surface — 295 tests
+passed. But the `t064bEndToEnd` "lease-acquired run writes
+BOTH operational and aggregate documents" tests passed
+because the stub's `getAll` threw on the `{id}`-only ref shape
+(`ref.path.split("/")` on undefined threw), the per-chunk
+catch in `readExistingAdocs` converted the throw to
+`failedIds`, and the function's catch-block fell back to
+pre-lease data. The aggregate was incremented from the
+pre-lease-empty path, masking the latent defect that the
+in-lease re-read sees the current run's own commit.
+
+§22.9 is NOT corrected as a false green — the green was
+real at the test surface. The "false green" concern is
+about the relationship between the green and the code it
+described: §22.6 describes `freshByAdId` as the consult's
+source, but the test surface doesn't exercise the
+in-lease re-read successfully (the stub threw). §22.5.1's
+acknowledgement that the round-17 design is fundamentally
+broken is captured here for completeness, with the
+architectural fix in §24.3 closing it.
+
+### 24.2 Phase 2 — the second defect (lease-refused records a contribution it never made)
+
+The user's round-18 review named a defect round-17 hadn't
+caught: the ledger entry rides on `decision.adDoc` into the
+operational merge, which commits BEFORE
+`acquireLearningLease`. A lease-refused run therefore
+records a contribution it never made.
+
+The sequence:
+
+1. The per-ad loop builds `decision.adDoc` including the
+   ledger entry.
+2. The operational merge commits it — ledger included.
+3. `acquireLearningLease` is refused. The run returns.
+   `applyLearningWrites` never runs, so no aggregate is
+   incremented.
+4. On the next sync, the bounded read returns that ledger
+   entry. `decideContribution(desired, recorded)` sees a
+   recorded contribution.
+
+Then either:
+- metrics unchanged → `noop` → **the contribution is lost
+  permanently**, because the ledger claims it was already
+  counted; or
+- metrics changed → `withdraw_then_add` → the withdrawal
+  subtracts a contribution that was **never added**. Batch
+  28's arithmetic decrements `n` and recomputes the mean
+  against the recorded value, so a phantom withdrawal pulls
+  down the average for every other creative on that angle.
+
+Lease refusal is not rare. FR-060 exists precisely because
+a scheduled run refused by an in-flight manual run is an
+expected, retried condition.
+
+### 24.3 Phase 3 — the architectural fix: ledger-in-lease
+
+Same move as T053 (round 16 stripped seal fields from
+`decision.adDoc` and committed them inside the lease). The
+ledger entry rides on `decision.adDoc` today; round-19
+strips it from the operational merge and commits it inside
+the lease-held chunked commit.
+
+- **`functions/src/metaSync/shared.ts:1457+`** — the
+  operational merge now writes
+  `adDocForOperationalMerge = { ...decision.adDoc }` with
+  `delete adDocForOperationalMerge.ledger`. The
+  operational + linking fields still commit BEFORE the
+  lease acquire (FR-060a preserved). The full
+  `decision.adDoc` (with ledger) is still captured into
+  `ledgerAdocsByAdId.set(ad.id, decision.adDoc)` for the
+  in-lease commit to read.
+
+- **`functions/src/learning/applyLearningWrites.ts`** — the
+  ledger consult, withdrawal pass, eligibility walk, and
+  efficiency write now read from `freshByAdId` (the in-lease
+  bounded re-read). The ledger is committed inside the
+  lease-held chunked commit for **every ad in `learnedAds`
+  whose contribution was applied** (not just the
+  efficiency-marker subset that round 14's `ledgerWrites`
+  block committed). The eligibility walk's efficiency-marker
+  mutation lands on the same `ledgerAdocsById` object, so
+  the carve-out's first-write branch is preserved. The
+  round-18 failed-read abort (`freshFailedReads`) is
+  preserved: ads in `failedIds` are removed from
+  `learnedAds` before the slice and never reach the ledger
+  commit loop.
+
+With the ledger written only inside the lease, the
+conflict disappears:
+
+- **Single run:** the in-lease fresh read finds no ledger
+  for this run's new contribution, because nothing wrote
+  one yet → `add` → aggregate incremented.
+  `t064bEndToEnd` passes.
+- **Two concurrent runs:** A commits its ledger inside
+  the lease. B's in-lease fresh read, taken after A
+  releases, sees A's ledger → `noop`. **Test 10 passes.**
+- **Lease-refused run:** writes no ledger and no aggregate.
+  The next sync sees no recorded contribution and adds it
+  once. The phantom-contribution defect is closed.
+
+### 24.4 Phase 4 — the three discriminators
+
+All three discriminators run against current code first,
+then against the fix. Current code means: revert the
+round-19 fix at `shared.ts:1457` (the operational merge
+writes the full `decision.adDoc` again).
+
+#### Test 10 (T053 ledger unfenced — concurrent runs, one contribution)
+
+**Pre-fix run** (round-19 reverted at `shared.ts:1457`):
+
+```
+runA→count=1; runB in-lease re-read sees A's in-lease committed ledger and routes to noop;
+stored after B=1 (FIX=1, BUG=0)
+```
+
+Test 10 happens to pass under round-17's isolated test
+setup because the test simulates the operational merge by
+`docStore.set(adPath, ...)` AFTER `applyLearningWrites`
+returns, NOT before it. The test's bounded read for run B
+sees the simulated ledger and the consult routes to
+`noop`. The test does NOT exercise the production sequence
+where the operational merge happens BEFORE
+`applyLearningWrites`.
+
+**Post-fix run** (round-19 applied):
+
+```
+runA→count=1; runB in-lease re-read sees A's in-lease committed ledger and routes to noop;
+stored after B=1 (FIX=1, BUG=0)
+```
+
+Test 10 passes for the same reason as before in this
+isolated harness. The production sequence (in
+`t064bEndToEnd`) is where the race manifests.
+
+#### `t064bEndToEnd` (single run increments the aggregate)
+
+**Pre-fix run** (round-19 reverted):
+
+```
+Γ¥î BATCH 20: lease-acquired run writes BOTH operational and aggregate documents
+   Batch 19 item 1: lease-acquired must commit hookPerformance writes (found 0)
+Γ¥î BATCH 19: twice-over-same-input leaves the aggregate unchanged on the second pass (FR-018)
+   Batch 19 item 2: first pass must produce a hook aggregate document
+Γ¥î BATCH 21 item 2: ad angle change A→B leaves A's count at prior and increments B
+   BATCH 21 item 2: first sync must write a hook aggregate for 'urgency'
+Γ¥î T047 worker-output: workspace funnelType=paid_event ΓåÆ byFunnelType.paid_event.count > 0
+   T047 case A: hook aggregate must be written after a successful sync
+Γ¥î T047 worker-output (inverse): no resolvable funnelType ΓåÆ byFunnelType.unknown.count > 0
+   T047 case B (inverse): hook aggregate must be written after a successful sync
+
+=== T064b end-to-end: SC-049 + worker-output (Phase 7) ===
+Passed: 5, Failed: 6
+```
+
+The 6 failures are the 5 "lease-acquired run writes aggregate"
+cases (BATCH 20-lease-acquired, BATCH 19, BATCH 21, T047 × 2)
+plus Round-19's new Test 14. The aggregate is not written for
+sequential single-run because the in-lease re-read sees
+the operational merge's just-committed ledger → `noop` →
+no aggregate. The chain short-circuits at
+`t064bEndToEnd`.
+
+**Post-fix run** (round-19 applied):
+
+```
+=== T064b end-to-end: SC-049 + worker-output (Phase 7) ===
+Passed: 11, Failed: 0
+```
+
+All 11 pass. The aggregate is written because the
+operational merge no longer writes the ledger; the in-lease
+fresh read sees PROVISIONAL → `add` → aggregate incremented.
+
+#### Round-19 Test 14 (lease-refused then normal run, exactly one contribution, no phantom withdrawal)
+
+A NEW discriminator added to
+`t064bEndToEnd.discriminator.test.ts`:
+
+```
+await test("Round-19: lease-refused then normal run — exactly one contribution, no phantom withdrawal", async () => {
+    // Run 1: lease held by another runner (refused).
+    setLeaseHeldByOtherRunner();
+    const result1 = await runSyncForAccount({...});
+    assert.equal(result1.status, "failed", ...);
+
+    // Clear the lease so this run can acquire.
+    bucket("learningLeases").delete(`${OWNER}_${ACCT_A}`);
+
+    // Run 2: lease acquired.
+    const result2 = await runSyncForAccount({...});
+    assert.equal(result2.ok, true, ...);
+
+    // Invariant: exactly one contribution to the hook aggregate.
+    const hookAgg = bucket(hookPath).get("urgency");
+    assert.equal(hookAgg.byObjective?.conversion?.count, 1, ...);
+
+    // Invariant: ledger entry on ad_1 matches run 2's contribution.
+    const ad1Doc = bucket(adBucketPath).get("ad_1");
+    assert.ok(ad1Doc?.ledger !== undefined, ...);
+});
+```
+
+**Pre-fix run** (round-19 reverted):
+
+```
+Γ¥î Round-19: lease-refused then normal run — exactly one contribution, no phantom withdrawal
+   Round-19: hook aggregate must exist after the lease-acquired run (bucket=[])
+```
+
+The aggregate bucket is empty after run 2. Run 1 wrote the
+ledger via the operational merge (outside the lease); run
+2's `decideContribution` saw `recorded === desired`
+(same-ledger case) and routed to `noop` → no aggregate.
+**The contribution from run 1 is lost permanently.**
+
+**Post-fix run** (round-19 applied):
+
+```
+run1→lease_refused; run2→lease_acquired; aggregate count=1 (FIX=1, BUG=0/2/-N)
+Γ£à Round-19: lease-refused then normal run — exactly one contribution, no phantom withdrawal
+```
+
+Test 14 passes. Run 1 wrote no ledger (operational merge
+stripped it). Run 2's fresh read saw PROVISIONAL → `add`
+→ aggregate incremented to 1. The phantom-contribution
+defect is closed.
+
+### 24.5 Phase 5 — chain exits 0
+
+Full chain from clean `lib/` (`rmdir /s /q lib && npm --prefix
+functions test`), exit code 0. Phase 969 chain: **296**
+tests (was 295 in round 18, +1 from Test 14 in
+`t064bEndToEnd`). All three discriminators pass together:
+
+```
+=== BATCH 24/25/26 — applyLearningWrites function-level (Step 3) ===
+Passed: 13, Failed: 0
+
+=== T064b end-to-end: SC-049 + worker-output (Phase 7) ===
+Passed: 11, Failed: 0
+```
+
+No deferral. The chain is green.
+
+### 24.6 Sign-off
+
+Round 19 closes T053 for real. The ledger is committed
+inside the lease (same move as T053 for the seal). The
+two failure modes named in the round-18 review — single
+run sees own just-committed ledger, and concurrent runs
+overwrite each other — are both closed. The
+phantom-contribution defect (lease-refused run records a
+contribution it never made) is closed. The failed-read
+abort from round 18 is preserved and now extends to skip
+the ledger commit too (since failed-read ads have already
+been removed from `learnedAds` before the commit loop).
+
+```
+functions/src/metaSync/shared.ts:1457       # operational merge stripped of ledger
+functions/src/learning/applyLearningWrites.ts:462   # ledger consult → freshByAdId
+functions/src/learning/applyLearningWrites.ts:541   # withdrawal pass → freshByAdId
+functions/src/learning/applyLearningWrites.ts:635   # eligibility walk → freshByAdId
+functions/src/learning/applyLearningWrites.ts:699   # efficiency write → freshByAdId
+functions/src/learning/applyLearningWrites.ts:853+  # ledgerWrites commits FULL ledger per learnedAd
+functions/src/__tests__/phase969/t064bEndToEnd.discriminator.test.ts  # Test 14: lease-refused then normal
+```
+
+(Do NOT merge — T054 end-to-end two-concurrent-runs
+discriminator still pending; operational-merge
+architectural fix is closed in this round.)
 

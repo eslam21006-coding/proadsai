@@ -1454,9 +1454,34 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         const decision = perAd.decision;
         const tally = perAd.tally;
 
+        // Round-19 — T053 ledger-in-lease fix. Strip the `ledger`
+        // field from `decision.adDoc` BEFORE the operational merge
+        // commits it at T1 (BEFORE `acquireLearningLease`). The
+        // ledger entry is the idempotency record: committing it
+        // outside the lease is the defect the round-18 review
+        // named. Two failure modes:
+        //   - Lease-refused run writes a ledger it never aggregates.
+        //     Next sync sees the record, noops, contribution is lost
+        //     forever (or worse: withdraws a contribution that was
+        //     never added, pulling down the angle mean for every
+        //     other creative).
+        //   - Concurrent runs both see PROVISIONAL pre-lease, both
+        //     decide to contribute, both write ledgers; B's merge
+        //     overwrites A's.
+        // The fix commits the ledger inside the lease-held chunked
+        // commit in `applyLearningWrites`, gated on the contribution
+        // being applied to the aggregate in that same commit.
+        // `ledgerAdocsByAdId.set(ad.id, decision.adDoc)` below
+        // still captures the full `decision.adDoc` (with ledger) so
+        // the in-lease commit can read it; the operational merge
+        // here writes the operational + linking fields only.
+        const adDocForOperationalMerge: Record<string, unknown> = {
+            ...(decision.adDoc as unknown as Record<string, unknown>),
+        };
+        delete adDocForOperationalMerge.ledger;
         writes.push({
             ref: adAccountRef.collection("adPerformance").doc(ad.id),
-            data: decision.adDoc as unknown as Record<string, unknown>,
+            data: adDocForOperationalMerge,
         });
 
         if (tally === "matched") {

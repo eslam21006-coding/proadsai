@@ -589,6 +589,101 @@ async function main(): Promise<void> {
             `run status=${result.status}, errors=${JSON.stringify(result.errors)}`);
 });
 
+// ─── Round-19 — T053 + ledger-in-lease: lease-refused then normal run ──────
+//
+// Per the round-18 review, the ledger entry rides on `decision.adDoc`
+// into the operational merge at `shared.ts:1457`, which commits BEFORE
+// `acquireLearningLease`. A lease-refused run therefore writes a
+// ledger entry it never aggregates. The next sync (lease acquired)
+// reads that ledger and either:
+//   - sees the same metrics → `noop` → the contribution is lost
+//     forever, because the ledger claims it was already counted; or
+//   - sees different metrics → `withdraw_then_add` → Batch 28's
+//     arithmetic decrements `n` and recomputes the mean against the
+//     recorded value, so a phantom withdrawal pulls down the
+//     average for every other creative on that angle.
+//
+// This discriminator drives both runs end-to-end against the
+// stubbed `runSyncForAccount`. Run 1 has the lease held by another
+// runner (refused). Run 2 clears the lease and acquires it. The
+// invariant: after both runs, the hook aggregate reflects EXACTLY ONE
+// contribution from the ad_1 row. Against the current code the
+// aggregate is corrupted (lost → count=0; phantom withdrawal →
+// count<0 or mean pulled below the true value). After the round-19
+// fix (strip ledger from `decision.adDoc`, commit it inside the
+// lease), run 1 writes no ledger at all and run 2's aggregate
+// reflects its single contribution.
+
+await test("Round-19: lease-refused then normal run ΓÇö exactly one contribution, no phantom withdrawal", async () => {
+    resetStub();
+    seedConnection();
+    seedGenerationMatch({});
+    seedImageMatchStubs();
+    seedFunnelSettings("resolve", "paid_event");
+
+    // ─── Run 1: lease held by another runner (refused) ──────
+    setLeaseHeldByOtherRunner();
+
+    metaGraph.setFetchImplForTests(seedFetchOneAd());
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runSyncForAccount } = require("../../metaSync/shared.js");
+
+    const result1 = await runSyncForAccount({
+        userId: OWNER,
+        workspaceId: WS_A,
+        accountId: ACCT_A,
+        trigger: "manual",
+        nowMs: Date.now(),
+    });
+    assert.equal(result1.status, "failed",
+        `Round-19: lease-refused run must produce status="failed" (got ${result1.status}, errors=${JSON.stringify(result1.errors)})`);
+
+    // ─── Run 2: clear the lease so this run can acquire ──────
+    bucket("learningLeases").delete(`${OWNER}_${ACCT_A}`);
+
+    metaGraph.setFetchImplForTests(seedFetchOneAd());
+
+    const result2 = await runSyncForAccount({
+        userId: OWNER,
+        workspaceId: WS_A,
+        accountId: ACCT_A,
+        trigger: "manual",
+        nowMs: Date.now() + 1_000,
+    });
+    assert.equal(result2.ok, true,
+        `Round-19: lease-acquired run must succeed (got ok=${result2.ok}, errors=${JSON.stringify(result2.errors)})`);
+    assert.equal(result2.counts.matched, 1,
+        `Round-19: lease-acquired run must match exactly 1 ad (got matched=${result2.counts.matched})`);
+
+    // ─── Invariant: exactly one contribution to the hook aggregate ──────
+    const hookPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/hookPerformance`;
+    const hookAgg = bucket(hookPath).get("urgency");
+    assert.ok(hookAgg,
+        `Round-19: hook aggregate must exist after the lease-acquired run (bucket=${JSON.stringify(Array.from(bucket(hookPath).entries()))})`);
+
+    const count = hookAgg.byObjective?.conversion?.count ?? -1;
+    assert.equal(count, 1,
+        `Round-19: hook aggregate count must be 1 (one contribution from the lease-acquired run); got count=${count}. ` +
+        `Pre-fix: run 1 wrote a ledger entry its never-aggregated contribution; run 2's consult sees the phantom and either noops (count stays 0) or withdraws (count<0). ` +
+        `Post-fix: run 1 writes no ledger; run 2's contribution is fresh; count=1.`);
+
+    // ─── Invariant: ledger entry on ad_1 matches run 2's contribution ──────
+    const adBucketPath = `users/${OWNER}/workspaces/${WS_A}/adAccounts/${ACCT_A}/adPerformance`;
+    const ad1Doc = bucket(adBucketPath).get("ad_1") as DocData | undefined;
+    const ledger1 = ad1Doc?.ledger;
+    assert.ok(ledger1 !== undefined,
+        `Round-19: ad_1 ledger must be present after the lease-acquired run (got ${JSON.stringify(ad1Doc?.ledger)})`);
+    // Round-19 fix: the ledger entry was committed INSIDE the lease,
+    // by run 2's applyLearningWrites. It carries run 2's contribution.
+    // Pre-fix: the ledger entry was committed by run 1's OPERATIONAL
+    // MERGE (before the lease was acquired), and run 2's
+    // applyLearningWrites may have written a second entry on top.
+
+    console.log(`     run1→lease_refused; run2→lease_acquired; aggregate count=${count} (FIX=1, BUG=0/2/-N)`);
+    teardownImageMatchStubs();
+});
+
 // ΓöÇΓöÇΓöÇ BATCH 19 ΓÇö Item 1 (lease fence on aggregate writes) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 //
 // Batch 18 confirmed the audit: the per-ad `writes` array carries both

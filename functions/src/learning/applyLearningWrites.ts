@@ -534,27 +534,19 @@ export async function applyLearningWrites(
             const ad = params.learnedAds[i];
             const ledgerAdDoc = params.ledgerAdDocsByAdId.get(ad.adId);
             const desired = ledgerAdDoc?.ledger as ContributionLedgerEntry | undefined;
-            // Round-18 — ledger consult reads from the pre-lease
-            // bounded read (`params.existingByAdId`), NOT from
-            // `freshByAdId`. The in-lease re-read sees what the
-            // current run just committed (the operational merge
-            // at `shared.ts:1457` writes the ledger BEFORE the
-            // lease acquire); using `freshByAdId` would always
-            // return `recorded === desired` → `noop` → no
-            // aggregate write for fresh contributions.
-            //
-            // The seal consult BELOW still uses `freshByAdId` —
-            // the operational merge does NOT write the seal
-            // fields, so the in-lease re-read correctly sees
-            // other runs' seal commits. The race window for the
-            // ledger (between bounded read and the in-lease
-            // re-read) is closed by the FR-070 failed-read abort
-            // and the existing per-ad loop's consult on the
-            // pre-lease data. The deeper architectural fix —
-            // stripping the ledger from the operational merge
-            // and committing it in-lease only — stays as a
-            // Batch 6 follow-up (see §23.5).
-            const recorded = params.existingByAdId.get(ad.adId)?.ledger as ContributionLedgerEntry | undefined;
+            // Round-19 — ledger consult reads from `freshByAdId`
+            // (the in-lease bounded re-read). With the round-19
+            // architectural fix (ledger stripped from the
+            // operational merge at `shared.ts:1457`, committed
+            // in-lease instead), `freshByAdId` no longer contains
+            // the current run's own just-committed ledger — the
+            // in-lease commit runs AFTER this consult. The consult
+            // sees the bucket's pre-run state (empty for a
+            // sequential run; another run's commit for the racing
+            // case). Round-18's failed-read abort (`freshFailedReads`)
+            // is preserved: ads in `failedIds` have already been
+            // removed from `learnedAds` before the slice above.
+            const recorded = freshByAdId.get(ad.adId)?.ledger as ContributionLedgerEntry | undefined;
             const decision: DecideContributionOutcome = decideContribution(desired ?? null, recorded ?? null);
             if (decision.kind === "noop") {
                 params.learnedAds.splice(i, 1);
@@ -637,9 +629,9 @@ export async function applyLearningWrites(
             // the OLD patternKey.)
             for (let i = 0; i < withdrawalHookAds.length; i++) {
                 const wad = withdrawalHookAds[i];
-                // Round-18 — read from the pre-lease read (see
-                // comment on the ledger consult above).
-                const recorded = params.existingByAdId.get(wad.adId)?.ledger as ContributionLedgerEntry | undefined;
+                // Round-19 — read from the in-lease fresh
+                // re-read (see comment on the ledger consult above).
+                const recorded = freshByAdId.get(wad.adId)?.ledger as ContributionLedgerEntry | undefined;
                 if (!recorded) continue;
                 const oldAngleKey = recorded.angleKey;
                 const oldPatternKey = recorded.patternKey;
@@ -782,9 +774,9 @@ export async function applyLearningWrites(
                 const ad = eligibilitySnapshot[i];
                 const ck = ad.creativeKey ?? ad.adId;
                 if (ck !== creativeKey) continue;
-                // Round-18 — read from the pre-lease read (see
-                // comment on the ledger consult above).
-                const existingLedger = params.existingByAdId.get(ad.adId)?.ledger;
+                // Round-19 — read from the in-lease fresh
+                // re-read (see comment on the ledger consult above).
+                const existingLedger = freshByAdId.get(ad.adId)?.ledger;
                 const writeVerdict = decideEfficiencyWrite(
                     existingLedger as { efficiencyContributed: boolean | undefined } | undefined,
                     fig.value,
@@ -845,59 +837,43 @@ export async function applyLearningWrites(
             });
             visualWrites++;
         }
-        // CodeRabbit (Round 14): persist the per-ad ledger entries
-        // whose `efficiencyContributed` flag was just flipped. The
-        // upstream commit at `shared.ts:1378` landed BEFORE
-        // `applyLearningWrites` ran, so without this write the
-        // efficiency-marker mutation in the walk above never reaches
-        // Firestore and the next sync sees `efficiencyContributed:
-        // false` again — defeating the FR-005c carve-out's one-way
-        // lock. Each entry below is the FULL adDoc (the `decision.adDoc`
-        // object the upstream commit held), so it replaces the doc;
-        // preserving the ledger subdoc untouched when no flag flipped.
-        // We pick writes for ads whose walked `efficiencyContributed`
-        // is now true AND whose original ledger had it false / undefined
-        // (i.e. the carve-out's first-write branch).
+        // Round-19 — T053 LEDGER-IN-LEASE COMMIT. The ledger entry
+        // is the idempotency record for FR-018 (a contribution
+        // MUST be added once and never duplicated). With the
+        // round-19 architectural fix, the operational merge at
+        // `shared.ts:1457` no longer writes the ledger — the
+        // ledger is committed HERE, inside the lease-held chunked
+        // commit, for every ad whose contribution was actually
+        // applied to the aggregate in THIS run. The previous
+        // shape (Round 14) only wrote entries whose
+        // `efficiencyContributed` flag flipped — leaving the
+        // first-time ledger entry for non-eligible ads committed
+        // to nothing. The new shape writes the FULL ledger entry
+        // (`ledgerAdocsById[adId].ledger`) for every ad still in
+        // `learnedAds` after the ledger consult and the failed-read
+        // abort. The eligibility walk's efficiency-marker mutation
+        // (lines 805+) lands on the same ledger object before
+        // this commit, so the carve-out's first-write branch is
+        // preserved.
+        //
+        // Round-18 — T053 failed-read abort is preserved: ads in
+        // `freshFailedReads` have already been removed from
+        // `learnedAds` before the slice above. They do not appear
+        // here.
         const ledgerWrites: Array<{ ref: { id: string }; data: Record<string, unknown> }> = [];
-        for (const [creativeKey, rows] of efficiencyByCreative) {
-            // We rely on the eligibility row's original sealed context
-            // to short-circuit the no-write case; the in-memory flag is
-            // what decides whether the carve-out was applied to a row.
-            // Walk `eligibilitySnapshot` (the pre-splice list) by adId
-            // to read the per-row state the walk produced.
-            for (let i = 0; i < eligibilitySnapshot.length; i++) {
-                const ad = eligibilitySnapshot[i];
-                if ((ad.creativeKey ?? ad.adId) !== creativeKey) continue;
-                const ledgerAdDoc = params.ledgerAdDocsByAdId.get(ad.adId);
-                if (!ledgerAdDoc || !ledgerAdDoc.ledger) continue;
-                if (ledgerAdDoc.ledger.efficiencyContributed !== true) continue;
-                ledgerWrites.push({
-                    ref: params.adAccountRef.collection("adPerformance").doc(ad.adId),
-                    // Round-15 review (item 2): narrow the data to the
-                    // `ledger` path only. The previous shape passed
-                    // the FULL `decision.adDoc` object so the merge
-                    // write would overwrite EVERY top-level field
-                    // (cpm3d, ctrLink, etc.) with the in-memory
-                    // snapshot from T1 — the upstream operational
-                    // commit. Today the values match (nothing
-                    // between T1 and T2 mutates the doc), but a
-                    // future interleaved write (another
-                    // `runSyncForAccount` for the same ad, or a
-                    // client/online change to operational fields)
-                    // would be silently overwritten by stale data.
-                    // With the narrowed shape the merge skips
-                    // operational fields entirely; the `ledger`
-                    // subdoc is wholesale-replaced, but the in-memory
-                    // ledger carries every original field plus the
-                    // two flipped flags, so the replacement is
-                    // lossless. The discriminator test
-                    // `efficiencyWiring.test.ts:4` constructs an
-                    // adDoc with `cpm3d: 99`, mutates the
-                    // operational field between T1 and T2, and
-                    // asserts the merged doc still carries `99`.
-                    data: { ledger: ledgerAdDoc.ledger } as unknown as Record<string, unknown>,
-                });
-            }
+        for (const ad of params.learnedAds) {
+            const ledgerAdDoc = params.ledgerAdDocsByAdId.get(ad.adId);
+            if (!ledgerAdDoc || !ledgerAdDoc.ledger) continue;
+            ledgerWrites.push({
+                ref: params.adAccountRef.collection("adPerformance").doc(ad.adId),
+                // Round-15 review (item 2): narrow the data to the
+                // `ledger` path only. The merge skips operational
+                // fields entirely; the `ledger` subdoc is
+                // wholesale-replaced, but the in-memory ledger
+                // carries every original field plus the two flipped
+                // flags, so the replacement is lossless.
+                data: { ledger: ledgerAdDoc.ledger } as unknown as Record<string, unknown>,
+            });
         }
 
         // 6. Chunked commit. The caller already holds the lease, so this
