@@ -293,12 +293,16 @@ export function applyVisualAggregatesDelta(
                         : (priorAvg * priorCount + clamped) / (priorCount + 1);
                     agg.efficiencyContributingCount =
                         agg.efficiencyContributingCreatives.size;
+                    // Batch 5 (FR-030) — visual parallel. Fired inside
+                    // the same first-time gate so one creative
+                    // contributing two rows to this pattern increments
+                    // the funnel's `efficiencyCount` once, not twice
+                    // (CodeRabbit Round 14). The hook aggregator's
+                    // parallel sits at lines 142-143 for the same
+                    // reason.
+                    incrementEfficiencyByFunnelType(agg, ad);
                 }
             }
-            // Batch 5 (FR-030) — visual parallel. Mirror the hook
-            // call above — fire the funnel-type efficiency increment
-            // ONCE per creative that contributed an efficiency figure.
-            incrementEfficiencyByFunnelType(agg, ad);
             applyAdToVisual(agg, ad);
             agg.lastUpdated = syncAt;
             byPatternKey.set(patternKey, agg);
@@ -486,11 +490,6 @@ export function applyHookAggregateWithdrawal(
         decrementByFunnelType(clone, ad);
     }
 
-    // Batch 5 (FR-030) — symmetric efficiency-funnel decrement. Same
-    // gate as the addition (only fires for efficiency contributors)
-    // and the same `?? 0` boundary on the bucket count.
-    decrementEfficiencyByFunnelType(clone, ad);
-
     // Batch 28 (Fix B, FR-036): a withdrawn creative stops being counted.
     // The key is dropped and `creativeCount` re-derived from the set, so
     // the two cannot disagree. When only SOME of a creative's rows are
@@ -517,12 +516,29 @@ export function applyHookAggregateWithdrawal(
     // `count <= 1` (last contribution leaving) the average resets to
     // 0 rather than dividing by zero — the same rule the existing
     // `avgLinkCtr` decrement follows.
+    //
+    // CodeRabbit (Round 14): the same membership guard must gate the
+    // funnel-type efficiency decrement (Batch 5 / FR-030). The bucket
+    // is per-funnel-type and shared across all contributors; without
+    // this gate a non-contributor withdrawal would over-decrement the
+    // count by reading a positive `efficiencyCount` left by another
+    // creative. The visual aggregator at
+    // `applyLearningWrites.ts:~237` carries the same correction.
     const wasEfficiencyContributor = clone.efficiencyContributingCreatives.delete(withdrawnKey);
     if (wasEfficiencyContributor) {
+        decrementEfficiencyByFunnelType(clone, ad);
         const priorCount = clone.efficiencyContributingCreatives.size + 1;
         const priorAvg = clone.efficiencyValueAvg ?? 0;
+        // CodeRabbit (Round 14): use the SAME clamped value the
+        // addition path stored (FR-038's 3.0 bound), not the raw
+        // row-recorded value. Otherwise a freak row whose addition
+        // contributed a clamped 3.0 over-withdraws on the way out by
+        // the raw figure (>3.0), and the round-trip drifts. The
+        // visual aggregator's parallel at
+        // `applyLearningWrites.ts:~213` and `~215` carries the same
+        // correction.
         const withdrawnFigure = typeof ad.efficiencyFigure === "number"
-            ? ad.efficiencyFigure
+            ? clampEfficiencyForAggregate(ad.efficiencyFigure)
             : 0;
         clone.efficiencyValueAvg = priorCount <= 1
             ? 0

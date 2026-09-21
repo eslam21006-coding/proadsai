@@ -307,15 +307,16 @@ async function test1_wiringInPlace_setsFigureOnEveryRow() {
 
     const ad1 = makeAd("ad_1", "creative_EFFICIENCY");
     const ad2 = makeAd("ad_2", "creative_EFFICIENCY");
+    ledgerAdocsByIdFor_test1 = new Map([
+        ["ad_1", { ledger: makeContribution("creative_EFFICIENCY") }],
+        ["ad_2", { ledger: makeContribution("creative_EFFICIENCY") }],
+    ]);
 
     await applyLearningWrites({
         db: { batch: () => new StubBatch() },
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad1, ad2],
-        ledgerAdDocsByAdId: new Map([
-            ["ad_1", { ledger: makeContribution("creative_EFFICIENCY") }],
-            ["ad_2", { ledger: makeContribution("creative_EFFICIENCY") }],
-        ]),
+        ledgerAdDocsByAdId: ledgerAdocsByIdFor_test1,
         existingByAdId: new Map([
             ["ad_1", makeExisting("ad_1", 4, 90)],
             ["ad_2", makeExisting("ad_2", 2, 90)],
@@ -332,11 +333,25 @@ async function test1_wiringInPlace_setsFigureOnEveryRow() {
         `Batch 5 wiring: figure = (180/6)/30 = 1.0 (got ${ad1.efficiencyFigure})`);
     assert.ok(Math.abs(ad2.efficiencyFigure! - 1.0) < 1e-6,
         `Batch 5 wiring: figure = (180/6)/30 = 1.0 (got ${ad2.efficiencyFigure})`);
-    assert.equal((ad1 as any).ledger?.efficiencyContributed, true,
-        "the ledger entry's efficiencyContributed flag flips to true");
-    assert.equal((ad2 as any).ledger?.efficiencyContributed, true,
-        "the ledger entry's efficiencyContributed flag flips to true");
+    // CodeRabbit (Round 14): the ledger flip now mutates the ACTUAL
+    // entry (the one passed in via `ledgerAdDocsByAdId`), not a
+    // synthetic attach on `ad`. The mutation must reach the entry
+    // the bounded read will consult on the next sync.
+    const ledger1 = ledgerAdocsByIdFor_test1.get("ad_1")?.ledger;
+    const ledger2 = ledgerAdocsByIdFor_test1.get("ad_2")?.ledger;
+    assert.equal(ledger1?.efficiencyContributed, true,
+        "the ACTUAL ledger entry's efficiencyContributed flag flips to true");
+    assert.equal(ledger2?.efficiencyContributed, true,
+        "the ACTUAL ledger entry's efficiencyContributed flag flips to true");
+    assert.equal(ledger1?.efficiencyValue, 1.0,
+        `the ACTUAL ledger entry's efficiencyValue is the figure (got ${ledger1?.efficiencyValue})`);
+    assert.equal(ledger2?.efficiencyValue, 1.0,
+        `the ACTUAL ledger entry's efficiencyValue is the figure (got ${ledger2?.efficiencyValue})`);
 }
+
+// Hold the ledgerAdocsById reference for the test above (the
+// structural discriminator closes over it).
+let ledgerAdocsByIdFor_test1: Map<string, any> = new Map();
 
 // ─── Test 2: the SOURCE-TEXT structural discriminator ──────────────────
 //
@@ -459,6 +474,129 @@ async function test3_secondWriteIsNoOp() {
         `carve-out second run: figure MUST NOT be set when efficiencyContributed: true (got ${ad2b.efficiencyFigure})`);
 }
 
+// ─── Test 4: persistence — the ledger mutation commits to adPerformance ───
+//
+// CodeRabbit (Round 14) follow-up: the eligibility walk mutates the
+// ACTUAL `ledgerAdDocsByAdId` entry (not a synthetic attach). It must
+// ALSO land in the per-ad adPerformance write list inside the same
+// lease-held chunked commit. Without that the next bounded read sees
+// the pre-eligibility state and the FR-005c carve-out fires on every
+// subsequent sync. This test verifies the per-ad `efficiencyContributed`
+// mutation reaches the docStore via the chunked commit that the
+// function itself owns.
+
+async function test4_ledgerWriteCommittedToDocStore() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    const ad1 = makeAd("ad_1", "creative_PERSIST");
+    const ad2 = makeAd("ad_2", "creative_PERSIST");
+    const ledgerDocs = new Map([
+        ["ad_1", { ledger: makeContribution("creative_PERSIST") }],
+        ["ad_2", { ledger: makeContribution("creative_PERSIST") }],
+    ]);
+
+    await applyLearningWrites({
+        db: { batch: () => new StubBatch() },
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad1, ad2],
+        ledgerAdDocsByAdId: ledgerDocs,
+        existingByAdId: new Map([
+            ["ad_1", makeExisting("ad_1", 4, 90)],
+            ["ad_2", makeExisting("ad_2", 2, 90)],
+        ]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    // CodeRabbit (Round 14): the per-ad adPerformance doc must reflect
+    // the walked `efficiencyContributed: true` value after the
+    // chunked commit. The mutate-and-commit path replaces the entire
+    // adDoc (Firestore `set` with merge: true preserves top-level
+    // fields outside `ledger` but deep-merges the top level; the
+    // `ledger` subdoc is replaced wholesale — fine here because the
+    // mutation only flips two keys and the rest is the pre-existing
+    // ledger state).
+    const persisted1 = docStore.get(docKey([ACCT_PATH, "adPerformance", "ad_1"]));
+    const persisted2 = docStore.get(docKey([ACCT_PATH, "adPerformance", "ad_2"]));
+    assert.equal(persisted1?.ledger?.efficiencyContributed, true,
+        `per-ad adPerformance write must commit ledger.efficiencyContributed=true (got ${persisted1?.ledger?.efficiencyContributed})`);
+    assert.equal(persisted2?.ledger?.efficiencyContributed, true,
+        `per-ad adPerformance write must commit ledger.efficiencyContributed=true (got ${persisted2?.ledger?.efficiencyContributed})`);
+    assert.equal(persisted1?.ledger?.efficiencyValue, 1.0,
+        `per-ad adPerformance write must commit the figure (got ${persisted1?.ledger?.efficiencyValue})`);
+    assert.equal(persisted2?.ledger?.efficiencyValue, 1.0,
+        `per-ad adPerformance write must commit the figure (got ${persisted2?.ledger?.efficiencyValue})`);
+}
+
+// ─── Test 5: noop-row preservation — the eligibility walk computes the
+// figure for a row that the ledger consult removed as `noop`.
+
+async function test5_noopRowStillGetsFigureAfterThreshold() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    // A creative that has been contributing hook/visual evidence
+    // for several syncs. Its ledger says it already contributed the
+    // same geometry — the consult decides `noop` and removes it
+    // from `learnedAds`. Mid-cycle the bounded read sees the accrual
+    // cross the 5-conversion threshold; the eligibility walk must
+    // still compute the figure on this row, because that's the
+    // FIRST eligible sync even though the contribution decision
+    // was a `noop`.
+    const existingContribution = makeContribution("creative_NOOP_CROSS");
+    const desiredContribution = { ...existingContribution };
+    const ad1 = makeAd("ad_1", "creative_NOOP_CROSS");
+
+    const recordedLedger = {
+        ...existingContribution,
+        // Recorded `measuredInputs.conversions3d` summed across the
+        // creative is BELOW the threshold; today's sync is the one
+        // that adds the FIFTH conversion. The accrual in
+        // `existingByAdId` carries the post-add total (6+).
+    };
+
+    await applyLearningWrites({
+        db: { batch: () => new StubBatch() },
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad1],
+        ledgerAdDocsByAdId: new Map([
+            ["ad_1", { ledger: desiredContribution }],
+        ]),
+        existingByAdId: new Map([
+            ["ad_1", {
+                ...makeExisting("ad_1", 6, 90),
+                ledger: recordedLedger,
+            }],
+        ]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    // CodeRabbit (Round 14): the `noop` row must NOT be removed
+    // before the eligibility walk — its decision is noop because
+    // the contribution already existed, but the figure wasn't
+    // written yet (the bounded-read cache sees 6 conversions for
+    // the first time this sync, even though the contribution was
+    // recorded). The eligibility walk runs over the pre-splice
+    // snapshot, sees the 6 conversions, fires the carve-out's
+    // first-write branch, and sets the figure.
+    assert.equal(typeof ad1.efficiencyFigure, "number",
+        `Batch 5 noop-cross: figure must be set even though the row's contribution decision was noop (got ${ad1.efficiencyFigure})`);
+}
+
 // ─── Runner ─────────────────────────────────────────────────────────────
 
 declare const test: (name: string, fn: () => Promise<void> | void) => Promise<void>;
@@ -494,6 +632,8 @@ async function main() {
     await test("BATCH 5 wiring: eligibility walk sets figure on every eligible row", test1_wiringInPlace_setsFigureOnEveryRow);
     await test("BATCH 5 wiring: source text contains the per-row write line + carve-out consumer", test2_sourceTextContainsWiring);
     await test("BATCH 5 carve-out: second run with efficiencyContributed: true does NOT overwrite", test3_secondWriteIsNoOp);
+    await test("BATCH 5 persist: per-ad adPerformance commits the walked ledger mutation", test4_ledgerWriteCommittedToDocStore);
+    await test("BATCH 5 noop-cross: a noop row whose accrual crosses 5 still gets its figure", test5_noopRowStillGetsFigureAfterThreshold);
 }
 
 main()

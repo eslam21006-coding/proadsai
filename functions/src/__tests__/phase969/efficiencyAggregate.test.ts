@@ -408,22 +408,31 @@ test("add/withdraw invariant: cycling one creative through withdraw-then-add fiv
     // for the n-1==0 reset on a single-contributor withdrawal. That
     // reset is correct (no mean of zero observations) and matches the
     // existing `avgLinkCtr` decrement behaviour.
+    //
+    // CodeRabbit (Round 14): the previous loop pushed `afterWithdrawal`
+    // (the post-withdrawal average, always 0 for the n-1==0 reset on a
+    // single-contributor withdrawal) into the cycle. The `v === 0`
+    // assertion then passed trivially — the test was not exercising the
+    // re-add path at all. The fixed loop records the post-`applyHookAggregatesDelta`
+    // value, which is what the test title actually describes.
     const ad = adWithFigure("creative-A", "urgency", 1.5);
     const seed = applyHookAggregatesDelta([], [ad], 1_700_000_000_000).get("urgency")!;
     let agg = seed;
     const seen: number[] = [agg.efficiencyValueAvg ?? 0];
     for (let i = 0; i < 5; i++) {
         agg = applyHookAggregateWithdrawal(agg, ad);
-        const afterWithdrawal = agg.efficiencyValueAvg ?? 0;
         agg = applyHookAggregatesDelta([agg], [ad], 1_700_000_000_000 + i).get("urgency")!;
-        seen.push(afterWithdrawal);
+        seen.push(agg.efficiencyValueAvg ?? 0);
     }
-    // After every cycle, the average is either 1.5 (the bound-clamped
-    // figure after re-add) or 0 (the n-1==0 reset on a single-contributor
-    // withdrawal — the correct reset, matching avgLinkCtr's). Cycle-stable.
+    // After every cycle, the post-add average is the figure 1.5 (the
+    // single contributor's bounded figure). Cycle-stable; any other
+    // value indicates a drift in the add/withdraw arithmetic — the
+    // exact defect Batch 28's pattern is designed to catch. The
+    // withdrawal's n-1==0 reset is verified by separate tests in the
+    // withdraw-only path; this test's invariant is the post-add mean.
     for (const v of seen) {
-        assert.ok(Math.abs(v - 1.5) < 1e-9 || v === 0,
-            `cycle average ${v} should be 1.5 (after re-add) or 0 (n-1==0 reset on single withdrawal)`);
+        assert.ok(Math.abs(v - 1.5) < 1e-9,
+            `cycle post-add average ${v} should equal 1.5 (Batch 28 drift signal)`);
     }
 });
 

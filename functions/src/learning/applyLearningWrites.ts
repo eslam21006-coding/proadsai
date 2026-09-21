@@ -41,6 +41,7 @@ import {
     applyVisualAggregatesDelta,
     decrementEfficiencyByFunnelType,
 } from "./aggregateDelta.js";
+import { clampEfficiencyForAggregate } from "./efficiencyAggregate.js";
 import { decideContribution } from "./contributionLedger.js";
 import type { ContributionDecision } from "./contributionLedger.js";
 import type { ContributionLedgerEntry } from "./types.js";
@@ -210,10 +211,22 @@ export function applyVisualAggregateWithdrawal(
     const efficiencyRemaining = new Set(clone.efficiencyContributingKeys ?? []);
     const wasEfficiencyContributor = efficiencyRemaining.delete(ad.creativeKey ?? ad.adId);
     if (wasEfficiencyContributor) {
+        // Batch 5 (FR-030) — funnel-type symmetry: mirror the
+        // decrement here, gated on the SAME membership check (CodeRabbit
+        // Round 14). The funnel-type bucket is shared across all
+        // contributors, so calling the helper for a non-contributor
+        // withdrawal would over-decrement the count left by another
+        // creative. The guard makes the no-op truly a no-op.
+        decrementEfficiencyByFunnelType(clone, ad);
         const priorCount = efficiencyRemaining.size + 1;
         const priorAvg = clone.efficiencyValueAvg ?? 0;
+        // CodeRabbit (Round 14): clamp the withdrawn value the same
+        // way the addition path clamps it (FR-038's 3.0 bound), so a
+        // freak row's bounded addition does not over-withdraw on the
+        // way out. See the parallel hook withdrawal at
+        // `aggregateDelta.ts:~524` for the same correction.
         const withdrawnFigure = typeof ad.efficiencyFigure === "number"
-            ? ad.efficiencyFigure
+            ? clampEfficiencyForAggregate(ad.efficiencyFigure)
             : 0;
         clone.efficiencyValueAvg = priorCount <= 1
             ? 0
@@ -221,14 +234,6 @@ export function applyVisualAggregateWithdrawal(
         clone.efficiencyContributingCount = efficiencyRemaining.size;
         clone.efficiencyContributingKeys = [...efficiencyRemaining];
     }
-
-    // Batch 5 (FR-030) — funnel-type symmetry: the same key was
-    // incremented by the parallel visual addition path; mirror the
-    // decrement here. `decrementEfficiencyByFunnelType` is a no-op
-    // when `efficiencyFigure` is unset (this row never contributed)
-    // OR when the bucket count is already 0, so this is safe to
-    // call unconditionally.
-    decrementEfficiencyByFunnelType(clone, ad);
 
     return clone;
 }
@@ -340,6 +345,17 @@ export async function applyLearningWrites(
         // pattern is the authority even when the geometry spreads
         // through from `...ad`.
         const withdrawalHookAds: AdForLearning[] = [];
+        // CodeRabbit (Round 14) — the eligibility walk needs the
+        // PRE-splice snapshot. The ledger consult below removes every
+        // `noop` row before this mapping, but a creative that hit
+        // five accrued conversions during a LATER sync has a `noop`
+        // decision (its contribution matches the recorded ledger)
+        // and would be removed from `params.learnedAds` by this
+        // pass. The snapshot preserves it for the eligibility walk,
+        // whose purpose is to detect exactly that threshold-crossing
+        // and write the first efficiency figure. The snapshot is
+        // read-only and discarded after the walk.
+        const eligibilitySnapshot: AdForLearning[] = params.learnedAds.slice();
         for (let i = params.learnedAds.length - 1; i >= 0; i--) {
             const ad = params.learnedAds[i];
             const ledgerAdDoc = params.ledgerAdDocsByAdId.get(ad.adId);
@@ -497,7 +513,15 @@ export async function applyLearningWrites(
         //   - `learnedAds[i].ledger.efficiencyContributed /
         //     efficiencyValue = figure` — Batch 3's FR-005c writes
         //     these on the ledger entry.
-        const eligibilityRows: EfficiencyRow[] = params.learnedAds.map((ad) => {
+        // CodeRabbit (Round 14): build the eligibility walk over the
+        // PRE-splice snapshot (taken before the ledger consult at
+        // step 1). A `noop` row is one whose ledger entry already
+        // matches — that is the most common path by FAR for a
+        // previously-contributing row, and is exactly the case where
+        // the eligibility walk's first-write guard (FR-005c) must
+        // still be reachable when the creative's accrual crosses
+        // the threshold on this sync.
+        const eligibilityRows: EfficiencyRow[] = eligibilitySnapshot.map((ad) => {
             const existing = params.existingByAdId.get(ad.adId);
             return {
                 dayAccrual: existing?.dayAccrual ?? null,
@@ -520,8 +544,8 @@ export async function applyLearningWrites(
         // Build a per-creative lookup once for the walk. Order is
         // irrelevant — each creative's rows are independent.
         const efficiencyByCreative = new Map<string, EfficiencyRow[]>();
-        for (let i = 0; i < params.learnedAds.length; i++) {
-            const ad = params.learnedAds[i];
+        for (let i = 0; i < eligibilitySnapshot.length; i++) {
+            const ad = eligibilitySnapshot[i];
             const ck = ad.creativeKey ?? ad.adId;
             const list = efficiencyByCreative.get(ck);
             if (list) list.push(eligibilityRows[i]);
@@ -546,8 +570,18 @@ export async function applyLearningWrites(
             // read cache). First-write permitted (Batch 4's test 031
             // [shape] pins that the guard exists; this is the proof
             // it fires on the path the worker takes).
-            for (let i = 0; i < params.learnedAds.length; i++) {
-                const ad = params.learnedAds[i];
+            //
+            // CodeRabbit (Round 14): iterate the PRE-splice
+            // `eligibilitySnapshot`, not `params.learnedAds`. A noop
+            // row whose accrual crosses the threshold this sync is
+            // removed from `learnedAds` by step 1's ledger consult,
+            // but the figure must STILL be written on it — that's
+            // the whole point of the eligibility walk. Iterating
+            // the snapshot means the row stays in scope for the
+            // write, the ledgerAdDocsByAdId update, and the
+            // downstream chunked commit.
+            for (let i = 0; i < eligibilitySnapshot.length; i++) {
+                const ad = eligibilitySnapshot[i];
                 const ck = ad.creativeKey ?? ad.adId;
                 if (ck !== creativeKey) continue;
                 const existingLedger = params.existingByAdId.get(ad.adId)?.ledger;
@@ -558,15 +592,28 @@ export async function applyLearningWrites(
                 if (!writeVerdict.allowed) continue;
                 // Thread the figure onto the per-row `AdForLearning` so
                 // Batch 4's aggregator reads it on the additive pass.
+                // Reading from the snapshot makes this a no-op for
+                // already-additive rows (Batch 4's path); for a noop
+                // row removed at step 1 it is the FIRST setter.
                 ad.efficiencyFigure = fig.value;
-                // Mirror onto the ledger entry the merge write persists.
-                const ledger = (ad as unknown as { ledger?: { efficiencyContributed?: boolean; efficiencyValue?: number | null } }).ledger
-                    ?? ((ad as unknown as { ledger: { efficiencyContributed?: boolean; efficiencyValue?: number | null } }).ledger = {
-                        efficiencyContributed: false,
-                        efficiencyValue: null,
-                    });
-                ledger.efficiencyContributed = true;
-                ledger.efficiencyValue = fig.value;
+                // CodeRabbit (Round 14): mutate the actual ledger entry
+                // (the one queued in `ledgerAdDocsByAdId`, which IS the
+                // `decision.adDoc.ledger` that committed upstream in
+                // `shared.ts`), NOT a synthetic attach on
+                // `ad.ledger`. The upstream commit lands BEFORE
+                // `applyLearningWrites` runs, so without a persistence
+                // step here the in-memory mutation never reaches
+                // Firestore and the next sync sees
+                // `efficiencyContributed: false` again — defeating the
+                // FR-005c carve-out's one-way lock. The mutated
+                // `ledgerAdDocsByAdId` entry is then written back as
+                // part of the chunked commit below, replacing the
+                // adPerformance doc with the new ledger state.
+                const ledgerAdDoc = params.ledgerAdDocsByAdId.get(ad.adId);
+                if (ledgerAdDoc?.ledger) {
+                    ledgerAdDoc.ledger.efficiencyContributed = true;
+                    ledgerAdDoc.ledger.efficiencyValue = fig.value;
+                }
             }
         }
 
@@ -598,6 +645,38 @@ export async function applyLearningWrites(
             });
             visualWrites++;
         }
+        // CodeRabbit (Round 14): persist the per-ad ledger entries
+        // whose `efficiencyContributed` flag was just flipped. The
+        // upstream commit at `shared.ts:1378` landed BEFORE
+        // `applyLearningWrites` ran, so without this write the
+        // efficiency-marker mutation in the walk above never reaches
+        // Firestore and the next sync sees `efficiencyContributed:
+        // false` again — defeating the FR-005c carve-out's one-way
+        // lock. Each entry below is the FULL adDoc (the `decision.adDoc`
+        // object the upstream commit held), so it replaces the doc;
+        // preserving the ledger subdoc untouched when no flag flipped.
+        // We pick writes for ads whose walked `efficiencyContributed`
+        // is now true AND whose original ledger had it false / undefined
+        // (i.e. the carve-out's first-write branch).
+        const ledgerWrites: Array<{ ref: { id: string }; data: Record<string, unknown> }> = [];
+        for (const [creativeKey, rows] of efficiencyByCreative) {
+            // We rely on the eligibility row's original sealed context
+            // to short-circuit the no-write case; the in-memory flag is
+            // what decides whether the carve-out was applied to a row.
+            // Walk `eligibilitySnapshot` (the pre-splice list) by adId
+            // to read the per-row state the walk produced.
+            for (let i = 0; i < eligibilitySnapshot.length; i++) {
+                const ad = eligibilitySnapshot[i];
+                if ((ad.creativeKey ?? ad.adId) !== creativeKey) continue;
+                const ledgerAdDoc = params.ledgerAdDocsByAdId.get(ad.adId);
+                if (!ledgerAdDoc || !ledgerAdDoc.ledger) continue;
+                if (ledgerAdDoc.ledger.efficiencyContributed !== true) continue;
+                ledgerWrites.push({
+                    ref: params.adAccountRef.collection("adPerformance").doc(ad.adId),
+                    data: ledgerAdDoc as unknown as Record<string, unknown>,
+                });
+            }
+        }
 
         // 6. Chunked commit. The caller already holds the lease, so this
         // commit is fenced against any concurrent run that might be
@@ -625,6 +704,19 @@ export async function applyLearningWrites(
         };
         for (let i = 0; i < aggregateWrites.length; i += chunkSize) {
             const chunk = aggregateWrites.slice(i, i + chunkSize);
+            const batch = dbLike.batch();
+            for (const w of chunk) batch.set(w.ref, w.data, { merge: true });
+            await batch.commit();
+        }
+        // CodeRabbit (Round 14): commit the per-ad ledger entries
+        // whose `efficiencyContributed` flag flipped. Without this
+        // commit the FR-005c carve-out's "first write locks" semantic
+        // does NOT survive a reload — the next sync reads the
+        // pre-eligibility state from the bounded-read cache and the
+        // guard would let a second write through. The chunked commit
+        // reuses the same `chunkSize` and the same lease fencing.
+        for (let i = 0; i < ledgerWrites.length; i += chunkSize) {
+            const chunk = ledgerWrites.slice(i, i + chunkSize);
             const batch = dbLike.batch();
             for (const w of chunk) batch.set(w.ref, w.data, { merge: true });
             await batch.commit();
