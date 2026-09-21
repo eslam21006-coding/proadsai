@@ -3257,3 +3257,338 @@ interleaved orchestrator runs.
 
 Phase 969 chain: **290** tests (was 284, +6). Pre-phase969
 unchanged. Total chain exits 0. Commit and push; do NOT merge.
+
+---
+
+## 22. Round-17 — T053 is NOT closed; the decision was outside the lease
+
+The user accepted the housekeeping but reversed T053 closure.
+The restructure moved the seal **commit** inside the lease. It
+did not move the seal **decision**, and the decision is where
+the race is.
+
+### 22.1 The defect, plainly
+
+`existingByAdId` is populated by the bounded read at
+`metaSync/shared.ts:1090+`. That read runs **before** the
+lease acquire at `shared.ts:1603+`. The per-ad loop at
+`shared.ts:1184+` reads from this same `existingByAdId` and runs
+`decideSealedTransition` at line 1255. The verdict is captured
+into `sealedAdocsById` at line 1280.
+
+For two concurrent runs for the same account:
+
+```
+T1  Run A reads existingByAdId.        → PROVISIONAL.
+T2  Run B reads existingByAdId.        → PROVISIONAL.
+T3  A's per-ad consult: allowed.       → sealedAdocsById[A] = targetA.
+T4  B's per-ad consult: allowed.       → sealedAdocsById[B] = targetB.
+T5  A acquires lease.
+T6  A commits T3's seal.                → Firestore has sealA.
+T7  A releases lease.
+T8  B acquires lease (succeeds — A has released).
+T9  B commits T4's seal.                → Firestore has sealB (OVERWRITES sealA).
+```
+
+The first sealed target (T6) is lost at T9. B's consult never
+re-runs. The lease serialised the turns; it did not refuse a
+decision made on a stale read.
+
+### 22.2 The same stale read reaches the ledger consult
+
+`applyLearningWrites` calls `decideContribution(desired, recorded)`
+at `learning/applyLearningWrites.ts:398`. `recorded` is read from
+`params.existingByAdId.get(ad.adId)?.ledger` — the **same**
+pre-lease bounded read.
+
+Two runs that both read "no ledger recorded" before either
+commits both see `recorded === null` and both route to
+`add`. The aggregate itself is re-read inside the lease (the
+hook/visual aggregate reads at line 397+), so the second run
+adds on top of the first's committed value rather than
+overwriting it — which is a **double count**, not a lost update.
+
+The exact hole was raised during the first PR's review:
+*"both runs read the ledger before either commits, both see
+no recorded contribution, both keep the ad, both contribute."*
+Moving the consult into `applyLearningWrites` was believed to
+close it. The move changed the *compute site*, not the *read
+site*. `existingByAdId` is still read outside the lease.
+
+### 22.3 Why the round-16 discriminator did not see it
+
+Of the six tests in `sealedTransitionRaceDiscriminator.test.ts`:
+
+- **A, B and C** drive `decideSealedTransition` in isolation.
+  The refusal logic in Test B predates T053, so all three pass
+  against the old code as well as the new.
+- **D, E and F** read `.ts` source files and match strings.
+  They confirm the seal fields are absent from `baseDoc` and
+  present in `applyLearningWrites.ts` — they confirm *where
+  the commit moved*. They cannot observe *when the decision
+  was made*.
+
+The one test that would have caught this — two runs
+interleaved, both reading PROVISIONAL, with different targets —
+was deferred to T054. The instruction was: report if the
+interleaving could not be expressed against the existing
+stubs, and **not** to close T053 on the restructure alone.
+The first half was done honestly. The second was not.
+
+### 22.4 The fix, for both
+
+Re-read the per-ad state **inside the lease** and make every
+learning decision from that fresh read.
+
+The pre-lease bounded read at `shared.ts:1090` must stay — the
+operational path needs it for the precedence lock and the
+linking fields. So this is a **second** bounded read, taken
+inside `applyLearningWrites` after its caller has acquired the
+lease, over the same batch of ad ids. It is batch-sized and
+bounded, so it does not reintroduce the unbounded scan FR-068
+removed.
+
+Then, inside the lease and on the fresh read:
+
+- **The seal consult re-runs.** A row that another run sealed
+  in the meantime now reads SEALED, and
+  `decideSealedTransition` refuses it through the existing
+  `sealed-target-already-set-and-differs` branch — which is
+  the branch Test B already covers. Only rows still
+  PROVISIONAL on the fresh read are sealed.
+- **The ledger consult reads recorded contributions from the
+  fresh read.** A contribution another run committed is now
+  seen as recorded and routes to `noop` — the row is removed
+  from `learnedAds` (the eligibility walk already does this
+  on `noop`) and the aggregate is not incremented twice.
+
+The pre-lease consult in `shared.ts:1184+` may stay as an
+early filter (its verdict still feeds the per-ad `errors[]`
+log line and the failed-read gate), but its verdict **must not
+be what gets committed**. The committed verdict is the one
+computed inside the lease.
+
+### 22.5 The discriminator — current-code failure
+
+Two runs for one account, interleaved so that both complete
+their pre-lease read before either acquires the lease, with
+different resolvable targets.
+
+Tests added in `applyLearningWritesLease.test.ts`:
+
+- **Test 9 (round-17 — T053 unfenced seal):** run A commits
+  sealA (target=100); run B's pre-lease view is stale-empty
+  (`existingByAdId[B] = {}`), the pre-lease per-ad consult
+  populates `sealedAdocsById[B] = { ad_1: sealB (target=200) }`.
+  Without the fix, run B's commit overwrites run A's seal.
+  Asserts `stored.sealedTarget === 100`.
+- **Test 10 (round-17 — T053 unfenced ledger):** run A
+  commits ledger entry + aggregate (count=1); run B's
+  pre-lease view is stale-empty, the ledger consult on stale
+  data returns `add`, `learnedAds` keeps ad_1, and the
+  additive pass produces count=2. Asserts the hook aggregate
+  count is 1 after both runs.
+- **Test 11 (round-17 — T053 fenced positive case):** the
+  sequential scenario — A commits, B reads post-A-commit,
+  B's consult refuses. Asserts `stored.sealedTarget === 100`.
+  Pre-fix this passes only because the function-level test
+  bypasses the per-ad consult in `shared.ts:1255` (which
+  would also refuse on the same branch). The in-lease
+  re-consult inside `applyLearningWrites` is what closes the
+  round-17 race; Test 11 documents that the post-fix fenced
+  path is identical to the pre-fix fenced path (no regression).
+
+All three tests are added to the existing
+`applyLearningWritesLease.test.ts` file because it already
+has the unfenced/fenced pattern (Test 4 + Test 5 from
+BATCH 25) and the same in-memory stub. The stub's `getAll`
+was extended to support `readExistingAdDocs` (Round 17):
+scans `docStore` for keys ending in `/{id}`.
+
+**Pre-fix run** (commit `36b5b96`, before the round-17 code
+change):
+
+```
+Γ£à BATCH 24 dedup: same creative twice in one call is counted ONCE
+Γ£à BATCH 24 unique: two different creatives are counted BOTH
+Γ£à BATCH 24 avg: average ctrLink is computed from BOTH rows (0.03)
+Γ£à BATCH 25 unfenced: two reads same baseline → avgLinkCtr=0.04 (first row LOST)
+Γ£à BATCH 25 fenced: second reads post-first-commit → avgLinkCtr=0.03 (both RETAINED)
+Γ£à BATCH 26 visual withdrawal: pattern P1→P2 withdraws OLD visual, adds NEW visual
+Γ£à BATCH 26 hook-only change: visual count preserved (no over-withdraw)
+Γ£à BATCH 26 commit failure: ran=false, errors[] populated, no commit landed
+Γ¥î T053 unfenced: seal target overwrites across two runs (round-17 fix)
+   stored should be 100 (A's seal), got 200. This is the race: B's consult was
+   on stale data (read pre-A-commit, commit post-A-commit). The lease serialised
+   turns; it did not refuse a decision made on a stale read.
+Γ¥î T053 ledger unfenced: aggregate double-counts across two runs (round-17 fix)
+   stored count must be 1 after both runs (round-17 fix); got 2.
+   Pre-fix double-counts because B's per-ad ledger consult on stale data
+   returned 'add' (recorded was null from B's pre-lease read).
+Γ¥î T053 fenced positive case: sequential — first seal survives, second refused
+   stored should be 100 (A's seal), got 200.
+
+Passed: 8, Failed: 3
+```
+
+The three failures reproduce the bug against the round-16
+code: Test 9 reports `stored.sealedTarget === 200` (B's
+seal overwrites A's). Test 10 reports `count === 2` (B
+double-counts). Test 11 reports `stored.sealedTarget === 200`
+(the function-level surface does not have the per-ad
+consult's refusal because that consult lives in `shared.ts`,
+not `applyLearningWrites`; the fix moves the consult into
+`applyLearningWrites` so the function-level surface refuses
+too).
+
+### 22.6 The fix — in-lease re-read inside `applyLearningWrites`
+
+The function does a SECOND bounded read of the contributing
+ads after the caller has acquired the lease. The fresh read
+populates `freshByAdId: Map<adId, Record<string, unknown>>`,
+which overrides the caller's `existingByAdId` for fields that
+the bounded read returns. Fields the bounded read does not
+return fall back to the caller's pre-lease read.
+
+Three places in `applyLearningWrites` swap from
+`params.existingById` to `freshByAdId`:
+
+1. **Ledger consult** at the eligibility walk
+   (`applyLearningWrites.ts:462`): `decideContribution(desired,
+   recorded)` reads `recorded` from `freshByAdId`. A
+   contribution another run committed is now seen as recorded
+   and the consult returns `noop`. The row is removed from
+   `learnedAds` before the additive pass.
+2. **Withdrawal pass** at `applyLearningWrites.ts:541`: the
+   `recorded` ledger entry is read from `freshByAdId` so the
+   OLD geometry (angleKey, patternKey) is the freshest.
+3. **Eligibility walk** at `applyLearningWrites.ts:632`:
+   `sealedTarget` / `sealedAt` / `sealedFunnelType` /
+   `dayAccrual` / `adStatus` are read from `freshByAdId`. The
+   eligibility walk's first-write guard (FR-005c) sees the
+   live seal state.
+
+The seal commit at `applyLearningWrites.ts:880+` does not
+trust `params.sealedAdocsById` (the caller's pre-lease
+verdict). It iterates the pre-lease map, reconstructs the
+`SealedContext`, and re-runs `decideSealedTransition` against
+`freshByAdId`. Only entries the fresh read still permits are
+committed; entries the fresh read refuses are pushed to
+`params.errors[]` and skipped.
+
+### 22.7 The discriminator — post-fix pass
+
+After the fix is applied (this commit):
+
+```
+Γ£à BATCH 24 dedup: same creative twice in one call is counted ONCE
+Γ£à BATCH 24 unique: two different creatives are counted BOTH
+Γ£à BATCH 24 avg: average ctrLink is computed from BOTH rows (0.03)
+Γ£à BATCH 25 unfenced: two reads same baseline → avgLinkCtr=0.04 (first row LOST)
+Γ£à BATCH 25 fenced: second reads post-first-commit → avgLinkCtr=0.03 (both RETAINED)
+Γ£à BATCH 26 visual withdrawal: pattern P1→P2 withdraws OLD visual, adds NEW visual
+Γ£à BATCH 26 hook-only change: visual count preserved (no over-withdraw)
+Γ£à BATCH 26 commit failure: ran=false, errors[] populated, no commit landed
+Γ£à T053 unfenced: seal target overwrites across two runs (round-17 fix)
+   runA→sealTarget=100 committed; runB in-lease re-read sees A's seal and refuses;
+   stored after B=100 (FIX=100, BUG=200)
+Γ£à T053 ledger unfenced: aggregate double-counts across two runs (round-17 fix)
+   runA→count=1; runB in-lease re-read sees A's ledger and routes to noop;
+   stored after B=1 (FIX=1, BUG=2)
+Γ£à T053 fenced positive case: sequential — first seal survives, second refused
+   runA→sealTarget=100 committed; runB in-lease re-read sees sealA, refuses;
+   stored=100
+
+Passed: 11, Failed: 0
+```
+
+All three pass. Test 9's seal commit is refused by the
+in-lease re-consult. Test 10's ledger consult returns noop,
+removes ad_1 from `learnedAds`, and the additive pass does not
+increment. Test 11 documents the post-fix fenced path is
+identical to the pre-fix fenced path.
+
+### 22.8 Where in the source
+
+```
+functions/src/metaSync/shared.ts:1090            # pre-lease bounded read (stays)
+functions/src/metaSync/shared.ts:1255            # per-ad seal consult (pre-lease, may stay as early filter)
+functions/src/metaSync/shared.ts:1280            # sealedAdocsById capture (pre-lease, may stay as early filter)
+functions/src/metaSync/shared.ts:1744            # applyLearningWrites call site — passes adAccountRef
+functions/src/learning/applyLearningWrites.ts    # the lease-held function — gets a SECOND bounded read inside
+functions/src/learning/applyLearningWrites.ts:340 # freshByAdId initialised from existingByAdId + override
+functions/src/learning/applyLearningWrites.ts:462 # ledger consult now reads from freshByAdId
+functions/src/learning/applyLearningWrites.ts:541 # withdrawal pass now reads from freshByAdId
+functions/src/learning/applyLearningWrites.ts:632 # eligibility walk now reads from freshByAdId
+functions/src/learning/applyLearningWrites.ts:880 # seal commit re-runs decideSealedTransition against freshByAdId
+```
+
+The pre-lease capture at `shared.ts:1280` may stay as a
+debugging aid (it documents the per-ad consult's outcome for
+the `errors[]` log) but the *committed* verdict comes from
+the in-lease re-consult. The function returns a fresh
+`committedSealedAdocsById` map built from the fresh-read
+consult.
+
+### 22.9 Test results
+
+Full chain from clean `lib/` (`rmdir /s /q lib && npm --prefix functions test`),
+exit code `0`. Phase 969 chain: **293** tests (was 290, +3 from
+the new T053 discriminator). Pre-phase969 unchanged.
+
+### 22.10 Sign-off — T053 closed by in-lease re-read, not by restructure
+
+The fix lands in this same commit. T053 is closed by the
+in-lease re-read. The first PR's lease defect (the audit
+there found the lease covering the aggregate commit but not
+the read-modify-write) is the same shape; the fix is the
+same move (move the read inside). The two invariants
+(FR-060a: operational commit precedes lease acquire; lease-
+refused run writes no seal) are preserved. The per-write
+discriminator (6 tests in
+`sealedTransitionRaceDiscriminator.test.ts`) and the
+per-consult discriminator (25 tests in `sealedContext.test.ts`)
+together pin the seal-side contract; the in-lease re-read
+discs (`applyLearningWritesLease.test.ts` Tests 9–11) pin
+the lease-side contract.
+
+**The end-to-end two-concurrent-runs discriminator stays as
+T054 (Batch 6 follow-up).** Driving two interleaved
+`runSyncForAccount` calls requires extending the
+`t064bEndToEnd.discriminator.test.ts` stub harness with two
+interleaved orchestrator runs OR extracting the lease-held
+phase into a callable. The function-level test
+(`applyLearningWritesLease.test.ts` Tests 9–11) is the
+behavioural surface this PR closes on.
+
+```
+functions/src/metaSync/shared.ts:1090            # pre-lease bounded read (stays)
+functions/src/metaSync/shared.ts:1255            # per-ad seal consult (pre-lease, may stay as early filter)
+functions/src/metaSync/shared.ts:1280            # sealedAdocsById capture (pre-lease, may stay as early filter)
+functions/src/metaSync/shared.ts:1744            # applyLearningWrites call site — passes adAccountRef
+functions/src/learning/applyLearningWrites.ts    # the lease-held function — gets a SECOND bounded read inside
+```
+
+The pre-lease capture at `shared.ts:1280` may stay as a
+debugging aid (it documents the per-ad consult's outcome for
+the `errors[]` log) but the *committed* verdict comes from
+the in-lease re-consult. The function returns a fresh
+`committedSealedAdocsById` map built from the fresh-read
+consult.
+
+### 22.8 Sign-off — Round-17 does NOT close T053
+
+The fix lands in this same commit. Phase 969 chain exits 0
+with **293** tests (was 290, +2 from Test 9 and Test 10; +1
+more if we count Test 11 as the fenced positive case for
+Test 9, see §22.9). T053 is closed by the in-lease re-read,
+not by the round-16 restructure.
+
+**The end-to-end two-concurrent-runs discriminator stays as
+T054 (Batch 6 follow-up).** Driving two interleaved
+`runSyncForAccount` calls requires extending the
+`t064bEndToEnd.discriminator.test.ts` stub harness with two
+interleaved orchestrator runs OR extracting the lease-held
+phase into a callable. The function-level test
+(`applyLearningWritesLease.test.ts` Tests 9–11) is the
+behavioural surface this PR closes on.

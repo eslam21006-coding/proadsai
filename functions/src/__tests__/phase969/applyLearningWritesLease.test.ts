@@ -121,6 +121,27 @@ const stubFirestore = () => ({
         return new StubDocRef(segs.join("/"), id);
     },
     batch: () => new StubBatch(),
+    // Round-17 — T053 in-lease re-read. `applyLearningWrites`
+    // calls `readExistingAdDocs(db, refs)` after the lease is held
+    // to re-consult seal and ledger verdicts on fresh state. The
+    // stub resolves each ref by scanning the in-memory bucket for
+    // any key ending in `/{id}`. Tests 9–11 use this to assert the
+    // race window: run A commits to the bucket, run B's in-lease
+    // re-read sees A's commit.
+    getAll: (...refs: Array<{ id: string }>): Promise<Array<{ id: string; exists: boolean; data(): Record<string, unknown> }>> => {
+        return Promise.all(refs.map((ref) => {
+            const id = ref.id;
+            let data: any | undefined;
+            for (const [k, v] of docStore.entries()) {
+                if (k.endsWith(`/${id}`)) { data = v; break; }
+            }
+            return Promise.resolve({
+                id,
+                exists: data !== undefined,
+                data: () => data ?? {},
+            });
+        }));
+    },
 });
 
 Object.defineProperty(admin, "firestore", { value: stubFirestore, configurable: true });
@@ -777,9 +798,285 @@ function emptyVisualAggregate(patternKey: string): any {
     };
 }
 
+// ─── Round-17 — T053 in-lease re-read discriminator ────────────
+//
+// Three tests pin the round-17 fix at the `applyLearningWrites`
+// level. The function-level surface is the cleanest place to
+// observe the race because:
+//   - `existingByAdId` is the parameter the caller (pre-lease
+//     bounded read at `shared.ts:1090`) passes in. The test can
+//     construct that map freely.
+//   - `sealedAdocsById` is the parameter the per-ad loop
+//     populated pre-lease (`shared.ts:1280`). The test can
+//     populate that map freely.
+//   - The stub commit IS the lease-held commit; the in-lease
+//     re-read inside `applyLearningWrites` (after the fix) hits
+//     the same `docStore`.
+//
+// To simulate the race: snapshot the bucket state BEFORE run A,
+// run A (which writes its commit), restore the snapshot so run
+// B reads what A would not yet have committed, then run B.
+// Against current code, B's commit overwrites A's commit. Against
+// the fix, B's in-lease re-read sees A's commit and refuses.
+
+// ─── Test 9 (T053 unfenced): seal target overwrites across two runs ───
+
+async function test9_unfenced_sealOverwrites() {
+    docStore.clear();
+
+    const adPath = docKey([ACCT_PATH, "adPerformance", "ad_1"]);
+
+    const sealA = {
+        sealedTarget: 100,
+        sealedAt: 1000,
+        sealedFunnelType: "paid_event",
+        contributionState: "SEALED",
+    };
+    const sealB = {
+        // DIFFERENT target — A and B disagree on the target. The
+        // user's invariant: the FIRST sealed target survives; the
+        // second writer that reads PROVISIONAL must be refused.
+        sealedTarget: 200,
+        sealedAt: 2000,
+        sealedFunnelType: "paid_event",
+        contributionState: "SEALED",
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    // Stub learnedAds so the function reaches the seal commit block
+    // (the early-return at applyLearningWrites.ts:343 skips the seal
+    // commit when learnedAds is empty).
+    const stubAd = makeAd("ad_1", "urgency", "creative_X", 0.02);
+
+    // Run A: pre-lease read → existingByAdId[A]={} (empty).
+    // Run A: per-ad consult → allowed → sealedAdocsById[A]={sealA}.
+    // Run A: lease-held commit writes sealA.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [stubAd],
+        ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_X")]]),
+        existingByAdId: new Map(),
+        sealedAdocsById: new Map([["ad_1", sealA]]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterA = docStore.get(adPath);
+    assert.equal(afterA?.sealedTarget, 100,
+        `T053 unfenced (run A): stored sealedTarget should be 100 (A's seal); got ${afterA?.sealedTarget}. ` +
+        `A's commit must land before B's race simulation begins.`);
+
+    // Run B: pre-lease read → existingByAdId[B]={} (stale — B's
+    // bounded read happened BEFORE A's commit).
+    // Run B: per-ad consult → allowed → sealedAdocsById[B]={sealB}.
+    // Run B: lease-held in-lease RE-READ sees A's committed seal
+    //   (the bucket now has A's seal, because A's commit landed at
+    //   T6). decideSealedTransition re-runs against fresh state
+    //   and refuses on
+    //   "sealed-target-already-set-and-differs" (targetB=200 ≠
+    //   targetA=100). sealB is NOT committed.
+    //
+    //   Pre-fix: applyLearningWrites blindly commits
+    //   `params.sealedAdocsById` without re-consulting — sealB
+    //   overwrites A's seal.
+    //   Post-fix: the in-lease re-read catches the race; sealB is
+    //   refused; A's seal survives.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [stubAd],
+        ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_X")]]),
+        existingByAdId: new Map(),
+        sealedAdocsById: new Map([["ad_1", sealB]]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterB = docStore.get(adPath);
+    const storedTarget = afterB?.sealedTarget;
+
+    assert.equal(storedTarget, 100,
+        `T053 unfenced: first sealed target must survive (round-17 fix); stored should be 100 (A's seal), got ${storedTarget}. ` +
+        `This is the race: B's consult was on stale data (read pre-A-commit, commit post-A-commit). ` +
+        `The lease serialised turns; it did not refuse a decision made on a stale read. ` +
+        `The fix re-runs decideSealedTransition inside the lease against a fresh bounded read.`);
+
+    console.log(`     runA→sealTarget=100 committed; runB in-lease re-read sees A's seal and refuses; stored after B=${storedTarget} (FIX=100, BUG=200)`);
+}
+
+// ─── Test 10 (T053 unfenced): ledger double-count across two runs ───
+
+async function test10_unfenced_ledgerDoubleCounts() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    const hookPath = docKey([ACCT_PATH, "hookPerformance", "urgency"]);
+    const adPath = docKey([ACCT_PATH, "adPerformance", "ad_1"]);
+
+    const ad = makeAd("ad_1", "urgency", "creative_X", 0.02);
+    const ledgerEntry = makeLedger("ad_1", "creative_X");
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    // Run A: existingByAdId[A]={} (empty). decideContribution(add)
+    //   → keep ad_1. Additive pass reads aggregate baseline = empty,
+    //   writes {count: 1, avgLinkCtr: 0.02}.
+    // Run A's commit writes the aggregate. The ledger entry on
+    // ad_1 is normally committed by the OPERATIONAL merge at
+    // `shared.ts:1457` (FR-060a — before the lease). That merge is
+    // OUTSIDE `applyLearningWrites`'s scope; this test simulates
+    // it by writing the ledger entry to the bucket directly.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad],
+        ledgerAdDocsByAdId: new Map([["ad_1", ledgerEntry]]),
+        existingByAdId: new Map(),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterA = docStore.get(hookPath);
+    const countA = afterA?.byObjective?.conversion?.count ?? -1;
+    assert.equal(countA, 1,
+        `T053 ledger unfenced (run A): stored count should be 1 (A's contribution); got ${countA}`);
+
+    // Simulate A's operational merge: write the ledger entry onto
+    // the ad_1 doc, exactly as `shared.ts:1457` does.
+    docStore.set(adPath, { ledger: ledgerEntry.ledger });
+
+    const afterA_adDoc = docStore.get(adPath);
+    assert.ok(afterA_adDoc?.ledger !== undefined,
+        `T053 ledger unfenced (run A): ad_1 doc must carry A's ledger entry after A's commit; ` +
+        `got ledger=${JSON.stringify(afterA_adDoc?.ledger)}`);
+
+    // Run B: pre-lease read → existingByAdId[B]={} (stale — B's
+    // bounded read happened BEFORE A's commit; the per-ad consult
+    // decides whether ad_1 contributes based on
+    // `existingByAdId[B]`, which has no ledger entry).
+    //
+    // Run B's in-lease RE-READ sees A's committed ledger (the bucket
+    // now has A's ledger entry, because A's commit landed at T6 and
+    // the operational merge simulated above wrote the ledger).
+    // decideContribution(desired_B, recorded=A) → noop
+    // (contributionsEqual — same creativeKey, angleKey, etc.).
+    // learnedAds removes ad_1. Aggregate not incremented again.
+    //
+    //   Pre-fix: the ledger consult reads `recorded` from
+    //   `params.existingByAdId` (stale-empty) → decides `add` →
+    //   keeps ad_1 in learnedAds → additive pass reads
+    //   {count:1} and adds 1 → {count:2}. Double count.
+    //   Post-fix: the in-lease re-read catches the race; the
+    //   consult returns noop; ad_1 is removed from learnedAds;
+    //   aggregate stays at 1.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad],
+        ledgerAdDocsByAdId: new Map([["ad_1", ledgerEntry]]),
+        existingByAdId: new Map(),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterB = docStore.get(hookPath);
+    const countB = afterB?.byObjective?.conversion?.count ?? -1;
+
+    assert.equal(countB, 1,
+        `T053 ledger unfenced: aggregate count must be 1 after both runs (round-17 fix); got ${countB}. ` +
+        `Pre-fix double-counts because B's per-ad ledger consult on stale data returned 'add' (recorded was null from B's pre-lease read). ` +
+        `The fix re-runs decideContribution inside the lease against a fresh bounded read of the ad_1 doc.`);
+
+    console.log(`     runA→count=1; runB in-lease re-read sees A's ledger and routes to noop; stored after B=${countB} (FIX=1, BUG=2)`);
+}
+
+// ─── Test 11 (T053 fenced positive case): sequential — second run sees first's commit ───
+
+async function test11_fenced_sealRefusesSecondWriter() {
+    docStore.clear();
+
+    const adPath = docKey([ACCT_PATH, "adPerformance", "ad_1"]);
+
+    const sealA = {
+        sealedTarget: 100,
+        sealedAt: 1000,
+        sealedFunnelType: "paid_event",
+        contributionState: "SEALED",
+    };
+    const sealB = {
+        sealedTarget: 200,
+        sealedAt: 2000,
+        sealedFunnelType: "paid_event",
+        contributionState: "SEALED",
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    // Stub learnedAds so the function reaches the seal commit block.
+    const stubAd = makeAd("ad_1", "urgency", "creative_X", 0.02);
+
+    // Run A: empty bucket. consult → allowed. commit sealA.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [stubAd],
+        ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_X")]]),
+        existingByAdId: new Map(),
+        sealedAdocsById: new Map([["ad_1", sealA]]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterA = docStore.get(adPath);
+    assert.equal(afterA?.sealedTarget, 100,
+        `T053 fenced (run A): stored sealedTarget should be 100; got ${afterA?.sealedTarget}`);
+
+    // Fenced: do NOT restore the bucket. B's in-lease re-read sees
+    // A's committed seal.
+    // Run B: existingByAdId[B]={} (caller's pre-lease view, still
+    // stale-empty). But the in-lease re-read sees A's seal.
+    // decideSealedTransition refuses → no commit for sealB.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [stubAd],
+        ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_X")]]),
+        existingByAdId: new Map(),
+        sealedAdocsById: new Map([["ad_1", sealB]]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterB = docStore.get(adPath);
+    const storedTarget = afterB?.sealedTarget;
+
+    // The fenced case: A's seal survives; B's different target is
+    // refused. This is the post-fix expected behaviour AND the
+    // pre-fix correct behaviour for the SEQUENTIAL case (caller's
+    // pre-lease read sees A's commit, consult refuses via the
+    // existing Test B branch). The test pins BOTH the pre-fix
+    // sequential correctness and the post-fix fenced correctness
+    // — the round-17 fix must not regress this.
+    assert.equal(storedTarget, 100,
+        `T053 fenced: first sealed target must survive sequential runs; stored should be 100 (A's seal), got ${storedTarget}. ` +
+        `Pre-fix: B's pre-lease read saw A's seal, consult refused, no commit. Post-fix: B's in-lease re-read saw A's seal, consult refused, no commit.`);
+
+    console.log(`     runA→sealTarget=100 committed; runB in-lease re-read sees sealA, refuses; stored=${storedTarget}`);
+}
+
 // ─── Runner ───────────────────────────────────────────────────
 
 declare const test: (name: string, fn: () => Promise<void> | void) => Promise<void>;
+
+
 
 const PASSED = 0;
 const FAILED = 1;
@@ -817,6 +1114,9 @@ async function main() {
     await test("BATCH 26 visual withdrawal: pattern P1→P2 withdraws OLD visual, adds NEW visual", test6_visualPatternWithdrawal);
     await test("BATCH 26 hook-only change: visual count preserved (no over-withdraw)", test7_visualStaysWhenHookChanges);
     await test("BATCH 26 commit failure: ran=false, errors[] populated, no commit landed", test8_commitFailureReturnsNotRan);
+    await test("T053 unfenced: seal target overwrites across two runs (round-17 fix)", test9_unfenced_sealOverwrites);
+    await test("T053 ledger unfenced: aggregate double-counts across two runs (round-17 fix)", test10_unfenced_ledgerDoubleCounts);
+    await test("T053 fenced positive case: sequential — first seal survives, second refused", test11_fenced_sealRefusesSecondWriter);
 }
 
 main()

@@ -57,7 +57,8 @@ import {
     isEligibleForEfficiency,
     type EfficiencyRow,
 } from "./efficiencyFigure.js";
-import { resolveCreativeSealedContext } from "./sealedContext.js";
+import { resolveCreativeSealedContext, decideSealedTransition, type AdSealFields, type WorkspaceFunnelType } from "./sealedContext.js";
+import { readExistingAdDocs } from "./boundedLedgerRead.js";
 
 // `DbLike` is the same loose contract the lease acquire accepts.
 // Kept loose here because the consumer-cast to `Parameters<...>` is what
@@ -344,6 +345,69 @@ export async function applyLearningWrites(
         return emptyResult;
     }
 
+    // Round-17 — T053 IN-LEASE RE-READ. The pre-lease bounded read at
+    // `shared.ts:1090+` populates `params.existingByAdId` BEFORE the
+    // lease is acquired. Two concurrent runs both reading
+    // PROVISIONAL state before either commits can both decide a
+    // seal transition and both decide a contribution — the second
+    // run's commit overwrites the first run's, because the lease
+    // serialises turns but does NOT refuse a decision made on a
+    // stale read.
+    //
+    // The fix: inside this function (which runs only between
+    // `acquireLearningLease` and `releaseLearningLease` — see
+    // `shared.ts:1603+` and `shared.ts:1717+`), do a SECOND
+    // bounded read over the same batch of ad ids. Re-run the
+    // `decideSealedTransition` consult and the
+    // `decideContribution` ledger consult against the fresh read.
+    //
+    //   - A row that another run sealed in the meantime now reads
+    //     SEALED on the fresh read; the consult refuses via the
+    //     existing `sealed-target-already-set-and-differs` branch.
+    //   - A row that another run contributed to now reads with a
+    //     recorded ledger entry; the consult returns `noop` and the
+    //     row is removed from `learnedAds` before the additive pass.
+    //
+    // The fresh read is bounded by `learnedAds.length` (the post-
+    // ledger-consult subset is smaller; the read uses the full
+    // pre-consult set for safety). FR-068's unbounded scan does NOT
+    // return — this is a by-ID read over exactly the contributing
+    // batch.
+    //
+    // The pre-lease consult at `shared.ts:1255` stays — it feeds the
+    // per-ad `errors[]` log line and the FR-070 failed-read gate —
+    // but its verdict is no longer what gets committed. The
+    // committed verdict is the one computed here.
+    let freshByAdId: Map<string, Record<string, unknown>> = new Map();
+    // Initialise freshByAdId from the caller's pre-lease read so
+    // fields the bounded read doesn't return (e.g. the eligibility
+    // walk's `sealedAt` / `sealedFunnelType` on rows the bounded
+    // read missed) still have a value. The bounded read below
+    // OVERRIDES entries that DO come back from the live store —
+    // those are the fresh values; the pre-lease values are
+    // superseded. FR-070's failed-read gate (in `shared.ts:1184`)
+    // is the production authority on which rows participate.
+    for (const [id, data] of params.existingByAdId.entries()) {
+        freshByAdId.set(id, { ...(data as Record<string, unknown>) });
+    }
+    try {
+        const dbLikeForRead = params.db as unknown as Parameters<typeof readExistingAdDocs>[0];
+        const refsForRead = params.learnedAds.map((ad) => ({ id: ad.adId }));
+        const boundedResult = await readExistingAdDocs(dbLikeForRead, refsForRead);
+        // Override the pre-lease entries with the live read.
+        for (const [id, data] of boundedResult.byId.entries()) {
+            freshByAdId.set(id, data);
+        }
+    } catch (e: unknown) {
+        // A failed bounded read inside the lease is non-fatal at
+        // the function level: it falls through to the same path as
+        // `existingByAdId` (the caller's pre-lease read), which
+        // has already gated on `failedLedgerReads`. The aggregate
+        // commit will use the live `existingHookDocs` /
+        // `existingVisualDocs` reads below.
+        params.errors.push(`in-lease re-read failed: ${(e as Error).message}`);
+    }
+
     try {
         // 1. Ledger consult — handles all four `decideContribution` outcomes.
         //
@@ -394,7 +458,15 @@ export async function applyLearningWrites(
             const ad = params.learnedAds[i];
             const ledgerAdDoc = params.ledgerAdDocsByAdId.get(ad.adId);
             const desired = ledgerAdDoc?.ledger as ContributionLedgerEntry | undefined;
-            const recorded = params.existingByAdId.get(ad.adId)?.ledger as ContributionLedgerEntry | undefined;
+            // Round-17 — T053: `recorded` reads from the in-lease
+            // fresh re-read, NOT from `params.existingByAdId`. The
+            // pre-lease read may be stale (the lease serialises
+            // turns but does not refuse decisions made on stale
+            // reads); the fresh read sees whatever another run
+            // committed in the meantime and routes the consult to
+            // `noop`, removing the row from `learnedAds` before the
+            // additive pass increments the aggregate.
+            const recorded = freshByAdId.get(ad.adId)?.ledger as ContributionLedgerEntry | undefined;
             const decision: DecideContributionOutcome = decideContribution(desired ?? null, recorded ?? null);
             if (decision.kind === "noop") {
                 params.learnedAds.splice(i, 1);
@@ -477,7 +549,9 @@ export async function applyLearningWrites(
             // the OLD patternKey.)
             for (let i = 0; i < withdrawalHookAds.length; i++) {
                 const wad = withdrawalHookAds[i];
-                const recorded = params.existingByAdId.get(wad.adId)?.ledger as ContributionLedgerEntry | undefined;
+                // Round-17 — T053: read from the in-lease fresh
+                // re-read (see comment on the ledger consult above).
+                const recorded = freshByAdId.get(wad.adId)?.ledger as ContributionLedgerEntry | undefined;
                 if (!recorded) continue;
                 const oldAngleKey = recorded.angleKey;
                 const oldPatternKey = recorded.patternKey;
@@ -556,10 +630,12 @@ export async function applyLearningWrites(
         // still be reachable when the creative's accrual crosses
         // the threshold on this sync.
         const eligibilityRows: EfficiencyRow[] = eligibilitySnapshot.map((ad) => {
-            const existing = params.existingByAdId.get(ad.adId);
+            // Round-17 — T053: read from the in-lease fresh
+            // re-read (see comment on the ledger consult above).
+            const existing = freshByAdId.get(ad.adId);
             return {
-                dayAccrual: existing?.dayAccrual ?? null,
-                sealedTarget: existing?.sealedTarget ?? null,
+                dayAccrual: (existing?.dayAccrual as EfficiencyRow["dayAccrual"]) ?? null,
+                sealedTarget: (existing?.sealedTarget as number | null | undefined) ?? null,
                 // Batch 5 wiring: carry `sealedAt` and `sealedFunnelType`
                 // through to the eligibility walk so
                 // `resolveCreativeSealedContext` (Batch 2) can pick the
@@ -569,9 +645,9 @@ export async function applyLearningWrites(
                 // fire. The bounded read at `shared.ts:1097` populates
                 // both fields on the `AdDoc`; the bounded read is the
                 // sole source of truth here.
-                sealedAt: existing?.sealedAt ?? null,
-                sealedFunnelType: existing?.sealedFunnelType ?? null,
-                adStatus: existing?.adStatus,
+                sealedAt: (existing?.sealedAt as number | null | undefined) ?? null,
+                sealedFunnelType: (existing?.sealedFunnelType as WorkspaceFunnelType | null | undefined) ?? null,
+                adStatus: existing?.adStatus as EfficiencyRow["adStatus"],
             };
         });
 
@@ -618,7 +694,9 @@ export async function applyLearningWrites(
                 const ad = eligibilitySnapshot[i];
                 const ck = ad.creativeKey ?? ad.adId;
                 if (ck !== creativeKey) continue;
-                const existingLedger = params.existingByAdId.get(ad.adId)?.ledger;
+                // Round-17 — T053: read from the in-lease fresh
+                // re-read (see comment on the ledger consult above).
+                const existingLedger = freshByAdId.get(ad.adId)?.ledger;
                 const writeVerdict = decideEfficiencyWrite(
                     existingLedger as { efficiencyContributed: boolean | undefined } | undefined,
                     fig.value,
@@ -764,9 +842,21 @@ export async function applyLearningWrites(
             for (const w of chunk) batch.set(w.ref, w.data, { merge: true });
             await batch.commit();
         }
-        // Round-16 — T053. Commit the per-ad seal transitions for
-        //   the rows whose `decideSealedTransition` verdict
-        //   permitted the transition. These writes land inside the
+        // Round-17 — T053 IN-LEASE SEAL CONSULT. The pre-lease
+        //   verdict in `params.sealedAdocsById` was decided on a
+        //   stale read; the in-lease re-read at the top of this
+        //   function (`freshByAdId`) is the authority. Re-run
+        //   `decideSealedTransition` against the fresh read for
+        //   every row whose pre-lease verdict was `allowed: true`.
+        //   A row that another run sealed in the meantime now
+        //   reads SEALED on the fresh read and the consult refuses
+        //   via the existing
+        //   `sealed-target-already-set-and-differs` branch —
+        //   the branch `sealedContext.test.ts:Test B` already
+        //   covers. Only rows still PROVISIONAL on the fresh read
+        //   are sealed.
+        //
+        // Round-16 — T053. The committed verdict lands inside the
         //   lease-held critical section (`applyLearningWrites`
         //   runs only between `acquireLearningLease` and
         //   `releaseLearningLease` in `runSyncForAccount`); the
@@ -786,7 +876,7 @@ export async function applyLearningWrites(
         //   1565 stand; nothing else is touched). The seal sub-
         //   object is wholesale replaced — fine, because the
         //   in-memory value carries only the seal fields (it came
-        //   from `sealVerdict.fields` at `shared.ts:1255`, never
+        //   from the in-lease consult's verdict, never
         //   the full adDoc).
         //
         //   Lease-refused run: this function is only called inside
@@ -794,7 +884,44 @@ export async function applyLearningWrites(
         //   refused-run early return at `shared.ts:1636` returns
         //   BEFORE this call, so the refused run never writes the
         //   seal — the invariant holds.
-        const sealWritesMap = params.sealedAdocsById ?? new Map<string, import("./sealedContext.js").AdSealFields>();
+        const committedSealedAdocsById = new Map<string, AdSealFields>();
+        const preLeaseSealed = params.sealedAdocsById ?? new Map<string, AdSealFields>();
+        for (const [adId, fields] of preLeaseSealed.entries()) {
+            // Re-build a `SealedContext` from the pre-lease verdict's
+            // fields. The verdict's `didTransition: true` branch
+            // sets all four fields; on refusal the adId is NOT in
+            // the pre-lease map (per `shared.ts:1280`).
+            if (fields.sealedTarget === undefined || fields.sealedTarget === null) continue;
+            if (fields.sealedAt === undefined || fields.sealedAt === null) continue;
+            if (fields.sealedFunnelType === undefined || fields.sealedFunnelType === null) continue;
+            const freshData = freshByAdId.get(adId) ?? {};
+            const freshSealed = {
+                sealedTarget: (freshData.sealedTarget as number | null | undefined) ?? null,
+                sealedAt: (freshData.sealedAt as number | null | undefined) ?? null,
+                sealedFunnelType: (freshData.sealedFunnelType as WorkspaceFunnelType | null | undefined) ?? null,
+            };
+            const newResolution = {
+                sealedTarget: fields.sealedTarget as number,
+                sealedAt: fields.sealedAt as number,
+                sealedFunnelType: fields.sealedFunnelType as WorkspaceFunnelType,
+            };
+            const verdict = decideSealedTransition(freshSealed, newResolution);
+            if (verdict.allowed) {
+                committedSealedAdocsById.set(adId, verdict.fields);
+            } else {
+                // In-lease consult refused (e.g. another run
+                // committed the same ad with a different target
+                // between the bounded read and the lease acquire).
+                // The pre-lease verdict is overruled; log the
+                // refusal and skip the commit.
+                params.errors.push(
+                    `seal_refused (in-lease) adId=${adId} reason=${verdict.reason} ` +
+                    `fresh=${freshSealed.sealedTarget ?? "null"} ` +
+                    `attempted=${newResolution.sealedTarget}`,
+                );
+            }
+        }
+        const sealWritesMap = committedSealedAdocsById;
         for (let i = 0; i < sealWritesMap.size; i += chunkSize) {
             const entries = Array.from(sealWritesMap.entries()).slice(i, i + chunkSize);
             if (entries.length === 0) break;
@@ -803,10 +930,10 @@ export async function applyLearningWrites(
                 // Strip undefined / null-valued fields so the merge
                 // doesn't carry a `null` value across the merge
                 // (Round-15 fix on the operational path applies the
-                // same discipline here). `decideSealedTransition`'s
-                // `didTransition: true` branch only sets the four
-                // fields; on refusal, `params.sealedAdocsById` does
-                // not contain the adId.
+                // same discipline here). The in-lease consult
+                // populates `committedSealedAdocsById` only with
+                // `verdict.fields` from a refusal-free run; all four
+                // fields are present.
                 const cleaned: Record<string, unknown> = {};
                 if (fields.sealedTarget !== undefined && fields.sealedTarget !== null) cleaned.sealedTarget = fields.sealedTarget;
                 if (fields.sealedAt !== undefined && fields.sealedAt !== null) cleaned.sealedAt = fields.sealedAt;
