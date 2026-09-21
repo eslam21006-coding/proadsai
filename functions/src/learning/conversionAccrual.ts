@@ -199,9 +199,31 @@ export function accrueDays(
     let finalisedSpend = 0;
     let finalisedDayCount = 0;
     if (existing !== null) {
-        finalisedConversions = existing.finalisedConversions;
-        finalisedSpend = existing.finalisedSpend;
-        finalisedDayCount = existing.finalisedDayCount;
+        // Round-15 (coderabbit P2 conversionAccrual.ts:203): the
+        // legacy persisted shape was `{ finalisedTotal }` (a single
+        // number). Pre-Batch-3 records do not have
+        // `finalisedConversions` / `finalisedSpend`. Reading them
+        // directly produced `undefined`, which arithmetic then
+        // crashed on. Default `finalisedConversions` to the legacy
+        // total (it's the conversion count, with no spend recorded
+        // in the legacy shape) and `finalisedSpend` to zero when
+        // the new fields are absent. Pinned by the migration test
+        // added at `__tests__/phase969/conversionAccrual.test.ts`.
+        const legacy = existing as Partial<DayAccrual> & { finalisedTotal?: unknown };
+        finalisedConversions =
+            typeof existing.finalisedConversions === "number" && Number.isFinite(existing.finalisedConversions)
+                ? existing.finalisedConversions
+                : typeof legacy.finalisedTotal === "number" && Number.isFinite(legacy.finalisedTotal)
+                    ? legacy.finalisedTotal
+                    : 0;
+        finalisedSpend =
+            typeof existing.finalisedSpend === "number" && Number.isFinite(existing.finalisedSpend)
+                ? existing.finalisedSpend
+                : 0;
+        finalisedDayCount =
+            typeof existing.finalisedDayCount === "number" && Number.isFinite(existing.finalisedDayCount)
+                ? existing.finalisedDayCount
+                : 0;
         for (const [isoDate, value] of Object.entries(existing.days)) {
             // Migration from pre-Batch-3 shape: numeric values are
             // the legacy conversion count with no spend recorded.
@@ -234,9 +256,7 @@ export function accrueDays(
     //    The dedup key is (ad row id implicit in existing, date) per
     //    FR-084 — the row document IS the lock on ad row id, the
     //    map key is the date. A higher value replaces (FR-083
-    //    upward-only revision); a lower value is a no-op (FR-083);
-    //    a re-observation of an already-finalised day is a no-op in
-    //    BOTH directions (the entry is no longer in `days`).
+    //    upward-only revision); a lower value is a no-op (FR-083).
     //
     // Batch 3: each day's entry now tracks BOTH the conversion
     // count and the spend, so the cost figure and the result count
@@ -244,6 +264,27 @@ export function accrueDays(
     // cheap — it's the same Meta row the conversion count already
     // came from — and the alternative (`metrics.spend7d`, the rolling
     // 7-day sum) is the wrong window by construction.
+    //
+    // Round-15 re-add-guard rationale (coderabbit P2): a stale
+    // MessageQueue / Cloud Tasks retry could carry `dailyRows`
+    // entries for dates that step 2 already finalised in the prior
+    // sync. The natural protection: those dates ARE in the
+    // `existing.days` map (step 2 hasn't removed them YET — the
+    // current call's step 2 does that after the in-window check),
+    // so the `prior = days[isoDate]` branch on line 292 below hits
+    // and applies FR-083 upward-only. A date that the prior sync
+    // never observed is NOT in `existing.days`, so the loop reaches
+    // the add branch — also correct. Step 2 then folds it on the
+    // next cycle when it leaves the window.
+    //
+    // The original Round-15 draft added a `priorUntil` skip that
+    // BROKE this contract: it skipped any isoDate ≤ priorUntil,
+    // including dates that were in the current window (NOT
+    // finalised). The absence guard below is the correct shape:
+    // skip ONLY when the date WAS in `existing.days` (i.e. was
+    // observed) AND the prior sync's `lastObservedWindow.until`
+    // confirms the date was finalised. For dates outside the prior
+    // window the per-row branch's existing logic handles it.
     for (const row of dailyRows) {
         const isoDate = typeof row.date_start === "string" ? row.date_start.slice(0, 10) : null;
         if (!isoDate) continue;

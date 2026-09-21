@@ -501,3 +501,20 @@ This is a **read-only investigation**, per the owner's instruction ("write no fi
 - Phase 4 Batch 3 is paused.
 - The fix is documented at section §5.3 (the read site needs a `workspaceId` filter on the auto-restore; the path-level / query-level trade is the fix author's call, both are sound).
 - The defect is in `src/App.tsx:4567-4648` and `src/App.tsx:439-451` (and the symmetric `getAllProjectsFromDB` at `src/App.tsx:360-373`). Nothing in the backend needs to change.
+
+> **Round-15 fix (coderabbit review §13 workspace-isolation line 400,
+> 449):** the defect has been **closed by `d8d94c5`** (Phase 4
+> Batch 3 — auto-restore removal) in this same PR. The owner locked
+> decision §11.4 #1 in favour of "remove the global most-recent
+> auto-restore entirely — every session starts blank at step 1",
+> which renders §4.4's "in scope (broken): auto-restore at
+> `src/App.tsx:4567-4648`" **moot**. The IndexedDB workspaceId
+> migration question at §4.4 #2 is moot for the same reason
+> (IndexedDB no longer participates in the restore). The
+> autosave's `resolvedWorkspaceId` chain is preserved as-is and is
+> the right contract for the user-initiated paths (sidebar
+> `loadProject`, `handleStartDesign`, etc.). The remaining
+> constraints — the rule at `firestore.rules:53-58` granting
+> team members `read, write` to `users/{ownerUid}/projects`, and
+> `allowedWorkspaceIds === "ALL"` per FR-004 — are documented
+> design choices that survive the fix.

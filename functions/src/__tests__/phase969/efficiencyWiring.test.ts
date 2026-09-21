@@ -492,6 +492,15 @@ async function test4_ledgerWriteCommittedToDocStore() {
         emptyHookAaggregate("urgency"),
     );
 
+    // Round-15 (item 2): seed the per-ad docs with an interleaved
+    // operational-field write BEFORE `applyLearningWrites` runs, so
+    // Test 4 also pins the "narrowed merge preserves operational
+    // field" invariant. The seeded value `cpm3d: 99` stands in for
+    // any interleaved change (another runSyncForAccount, online
+    // session write, etc.). The narrowed merge must NOT overwrite it.
+    docStore.set(docKey([ACCT_PATH, "adPerformance", "ad_1"]), { cpm3d: 99 });
+    docStore.set(docKey([ACCT_PATH, "adPerformance", "ad_2"]), { cpm3d: 99 });
+
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
 
@@ -515,14 +524,14 @@ async function test4_ledgerWriteCommittedToDocStore() {
         errors: [],
     });
 
-    // CodeRabbit (Round 14): the per-ad adPerformance doc must reflect
-    // the walked `efficiencyContributed: true` value after the
-    // chunked commit. The mutate-and-commit path replaces the entire
-    // adDoc (Firestore `set` with merge: true preserves top-level
-    // fields outside `ledger` but deep-merges the top level; the
-    // `ledger` subdoc is replaced wholesale — fine here because the
-    // mutation only flips two keys and the rest is the pre-existing
-    // ledger state).
+    // CodeRabbit (Round 14, Round 15): the per-ad adPerformance doc
+    // must reflect the walked `efficiencyContributed: true` value
+    // after the chunked commit. Round 15 narrowed the write to
+    // `{ ledger: ... }` so an operational field changed between T1
+    // (upstream operational commit) and T2 (this commit) is NOT
+    // silently overwritten by stale data — we assert the invariant
+    // below by seeding the doc with a pre-existing `cpm3d: 99` and
+    // confirming it survives the second commit.
     const persisted1 = docStore.get(docKey([ACCT_PATH, "adPerformance", "ad_1"]));
     const persisted2 = docStore.get(docKey([ACCT_PATH, "adPerformance", "ad_2"]));
     assert.equal(persisted1?.ledger?.efficiencyContributed, true,
@@ -533,6 +542,69 @@ async function test4_ledgerWriteCommittedToDocStore() {
         `per-ad adPerformance write must commit the figure (got ${persisted1?.ledger?.efficiencyValue})`);
     assert.equal(persisted2?.ledger?.efficiencyValue, 1.0,
         `per-ad adPerformance write must commit the figure (got ${persisted2?.ledger?.efficiencyValue})`);
+    // Operational field survived the narrowed T2 merge — the seeded
+    // `cpm3d: 99` from the prior commit is preserved because the
+    // narrowed shape mentions only `ledger`. The Round-15 test
+    // that ORIGINALLY covered this invariant is the next one — this
+    // seed is here to detect any future regression that reverts
+    // the narrowing.
+    assert.equal(persisted1?.cpm3d, 99,
+        `narrowed ledger-only merge must preserve cpm3d=99 (got ${persisted1?.cpm3d})`);
+    assert.equal(persisted2?.cpm3d, 99,
+        `narrowed ledger-only merge must preserve cpm3d=99 (got ${persisted2?.cpm3d})`);
+}
+
+// ─── Test 4b: the operational-field-changed-between-commits invariant
+// is explicit here, with the seed set BEFORE `applyLearningWrites`
+// runs (simulating a prior operational write).
+
+async function test4b_operationalFieldChangedBetweenCommitsSurvives() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    // Seed the per-ad docs with an operational field set to 99.
+    // This stands in for an interleaved write (e.g. another
+    // `runSyncForAccount` invocation, or a client/online update)
+    // between T1 (upstream operational commit) and T2 (this
+    // function's lease-held commit). The narrowed merge must
+    // preserve the value.
+    docStore.set(docKey([ACCT_PATH, "adPerformance", "ad_3"]), {
+        cpm3d: 99,
+        ctrLink: 0.07,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    const ad3 = makeAd("ad_3", "creative_OPERATIONAL");
+    const ledgerDocs = new Map([
+        ["ad_3", { ledger: makeContribution("creative_OPERATIONAL") }],
+    ]);
+
+    await applyLearningWrites({
+        db: { batch: () => new StubBatch() },
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad3],
+        ledgerAdDocsByAdId: ledgerDocs,
+        existingByAdId: new Map([
+            ["ad_3", makeExisting("ad_3", 6, 90)],
+        ]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const persisted3 = docStore.get(docKey([ACCT_PATH, "adPerformance", "ad_3"]));
+    assert.equal(persisted3?.cpm3d, 99,
+        `narrowed merge must preserve cpm3d=99 (got ${persisted3?.cpm3d})`);
+    assert.equal(persisted3?.ctrLink, 0.07,
+        `narrowed merge must preserve ctrLink=0.07 (got ${persisted3?.ctrLink})`);
+    assert.equal(persisted3?.ledger?.efficiencyContributed, true,
+        `narrowed merge must commit ledger.efficiencyContributed=true (got ${persisted3?.ledger?.efficiencyContributed})`);
+    assert.equal(persisted3?.ledger?.efficiencyValue, 0.5,
+        `narrowed merge must commit the figure (got ${persisted3?.ledger?.efficiencyValue})`);
 }
 
 // ─── Test 5: noop-row preservation — the eligibility walk computes the
@@ -633,6 +705,7 @@ async function main() {
     await test("BATCH 5 wiring: source text contains the per-row write line + carve-out consumer", test2_sourceTextContainsWiring);
     await test("BATCH 5 carve-out: second run with efficiencyContributed: true does NOT overwrite", test3_secondWriteIsNoOp);
     await test("BATCH 5 persist: per-ad adPerformance commits the walked ledger mutation", test4_ledgerWriteCommittedToDocStore);
+    await test("BATCH 5 persist-2: per-ad adPerformance merge preserves pre-seeded operational fields (the narrowing invariant)", test4b_operationalFieldChangedBetweenCommitsSurvives);
     await test("BATCH 5 noop-cross: a noop row whose accrual crosses 5 still gets its figure", test5_noopRowStillGetsFigureAfterThreshold);
 }
 

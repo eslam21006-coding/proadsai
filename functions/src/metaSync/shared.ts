@@ -89,6 +89,7 @@ import {
 } from "../learningAggregates.js";
 import {
     decideSealedTransition,
+    type SealTransitionVerdict,
     resolveSealedContext,
     type WorkspaceFunnelType,
 } from "../learning/sealedContext.js";
@@ -1227,16 +1228,29 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         // discrimination).
         const existingFunnelType: WorkspaceFunnelType | null
             = (existingData?.sealedFunnelType as WorkspaceFunnelType | null | undefined) ?? null;
-        const sealVerdict = decideSealedTransition(
-            existingData === undefined
-                ? undefined
-                : {
-                    sealedTarget: existingData.sealedTarget ?? null,
-                    sealedAt: existingData.sealedAt ?? null,
-                    sealedFunnelType: existingFunnelType,
-                },
-            perSyncSealedContext,
-        );
+        // Round-15 fix: gate the seal consult on `!ledgerReadFailed`.
+        // When the bounded read failed we deliberately set
+        // `existingData = undefined` (line 1171), but the consult
+        // below treats that as "no prior state" and lets
+        // `decideSealedTransition` accept a fresh seal. The merged
+        // write then writes the new seal fields on top of
+        // whatever the doc actually had at the time of the failed
+        // read — including a previously-sealed row whose seal we
+        // cannot trust the failed read to have observed. Skipping
+        // the consult AND clearing `sealFields` below preserves
+        // the persisted seal across a transient failure.
+        const sealVerdict: SealTransitionVerdict = !ledgerReadFailed
+            ? decideSealedTransition(
+                existingData === undefined
+                    ? undefined
+                    : {
+                        sealedTarget: existingData.sealedTarget ?? null,
+                        sealedAt: existingData.sealedAt ?? null,
+                        sealedFunnelType: existingFunnelType,
+                    },
+                perSyncSealedContext,
+            )
+            : { allowed: false, reason: "sealed-target-already-set-and-differs" };
         const sealFields = sealVerdict.allowed ? sealVerdict.fields : {};
         if (!sealVerdict.allowed) {
             // One line per refusal, deduplicated by adId within the
@@ -1350,11 +1364,32 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 // parent-level pauses by design (effective_status is
                 // deferred, FR-085 accepted cost).
                 adStatus: ad.status ?? null,
-                // Batch 2 (T028) — the FR-005c-guard verdict for this
-                // row. The discriminator includes these in `baseDoc`
-                // only when the guard permitted the transition; the
-                // failure case leaves the fields absent (empty `{}`)
-                // and lets the merge preserve the prior values (FR-070).
+                // Round-15 (chatgpt-codex P2 — serialize the sealed transition):
+                //     DEFERRED to Batch 6 / T053. The seal fields
+                //     joining the operational merge at line 1378/1547
+                //     before the per-account lease acquire creates a
+                //     race window for two concurrent `runSyncForAccount`
+                //     calls (Cloud Tasks fan-out path): both can read
+                //     existingData as PROVISIONAL, both can accept a
+                //     seal, and the last write wins even when settings
+                //     change between reads. The correct fix is to
+                //     move the seal-decide step inside the
+                //     lease-held critical section that already runs
+                //     `applyLearningWrites` (the per-account lease at
+                //     line 1599+ is FR-060a's invariant — both
+                //     writers cannot both hold it). The minimal
+                //     restructuring has shape:
+                //       1. Build a `sealedAdocsById` map during the
+                //          per-ad loop carrying the new seal fields
+                //          keyed by adId.
+                //       2. Strip `sealFields` from `decision.adDoc`
+                //          at line 1372 (so the operational commit
+                //          lands without the seal).
+                //       3. Pass `sealedAdocsById` to
+                //          `applyLearningWrites` and add a `sealWrites`
+                //          list to its lease-held chunked commit.
+                //     Stays in `applyLearningWrites` for Batch 6 —
+                //     current code is unchanged from Batch 2.
                 sealFields,
                 verdict: {
                     verdict: verdictResult.verdict,

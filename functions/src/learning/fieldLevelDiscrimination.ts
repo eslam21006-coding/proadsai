@@ -257,10 +257,17 @@ export function decideAdWrite(input: DecideAdWriteInput): DecideAdWriteResult {
         // overwrite the prior seal. The merge write semantics keep the
         // existing fields intact when these are omitted, which is what
         // FR-070's field-level discrimination was designed for.
-        sealedTarget: sealFields?.sealedTarget ?? null,
-        sealedFunnelType: sealFields?.sealedFunnelType ?? null,
-        sealedAt: sealFields?.sealedAt ?? null,
-        contributionState: sealFields?.contributionState ?? null,
+        // Round-15 fix: omit the four sealed fields wholesale when
+        // `sealFields` is empty (i.e. when `decideSealedTransition`
+        // returned a refusal). The previous shape put explicit
+        // `null` into each, and the merge write top-level merge
+        // (Firestore `set(ref, data, { merge: true })`) writes
+        // each provided field — including a `null` value, which
+        // CLEARS the persisted seal. A later sync could then
+        // seal the row against a different target and defeat FR-005c's
+        // one-way guard. Spreading `sealFields` (or nothing) preserves
+        // the persisted values via the merge semantics.
+        ...(sealFields ?? {}),
     };
 
     const adDoc: AdDoc = includeLinkingFields

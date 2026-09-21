@@ -673,7 +673,29 @@ export async function applyLearningWrites(
                 if (ledgerAdDoc.ledger.efficiencyContributed !== true) continue;
                 ledgerWrites.push({
                     ref: params.adAccountRef.collection("adPerformance").doc(ad.adId),
-                    data: ledgerAdDoc as unknown as Record<string, unknown>,
+                    // Round-15 review (item 2): narrow the data to the
+                    // `ledger` path only. The previous shape passed
+                    // the FULL `decision.adDoc` object so the merge
+                    // write would overwrite EVERY top-level field
+                    // (cpm3d, ctrLink, etc.) with the in-memory
+                    // snapshot from T1 — the upstream operational
+                    // commit. Today the values match (nothing
+                    // between T1 and T2 mutates the doc), but a
+                    // future interleaved write (another
+                    // `runSyncForAccount` for the same ad, or a
+                    // client/online change to operational fields)
+                    // would be silently overwritten by stale data.
+                    // With the narrowed shape the merge skips
+                    // operational fields entirely; the `ledger`
+                    // subdoc is wholesale-replaced, but the in-memory
+                    // ledger carries every original field plus the
+                    // two flipped flags, so the replacement is
+                    // lossless. The discriminator test
+                    // `efficiencyWiring.test.ts:4` constructs an
+                    // adDoc with `cpm3d: 99`, mutates the
+                    // operational field between T1 and T2, and
+                    // asserts the merged doc still carries `99`.
+                    data: { ledger: ledgerAdDoc.ledger } as unknown as Record<string, unknown>,
                 });
             }
         }

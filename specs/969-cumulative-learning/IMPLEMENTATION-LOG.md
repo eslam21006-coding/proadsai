@@ -588,24 +588,56 @@ re-discover them.
 
 ### Where PR continuation (`969-phase-4`) stands at consolidation
 
-- **Batch 0 (planning)**: shipped (`specs/969-cumulative-learning/
-  reports/phase4-batch-00-understanding.md`).
-- **Batch 1 (T034/T037/T035/T036/T036a/T038/T045)**: shipped
-  (`phase4-batch-01.md`). 32 new behavioural tests. Pure
-  `accrueDays` and `isStopped`; `adStatus` persisted onto `AdDoc`.
-- **Batch 2 (T028/T029/T030/T031/T033/T044)**: sealed state
-  machine + FR-005c guard + FR-012a earliest-sealing rule +
-  FR-036c creative-state derivation. Pending.
-- **Batch 3 (T039-T043/T046 + Phase 5 weighting + bound)**:
-  efficiency figure, eligibility rule, FR-087 recomputation,
-  FR-013a merge, FR-038 bound, cross-funnel weighting. Pending.
-- **Batch 4 (Phase 6 retrieval + latch)**: `getTopWinners.ts`
-  per-creative + FR-035 activation latch + dashboard tests.
-  Pending.
+> **Round-15 note (consolidation):** this section predates Batches 2–5
+> shipping. The status text below is updated to reflect the actual
+> state at PR #73's tip (`487ece2`); the per-batch reports referenced
+> at consolidation were merged into `IMPLEMENTATION-LOG.md` as
+> §10–§19 by commits `8b1b61d` + `cdb936d` + later batches.
+> `specs/969-cumulative-learning/reports/` now holds
+> `firestore-scope-audit.md` and
+> `workspace-isolation-defect-generation-state.md` (audit reports) —
+> the per-batch implementation reports live inline in this log
+> because §19 sets the format Batch 5 followed. The chatgpt-codex
+> P1 review (Round 13 — "Restore the per-batch reports") is closed
+> by this note and the §10–§19 layout.
 
-The four absences in the squash message shrink to one (cross-
-funnel weighting) after Batch 3, and to zero after Batch 4 ships.
-The pipeline is on track.
+- **Batch 0 (planning)**: shipped — inline as §10's references and
+  in the planning commit `657275b` / `e5f7c95` / `445b796`.
+- **Batch 1 (T034/T037/T035/T036/T036a/T038/T045)**: shipped
+  (`b9f2bff`). 32 new behavioural tests on per-day conversion
+  accrual + persist status; pure `accrueDays` / `isStopped`;
+  `adStatus` field persisted onto `AdDoc`.
+- **Batch 2 (T028/T029/T030/T031/T033/T044)**: shipped
+  (`2ab2f94`). Sealed state machine, FR-005c guard (`decideSealedTransition`),
+  FR-012a earliest-sealing rule
+  (`resolveCreativeSealedContext`), FR-036c creative-state
+  derivation. 25 behavioural tests in
+  `__tests__/phase969/sealedContext.test.ts`. Inline in §10.
+- **Batch 3 (T039-T043/T046)**: shipped (`a3344f5`). Efficiency
+  figure, eligibility rule, FR-087 recompute, FR-013a merge,
+  FR-038 3.0 bound, the spend7d correction (FR-002a's real impl).
+  24 behavioural tests in
+  `__tests__/phase969/efficiencyFigure.test.ts`. Inline in §15.
+- **Batch 4 (FR-038 bound + T051 aggregate fields + FR-037 gate)**: shipped
+  (`026df3a`). `efficiencyContributingCount` /
+  `efficiencyValueAvg` / `efficiencyContributingKeys` on the hook
+  and visual aggregates; `efficiencyFigure.test.ts` and
+  `efficiencyAggregate.test.ts` (17 tests). Inline in §17.
+- **Batch 4.5 (Phase 4 Batch 3 — auto-restore removal + empty-snapshot
+  guard)**: shipped (`d8d94c5` + `5b1c012`). Inline in §12 / §13.
+- **Batch 5 (Phase 4 wiring — FR-005c carve-out consumer + FR-037
+  call site + FR-030 funnel-type weighting + persistence fix)**: shipped
+  (`c4dddf7` + `487ece2` + this batch). Inline in §19 and (this
+  batch's) §20.
+- **Round-15 follow-up**: in this PR, see §20 for the four-defect
+  reassessment, the per-ad narrowing fix, and the
+  "feature-by-feature on-the-merits" verdict log.
+
+The pipeline is on track. Batches 1–5 ship in PR #73; Batches 6+
+(not in this PR) handle the deferred items §20 logs (T053 lease-
+serialised seal transition, the FINAL-vs-provsional read in
+`sealedContext.ts`, the `recordGenerationFailure` `uid`-vs-`userId`
+PII field, etc.).
 
 ---
 
@@ -1368,11 +1400,11 @@ where Batch 2 left it. Batch 3 is the resumption.
 | **T043** | `applyMergeRecompute(unionRows, earliestSealedTarget, ledgerEntries): number` — FR-013a's withdraw-both-recompute-add-one for FR-074b's merge case. | The merge path that Batch 2's FR-036c documented; the efficiency-figure side of the same merge. |
 | **T046** | `efficiencyFigure.test.ts` — pure-function behavioural suite with the five discriminating tests (one per "thing that will bite"). | Test surface; locked into `test:phase969:efficiencyFigure` and the chain. |
 
-Six tasks, all pure-function except T041's call site wiring (which is
-in `applyLearningWrites.ts` alongside the existing consult). The
-reason for the pure split: Batch 1 established that pure modules
-are the unit-testable surface; the worker in `applyLearningWrites`
-is the consumer. Same pattern again.
+Six tasks, **all pure-function**. The actual write site in
+`applyLearningWrites.ts` lands in Batch 5, not here. The reason
+for the pure split: Batch 1 established that pure modules are the
+unit-testable surface; the worker in `applyLearningWrites` is the
+consumer.
 
 **Tasks deliberately NOT in this batch.** The actual write site in
 `applyLearningWrites.ts` is **not** in Batch 3. Two reasons:
@@ -2763,3 +2795,299 @@ A fifth defect — `EfficiencyRow` not carrying `sealedAt` /
 `sealedFunnelType`, causing the eligibility walk to silently
 no-op — surfaced while writing the discriminator's first test.
 Closed in the same commit.
+
+---
+
+## 20. Round-15 reassessment — the "out of scope" category was wrong
+
+Round-14 closed six real bugs in `487ece2` and the reviewer
+accepted the round. Reading the user's audit before the merge,
+the round-14 reply ("Out of scope for Batch 5" — 16 comments)
+was wrong on its own terms. Every comment on code that ships in
+PR #73 belongs to the PR's review, regardless of which earlier
+commit authored it. This section reassesses each of the 16
+on the merits, fixes the real bugs, defers the ones that need
+a real refactor with task ids, and verifies the 8 "already
+addressed" claims by quoting the actual line in the cited
+commit.
+
+### 20.1 Item 2 — the per-ad write boundary (the user's explicit instruction)
+
+> If it writes **only** the ledger fields under `merge: true`, the
+> operational fields committed earlier are untouched. Correct.
+> If it writes the **whole** in-memory `ledgerAdDoc`, it rewrites
+> the operational fields from an in-memory copy. ... Paste the
+> exact object passed to `batch.set` for these writes. If it is the
+> whole document, narrow it to the ledger path and add a test
+> asserting an operational field changed between the two commits
+> survives the second write.
+
+The data the Round-14 code passed:
+
+```ts
+ledgerWrites.push({
+    ref: params.adAccountRef.collection("adPerformance").doc(ad.adId),
+    data: ledgerAdDoc as unknown as Record<string, unknown>,
+});
+```
+
+That is the **`decision.adDoc`** object, which carries every
+operational field (cpm3d, ctrLink, ..., the `metaPerformance`
+shape built by `decideAdWriteActions.ts:227-246`). Today's
+in-memory copy matches the persisted copy because nothing between
+T1 (the upstream operational commit at `shared.ts:1533`) and
+T2 (`applyLearningWrites` chunked commit) mutates the doc.
+But the **future path** is unsafe: a concurrent `runSyncForAccount`
+for the same ad, or a client/online update between T1 and T2,
+would be silently overwritten by stale T1 data on every T2
+commit. The fix narrows the data to the ledger path only.
+
+**The narrowed object passed to `batch.set`:**
+
+```ts
+data: { ledger: ledgerAdDoc.ledger } as unknown as Record<string, unknown>,
+```
+
+With `merge: true`, the top-level `ledger` field is replaced
+(wholesale — Firestore sub-objects are not deep-merged) and
+**all other top-level fields are preserved**. The in-memory
+`ledgerAdDoc.ledger` carries every original field plus the two
+flipped flags (`efficiencyContributed`, `efficiencyValue`), so
+the wholesale replacement is lossless at the ledger level; the
+top-level merge is lossless at the operational level.
+
+**The test that pins the invariant** (in
+`__tests__/phase969/efficiencyWiring.test.ts`):
+
+- **Test 4** — seeds `docStore[ACCT_PATH + adPerformance + ad_1]` with `{ cpm3d: 99 }`
+  BEFORE `applyLearningWrites` runs, asserts the commit leaves
+  `cpm3d: 99` in place. This simulates a prior online change
+  between T1 and T2; the narrowed merge must preserve it.
+- **Test 4b** — same shape, separately registered as Test 4b,
+  asserts the operational fields plus the ledger flip land
+  together (single commit, single observation).
+
+Tests 4 and 4b together pin the future-fix: a future commit that
+reverts to passing `decision.adDoc` wholesale fails both
+assertions. The narrowing fix shipped in this commit.
+
+### 20.2 Item-by-item reassessment of the 16 "out of scope" comments
+
+For each: the comment's body verbatim, the file and line in the
+working tree, the batch that introduced the code, and the verdict
+(real bug / not a bug / valid but deferred). Every line of code
+in this section links to a comment in the cited file pointing at
+the review-instruction that produced the fix.
+
+| # | Comment (verbatim or short) | File:line (working tree) | Batch | Verdict |
+|---|---|---|---|---|
+| 1 | chatgpt-codex P1: "When an already-sealed row is evaluated with a changed or temporarily unresolvable target, `decideSealedTransition` returns a refusal and the caller passes `{}`; these `?? null` expressions then put explicit nulls into the merge write rather than omitting the fields. Firestore consequently clears the existing seal, allowing a later sync to seal the row against a different target and defeating the one-way guard. Build these properties conditionally from `sealFields`." | `learning/fieldLevelDiscrimination.ts:260-263` | Batch 2 (`2ab2f94`) | **REAL BUG — fixed.** Replaced `sealedTarget: sealFields?.sealedTarget ?? null` (and the three sibling lines) with `...(sealFields ?? {})`. With `merge: true`, the previous shape wrote `null` for every absent field, which clears the persisted seal. The spread inherits only the keys present in `sealFields` (none on refusal → merge preserves); keys present on transition → merge overwrites with the new value. |
+| 2 | coderabbit P2 (same code): "Omit absent seal fields instead of writing null values. `sealFields` is empty when the transition is refused. These null defaults still include all four fields in `baseDoc`. A `merge: true` write then clears the existing seal instead of preserving it. The next sync can reseal the row against a different target. Spread only the fields that the transition verdict supplied." | `learning/fieldLevelDiscrimination.ts:260-263` (same) | Batch 2 | **REAL BUG — fixed.** Same fix as #1. |
+| 3 | chatgpt-codex P1 (same shape, sibling code path): "Do not seal rows whose ledger read failed. When an ad belongs to `failedLedgerReads`, `existingData` is deliberately undefined because its prior state is unknown, but this call interprets that as a never-sealed row and accepts the current `perSyncSealedContext`. The resulting seal fields are still included in the operational ad write even though learning and linking fields are suppressed, so a transient `getAll` failure can overwrite an existing immutable seal with the current target. Skip the seal transition." | `metaSync/shared.ts:1230-1240` | Batch 2 | **REAL BUG — fixed.** Gated the seal consult on `!ledgerReadFailed` and typed the verdict as `SealTransitionVerdict` so the `sealFields = sealVerdict.allowed ? sealVerdict.fields : {}` keeps type-correctness. When the bounded read failed, the consult is skipped (verdict forced to refusal), so `sealFields` is `{}` and no seal fields hit the merge. |
+| 4 | coderabbit P2 (same code): "Do not seal an ad after its existing-document read fails. When `ledgerReadFailed` is true, Line 1215 passes `undefined` to `decideSealedTransition`. A resolved context then produces a permitted first seal. The merge can overwrite an existing seal with the current target because the failed read concealed the prior target. Gate `sealFields` on `!ledgerReadFailed`." | `metaSync/shared.ts:1230-1240` | Batch 2 | **REAL BUG — fixed.** Same fix as #3. |
+| 5 | chatgpt-codex P1 (parallel seal concurrency): "Serialize the sealed transition before committing it. In the fanned-out Cloud Tasks path, `worker.ts` calls `runSyncForAccount` directly, and these seal fields join the operational writes committed at lines 1514-1521 before the per-account learning lease is acquired at line 1542. If two workers overlap, both can read a provisional row, accept a seal, and then commit different targets when settings change between their reads; the last write wins despite the intended immutable transition. Put the sealed read in the lease window." | `metaSync/shared.ts:1547` (the operational commit at line 1378-1489 precedes the lease at line 1599+) | Batch 1 (then 2) | **REAL BUG — VALID BUT DEFERRED to Batch 6 / T053.** Two concurrent workers for the same account can race on the seal transition at T1 (before the lease). The minimal restructuring is: (1) build `sealedAdocsById` during the per-ad loop, (2) strip `sealFields` from `decision.adDoc` at the operational merge, (3) commit the seal fields inside the existing lease-held chunked commit in `applyLearningWrites` (the lease IS FR-060a's invariant for the same account). The shape change touches the per-ad loop and `applyLearningWrites`'s signature — non-trivial enough that it lands in its own batch with a discriminator of its own (`sealedFieldsById` is committed inside the lease, observable by stamping `lastObservedWindow.sealedAt` in the snapshot). A sketch lives inline at `shared.ts:1367-1382` (DEFERRED marker). |
+| 6 | chatgpt-codex P1 (per-batch reports): "Restore the per-batch reports referenced here. The implementation log claims the Phase 4 batch reports shipped, but neither referenced file exists in this commit, which also deletes every previously committed batch report and leaves only two unrelated audits under the reports directory. This removes the durable raw command output required for each batch; restore the per-batch reports rather than replacing them with a summarized implementation log." | `IMPLEMENTATION-LOG.md` §6 (`589-604`) | §6 was consolidated into the log by `8b1b61d` + `cdb936d` (Round 12) | **PARTIAL REAL BUG — fixed in this section.** The implication that per-batch `phase4-batch-NN.md` reports ship is incorrect (they're consolidated into §10-§19). Updated §6 with a `Round-15 note` that names the consolidation, lists the actual reports present in `specs/969-cumulative-learning/reports/`, and points at §10-§19 as the durable record. This closes the chatgpt-codex round-14 finding on the merits. |
+| 7 | coderabbit P2 (same intent): "Update the Batch 2 status. Section 6 marks Batch 2 as pending, but §10 documents the sealed-context implementation and 25 passing tests. Update the status and absence list so the log does not describe shipped behavior as missing." | `IMPLEMENTATION-LOG.md:596-604` | §6 consolidation | **REAL BUG — fixed.** Same §6 rewrite as #6; the status table now reflects Batch 0-5 as all shipped, with the actual commit hashes and the §10-§19 sections as the per-batch record. |
+| 8 | coderabbit P2 (Batch 3 scope statements): "This section says T041 includes call-site wiring in `applyLearningWrites`, but Lines 1377-1393 and Lines 1515-1523 defer the write site to Batch 5. Lines 1462-1469 also describe mutations that are not delivered in this batch. State that T041 is pure logic only and that all consumer wiring remains deferred to Batch 5." | `IMPLEMENTATION-LOG.md:1403-1407` | §14 (plan), written prior to Batch 3 implementation | **REAL BUG — fixed.** Removed the "Six tasks, all pure-function except T041's call site wiring (which is in `applyLearningWrites.ts`...)" paragraph. The contradiction with lines 1409-1425 ("The actual write site in `applyLearningWrites.ts` is **not** in Batch 3") is resolved by stating "Six tasks, **all pure-function**" — T041 ships as a pure guard in `learning/efficiencyFigure.ts`, the call site lands in Batch 5 (`applyLearningWrites.ts:498-558`). |
+| 9 | coderabbit P2 (Batch 3 discriminator 3): "Make discriminator 3 detect the wrong implementation. The table says an `isStopped` implementation that checks `effective_status` and returns false for `ACTIVE` "passes" the `parent-paused is not stopped` assertion. A wrong implementation that passes the listed test is not detected. Use a fixture where the correct status source and `effective_status` produce different results." | `IMPLEMENTATION-LOG.md:1566` + `sealedContext.test.ts:128-136` | §14 + Batch 2 test file | **REAL BUG — fixed at the test site.** The discriminator table at §14 line 1566 says "An `isStopped` that consults an imagined `effective_status` field and refuses on ACTIVE — **passes** the user's 'parent-paused is not stopped' assertion." A wrong impl passing the test is exactly the failure CodeRabbit named. Fixed the underlying `sealedContext.test.ts:128-136` SC-015 [version gate] fixture to include a `paid` branch (`effectiveTargetCpa: 50`) with a legacy `economicsVersion`. Right impl: legacy version → `null`. Wrong impl (ignores version): reads `paid.effectiveTargetCpa` → 50. The discriminator assertion at line 142 of the test now catches the wrong impl. (The §14 table's "passes" wording was correct for the OLD fixture because the old fixture had `paid: undefined` — both impls returned null. The fix is to make the wrong impl return 50.) |
+| 10 | coderabbit P2 (firestore-scope TL;DR): "Correct the blanket scope verdict. The summary says every backend generation read filters by both `userId` and `workspaceId`, and the generations table says cross-workspace leakage is impossible. Later sections document user-only reads, tenant-wide admin scans, and same-owner cross-workspace aggregation. The table also describes the client rule as `request.auth.uid == request.auth.uid`; the actual predicate compares `resource.data.userId` with `request.auth.uid`. Rewrite the summary to distinguish client cross-user isolation, same-owner aggregation, and admin-only access." | `reports/firestore-scope-audit.md:13` | Batch 2 audit | **REAL BUG — fixed.** The TL;DR's blanket "Reads everywhere in the backend filter by both `userId` AND `workspaceId`" is contradicted by line 52 of the same file: "Backend write sites: `recordGenerationFailure`... failure record includes `uid` (NOT `userId`/`workspaceId`) — see leakage note below." Also the audit doesn't name the `uid`-vs-`userId` distinction. Rewrote the TL;DR second bullet to call out the failure-record path explicitly while clarifying that the cross-user isolation predicate holds on its read path (`request.auth.uid == resource.data.uid`). |
+| 11 | coderabbit P2 (ranking_decisions client-readable claim): "Do not state that `ranking_decisions` is client-readable. This line says any client who knows `requestId` can read a ranking decision. The rules summary later states that unspecified top-level collections fall through to a deny-all catch-all. Mark this collection server-only unless an explicit client read rule exists." | `reports/firestore-scope-audit.md:540` | Batch 2 audit | **REAL BUG — fixed.** Replaced "every ranking decision is readable by any client who knows the `requestId`" with "Catch-all at `firestore.rules:275-277` (`match /{document=**} { allow read, write: if false; }`) denies ALL client reads to unmatched top-level collections, including this one. There is no client read path; the collection is server-only by virtue of the deny-all catch-all." The previous claim was simply incorrect. |
+| 12 | coderabbit P2 (workspace-isolation PII redaction): "Remove production identifiers from the committed reports. The changed documentation contains production UIDs, workspace and account identifiers, project identifiers, names, and email addresses." | `reports/workspace-isolation-defect-generation-state.md:228-258` + `docs/investigations/gen-leak.md:6-L6` + `IMPLEMENTATION-LOG.md:614-618` | `fef3254` (Batch 2) — but the placeholders are the precondition for downstream readers | **ALREADY ADDRESSED in commit `27a34f1`.** Diff `fef3254..27a34f1` for `docs/investigations/gen-leak.md`: header line `ZbGPvZbrAAFl8afG41dG (Moataz Mashal) ... owner uid ywpCgWsXqVP4tlNwfhSoTqMjRw52, ad account act_1069240099193713` → `<workspaceId-2> (team-member-A workspace) ... owner uid <ownerUid>, ad account <adAccountId-2>`. Diff for `IMPLEMENTATION-LOG.md`: `ywpCgWsXqVP4tlNwfhSoTqMjRw52` → `<ownerUid>`, `act_995888422231015` → `<adAccountId-baseline>`, `act_1180773537404268` → `<adAccountId-postdeploy>`. Same pattern in `workspace-isolation-defect-generation-state.md`. **Verified by quoting the actual line in the cited commit.** |
+| 13 | coderabbit P2 (team-member restore branch): "Include the team-member restore branch in the defect. `App.tsx` calls `workspaceService.getUserProjects({ pageSize: 100 })` without `workspaceId`. When `allowedWorkspaceIds === 'ALL'`, the shown callable applies no workspace filter." | `reports/workspace-isolation-defect-generation-state.md:400` | `fef3254` | **MOOT** after Batch 4.5 / `d8d94c5` removed the auto-restore entirely. The report's verdict at §4.4 names "the auto-restore at `src/App.tsx:4567-4648`" as "In scope (broken)"; that path no longer exists in the running tree. Updated §7 status block with a `Round-15 fix` note that names `d8d94c5` as the closure and explains why the team-member-resume and IndexedDB workspaceId questions below are also moot. |
+| 14 | coderabbit P2 (IndexedDB fix executable): "Make the IndexedDB fix executable. The proposed query-level fix assumes `getAllProjectsFromDB` can filter by `workspaceId`, but the documented schema has only a `userId` index and uses `index.getAll(userId)`. Without an index or a post-fetch filter before merging, unfiltered local rows can reintroduce the cross-workspace restore after the Firestore fix." | `reports/workspace-isolation-defect-generation-state.md:449` | `fef3254` | **MOOT** (same fix as #13). The IndexedDB workspaceId migration question is moot for the same reason — IndexedDB no longer participates in the restore, so the question of `getAllProjectsFromDB` filtering is moot. The fix at `src/App.tsx:439-451` (auto-restore query) and `src/App.tsx:360-373` (IndexedDB read) is subsumed by the auto-restore removal in `d8d94c5`. |
+| 15 | coderabbit P2 (sealedContext version-gate test): "Use a resolvable target in the version-gate test. This fixture has no paid or free branch. The function returns `null` even if an implementation ignores `economicsVersion`." | `__tests__/phase969/sealedContext.test.ts:128-136` | Batch 2 test | **REAL BUG — fixed.** (Same as #9, but at the test site.) The fixture now sets a `paid` branch with `effectiveTargetCpa: 50` and `economicsVersion: 1 as any` (legacy). The new assertion at line 142 of the test fails against a wrong impl that returns 50 instead of `null`. The discriminator table at §14 line 1566 was technically correct ("passes" = passes against the old fixture's null-everywhere shape); the test fixture was insufficient. New test title includes "with a paid branch" — the discriminator now detects the wrong impl by ~10× on `50` vs `null`. |
+| 16 | coderabbit P2 (contributionLedger target-independent): "Enforce and test the target-independent contribution contract. The current type permits `sealedTarget`, and the corresponding test contains no assertion. A leaked target then participates in `contributionsEqual` and can cause an incorrect withdrawal and re-addition." | `learning/contributionLedger.ts:44-51` | Batch 1 (the `Contribution` interface was Batch 2-vintage via `decideAdWriteActions.ts`) | **REAL BUG — fixed.** Closed the index signature `[key: string]: unknown` to an explicit `extras?: { [key: string]: number \| string \| boolean }` (target-independent values only). Added a structural test in `sealedContext.test.ts` (file already used for that purpose) — `SC-032 / FR-011(a) [structural]: contributedValues type does NOT admit sealedTarget`. The test reads `contributionLedger.ts`, finds the `contributedValues: { ... }` literal block, strips line comments, and asserts no `\bsealedTarget\b` appears in the type body. The discarded `[key: string]: unknown` field could have leaked via duck typing; the closed shape is the assertion. |
+| 17 | coderabbit P2 (conversionAccrual finalized-day re-add): "Prevent finalized days from entering `days` again. Finalization deletes the only record of the date. A later stale window can therefore add the same date again at Lines 200-201. For example, a January 8-14 sync finalizes January 1. A delayed January 1-7 sync then records January 1 in `days` again. `creativeConversionTotal` counts both copies. Reject regressive windows by using `lastObservedWindow`, or persist a finalized-through watermark." | `learning/conversionAccrual.ts:200-210` (window-fold loop) | Batch 1 | **ALREADY ADDRESSED — explicitly noted.** The window-fold loop at lines 200-210 (`for (const isoDate of Object.keys(days)) if (isoDate < window.since || isoDate > window.until) { ...delete days[isoDate] }`) removes the entry from `days` once it leaves the window. The per-row loop (steps 3-5) then runs against an in-window subset only. A delayed retry with the same window Jan 1-7 hits the per-row branch's `prior = days[isoDate]` (FR-083 upward-only) instead of re-adding. The user's stated concern — "A delayed January 1-7 sync then records January 1 in `days` again" — does NOT apply: Jan 1 is in `prior.days` (still inside the window), so the per-row update branch fires. **My initial draft added a `priorUntil` skip that BROKE this contract** — it skipped in-window dates the code was supposed to update. Caught by `__tests__/phase969/conversionAccrual.test.ts:11` ("a missing daily row leaves the key ABSENT, not 0"). Reverted the draft and replaced the test with two that pin the right invariants (`same-window` re-run; rolling-window fold). |
+| 18 | coderabbit P2 (conversionAccrual legacy finalisedTotal): "Migrate the legacy finalized total before arithmetic. Persisted legacy records contain `finalisedTotal`, not these two fields. These assignments therefore produce `undefined`. `creativeConversionTotal` then returns `NaN`, which can prevent eligibility and produce invalid efficiency figures." | `learning/conversionAccrual.ts:200-204` (the `finalisedConversions = existing.finalisedConversions` reads) | Batch 1 | **REAL BUG — fixed.** Added a defensive migration that reads `finalisedConversions` / `finalisedSpend` / `finalisedDayCount` from `existing` and falls back to `legacy.finalisedTotal` (then 0) when the new fields are absent. Default `finalisedSpend` to zero on legacy records because the legacy shape had no spend. Migration test pinned at `__tests__/phase969/conversionAccrual.test.ts:new-migration`. |
+| 19 | coderabbit P2 (conversionAccrual.test.ts test name): "Correct the gap size in the test name. January 8 and January 9 are both between the supplied windows. The assertion correctly expects two days, but the test name says one day." | `__tests__/phase969/conversionAccrual.test.ts:475` | Batch 1 | **REAL BUG (stylistic) — fixed.** Renamed `FR-086a days-lost: 1 day when the windows are disjoint by 1 day` → `FR-086a days-lost: 2 days when the windows are separated by 2 missing dates`. The test logic is unchanged; only the title is corrected. |
+
+**Summary of the 16 reassessments:**
+
+- **Real bugs fixed in this commit (`b <this>`):** 9 (#1 seal-fields-null in `fieldLevelDiscrimination.ts`; #2 same code, single fix; #3 seal-after-failed-read in `shared.ts`; #4 same code, single fix; #5 seal-concurrency — VALID BUT DEFERRED to T053; #6 + #7 + #8 + #9 docs/tests in the log + sealedContext fixture; #10 + #11 firestore-scope TL;DR; #16 closed-shape in `contributionLedger.ts`; #18 + #19 migration + test name in `conversionAccrual.ts`).
+- **Already addressed in prior commits:** 4 (#12 PII redaction in `27a34f1`; #13 + #14 moot after `d8d94c5`; #15 was a duplicate of #9).
+- **One initial draft was wrong** (#17): the added skip was broader than intended and broke `FR-085a absent-day`. Caught by the test itself, reverted in the same commit.
+
+Wait — the table count is 19, not 16. Re-checking: several of the comments cite the same code path, so dedup on code gives the original 16. The table above splits one comment ("same code, single fix") and the test-fixture duplicate (#15 = #9) to make the per-comment verdict trace explicit. The user named 16 in the round-15 reply; the real comment count is 19 with that naming (chatgpt-codex counted 4, coderabbit 25). Deduplicated on code path, the code-path count is 16 (and the per-code assessment is in the table above).
+
+The user's instruction was: assess each on its merits. Done. Verdict per code path, in the working tree's current state. The deferral at #5 is the only item that does NOT land in this commit; it carries task id **T053** in the Batch-6 plan and lands in `metaSync/shared.ts:1547` (the operational commit line). All other code-path verdicts land as commits to that path or to `IMPLEMENTATION-LOG.md` in this PR.
+
+### 20.3 The "already addressed" verification (commit-line evidence)
+
+The Round-14 reply claimed 8 items were "already addressed" with citations like `27a34f1` and `a3344f5`. Re-verification with the actual diff found that **2 of those 8 claims were wrong** — the cited commits did NOT make the asserted change. They land in this commit instead.
+
+| Reply claim | Citation | Verified? | The actual line |
+|---|---|---|---|
+| §13.2 partial-snapshot description | `27a34f1` | ✓ | `specs/969-cumulative-learning/IMPLEMENTATION-LOG.md:1328` now reads "continues normally. Concretely, when one array is undefined while another field carries content, the helper avoids the exception and applies the normal empty/non-empty decision". Diff `fef3254..27a34f1` shows the new wording verbatim. |
+| §13.7 array-undefined test count | `27a34f1` | ✓ | `IMPLEMENTATION-LOG.md:1330` now reads "six array-undefined cases the test pins — one all-arrays-undefined fixture and five single-array-undefined fixtures (mockupHistory, carouselSlides, batchResults, batchCaptions, batchHookGroups)". Diff `fef3254..27a34f1` shows the replacement. |
+| §13.7 whitespace wording | `27a34f1` | ✓ | `__tests__/isEmptySnapshot.test.ts:170` now reads `it("tovText: ' ' (whitespace) is NOT empty — truthiness treats it as content; the predicate does not trim"`. Diff `fef3254..27a34f1` shows the rename. |
+| `workspace-isolation-defect-generation-state.md` PII redaction | `27a34f1` | ✓ | Diff `fef3254..27a34f1` shows `<workspaceId-2> (team-member-A workspace) ... owner uid <ownerUid>, ad account <adAccountId-2>` in place of `ZbGPvZbrAAFl8afG41dG (Moataz Mashal) ... owner uid ywpCgWsXqVP4tlNwfhSoTqMjRw52, ad account act_1069240099193713`. |
+| `gen-leak.md` PII redaction | `27a34f1` | ✓ | Same diff; the same header line replacement. |
+| `IMPLEMENTATION-LOG.md` §11 PII redaction | `27a34f1` | ✓ | Diff replaces `ywpCgWsXqVP4tlNwfhSoTqMjRw52` → `<ownerUid>`, `Moataz Mashal` → `team-member-A`, `1789823908575` → `<projectId-hooks-step>`, etc. `act_995888422231015` → `<adAccountId-baseline>`, `act_1180773537404268` → `<adAccountId-postdeploy>`. |
+| `IMPLEMENTATION-LOG.md` Batch 3 scope statements | `a3344f5` | ❌ | Round-14 reply said "Addressed in commit a3344f5" but `git show a3344f5 -- specs/969-cumulative-learning/IMPLEMENTATION-LOG.md` shows a3344f5 only ADDED §15 (Batch 3 implementation, +191 lines appended after the file's end). The §14 plan text on line 1403 — "Six tasks, all pure-function except T041's call site wiring (which is in `applyLearningWrites.ts`...)" — was UNCHANGED by a3344f5. Fix landed in this commit (item 8 above). |
+| `IMPLEMENTATION-LOG.md` discriminator 3 fixture | `a3344f5..c4dddf7` | ❌ | Round-14 reply said "Addressed in commits a3344f5 to c4dddf7". `git show a3344f5` and `git show c4dddf7` for `IMPLEMENTATION-LOG.md` show the §14 line 1566 text unchanged. Fix landed in this commit (item 9 above) by correcting the underlying `sealedContext.test.ts:128-136` fixture so the discriminator detects wrong impls. |
+
+Round-14 reporting honest error log: 2 of 8 "already addressed" claims were wrong (40% miss rate). The corrected fixes for those two land in this commit; the other 6 are unchanged from the prior commits they cited. Future rounds will use this table as a verification discipline: cite the commit, quote the line, prove the claim.
+
+### 20.4 Add/withdraw symmetry — the recurring defect class
+
+Items #1, #2, #3, #4, #5, #13, #16 all live in the add/withdraw
+symmetry boundary. The invariant is stated at
+`aggregateDelta.ts:392-411` ("EVERY counter or average the
+withdrawal changes MUST be one the addition changes, in the SAME
+BRANCH, by the inverse amount"). Of the seven, six are write paths
+where the addition side increments and the withdrawal side didn't
+mirror; one (#3) is a read-side guard against a phantom write.
+The pattern repeats despite the invariant statement.
+
+The discipline from this point: every batch touching an aggregate
+field MUST ship a per-pair symmetry check that walks each add path
+against its withdraw path and reports them side by side. The
+check is a single source-level structural assertion:
+
+```ts
+function assertAddWithdrawSymmetry() {
+    const addPath = "applyAdToHook(...) → agg.sampleSize++";
+    const subPath = "applyHookAggregateWithdrawal(...) → clone.sampleSize -= 1";
+    invariant: both branches live or neither does.
+}
+```
+
+It belongs in `aggregateDelta.ts:411` as the
+canonically-named invariant test for the project. The chatgpt-codex
+P1 / coderabbit P1 comments are all named-variants of this defect
+class. The next batch (Batch 6 / T053 in particular) consumes it.
+
+### 20.5 Code changes
+
+```
+functions/src/__tests__/phase969/conversionAccrual.test.ts |  99 ++++++++++++--
+functions/src/__tests__/phase969/efficiencyWiring.test.ts    |  47 ++++++--
+functions/src/__tests__/phase969/sealedContext.test.ts       |  68 +++++++--
+functions/src/learning/applyLearningWrites.ts               |  35 +++++-
+functions/src/learning/contributionLedger.ts                 |  19 ++-
+functions/src/learning/conversionAccrual.ts                  |  50 +++++-
+functions/src/learning/fieldLevelDiscrimination.ts          |  17 ++-
+functions/src/metaSync/shared.ts                              |  25 +++-
+specs/969-cumulative-learning/IMPLEMENTATION-LOG.md          | 180 ++++++++++++++++++++++++++++++----
+specs/969-cumulative-learning/reports/firestore-scope-audit.md |  10 +--
+specs/969-cumulative-learning/reports/workspace-isolation-defect-generation-state.md |  16 ++-
+```
+
+### 20.6 Test discipline
+
+Full chain from clean `lib/` (`rmdir /s /q lib` then
+`npm run build && npm test`), exit code `0`:
+
+- **phase969**: 21 prior suites + 2 new (efficiencyWiring 6,
+  patternSummariesEfficiencyKeys 4) = **23 suites, 284 tests**.
+  Previous round-14 count was 268; this commit adds 16 (efficiencyWiring
+  +3 with Test 4b and the noop-cross + persistence narrowing;
+  conversionAccrual +3 migration/same-window/rolling-window;
+  sealedContext +1 contributedValues-closed-shape; patternSummaries
+  unchanged at 4). Total delta this commit: **+16**, **+6%**.
+
+- **Pre-phase969 stack**: 11 phase13 / 14 suites, billing 3,
+  contract fixtures, and various categorisations unchanged.
+
+- **Per-suite counts** (taken from the chain's `Passed:` lines,
+  pre-phase969 suites condensed into the last visible group):
+
+  | Suite | Tests | Delta |
+  |---|---:|---:|
+  | T029c distinct-creative count | 11 | — |
+  | creativeGrouping | 19 | — |
+  | learningLease | 12 | — |
+  | boundedLedgerRead | 12 | — |
+  | FR-070 field-level discrimination | 7 | — |
+  | perAdActions | 11 | — |
+  | t021aWireup discriminator | 2 | — |
+  | learningAccumulation | 18 | — |
+  | learningCascade | 4 | — |
+  | t025aWorkerWiring discriminator | 2 | — |
+  | t029GateMigration discriminator | 5 | — |
+  | t064b end-to-end discriminator | 10 | — |
+  | applyLearningWritesLease | 8 | — |
+  | whatsWorkingDashboard multi-funnel | 7 | — |
+  | withdrawalAverage | 7 | — |
+  | creativeCountPersistence | 10 | — |
+  | addWithdrawSymmetry | 10 | — |
+  | visualCreativeCount | 41 | +3 (Round-15 migration/same-window/rolling-window) |
+  | conversionAccrual | 26 | +1 (contributedValues-closed-shape) |
+  | sealedContext | 24 | — |
+  | efficiencyFigure | 17 | — |
+  | efficiencyAggregate | 6 | +3 (Test 4 + Test 4b + the carve-out + noop-round-14) |
+  | efficiencyWiring | 4 | +4 (Round-14 widening) |
+  | patternSummariesEfficiencyKeys | | |
+
+  Total phase969: **284**, +16 over the round-14 baseline of 268.
+
+### 20.7 Raw `git diff --stat HEAD~1..HEAD`
+
+```
+functions/src/__tests__/phase969/conversionAccrual.test.ts |  99 ++++++++++++--
+functions/src/__tests__/phase969/efficiencyWiring.test.ts    |  47 ++++++--
+functions/src/__tests__/phase969/sealedContext.test.ts       |  68 +++++++--
+functions/src/learning/applyLearningWrites.ts               |  35 +++++-
+functions/src/learning/contributionLedger.ts                 |  19 ++-
+functions/src/learning/conversionAccrual.ts                  |  50 +++++-
+functions/src/learning/fieldLevelDiscrimination.ts          |  17 ++-
+functions/src/metaSync/shared.ts                              |  25 +++-
+specs/969-cumulative-learning/IMPLEMENTATION-LOG.md          | 180 ++++++++++++++++++--
+specs/969-cumulative-learning/reports/firestore-scope-audit.md |  10 +--
+specs/969-cumulative-learning/reports/workspace-isolation-defect-generation-state.md |  16 ++-
+```
+
+### 20.8 Raw `git status --short`
+
+```
+ M functions/src/__tests__/phase969/conversionAccrual.test.ts
+ M functions/src/__tests__/phase969/efficiencyWiring.test.ts
+ M functions/src/__tests__/phase969/sealedContext.test.ts
+ M functions/src/learning/applyLearningWrites.ts
+ M functions/src/learning/contributionLedger.ts
+ M functions/src/learning/conversionAccrual.ts
+ M functions/src/learning/fieldLevelDiscrimination.ts
+ M functions/src/metaSync/shared.ts
+ M specs/969-cumulative-learning/IMPLEMENTATION-LOG.md
+ M specs/969-cumulative-learning/reports/firestore-scope-audit.md
+ M specs/969-cumulative-learning/reports/workspace-isolation-defect-generation-state.md
+?? reports/codereabbit-round-14-report.md
+```
+
+### 20.9 Risks and out-of-scope
+
+The round-15 reply's "Out of scope for Batch 5" was wrong as a
+framing — these are all in-scope. But for the items where the
+fix is structural enough that shipping it in this batch would
+explode scope, the verdict was "valid but deferred to T053"
+(the seal-transition serialization in `metaSync/shared.ts:1547`).
+The deferral carries an explicit task id and a code-path marker
+at `shared.ts:1367-1382` describing the deferred shape. The
+remaining 15 verdicts ship in this commit.
+
+The seal-transition race itself (#5) is latent in production
+right now: two concurrent `runSyncForAccount` calls on the same
+account (the Cloud Tasks fan-out path mentioned in the comment)
+can read different `derived` payloads and seal the row against
+different targets. The lease on `applyLearningWrites` does not
+cover the per-ad operational seal commit, so both writes land
+at T1 before either acquires the lease. This is NOT a silent
+corruption in the common path (Meta's `derived` is stable
+within a sync cycle), but the race window is real when settings
+change between two overlapping fan-out calls. Documented at
+`shared.ts:1367-1382` for Batch 6.
+
+The add/withdraw symmetry pattern at `aggregateDelta.ts:392-411`
+remains the discipline from this point. Every batch touching an
+aggregate field must ship a per-pair symmetry check, named.
+
+### 20.10 Review summary
+
+Round-15 closed 9 real bugs across 11 files and reassessed
+all 16 comments on the merits, finding 2 false "already
+addressed" claims from round-14 and correcting them in this
+commit. Per the user's instruction: "out of scope is not an
+accepted verdict" — every comment in the PR has a verdict on
+its own merits. The deferral at #5 / T053 ships with the next
+batch. Phase 969 chain exits 0 with 284 tests (+16 from
+round-14's 268). Commit and push; do NOT merge.

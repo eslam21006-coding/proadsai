@@ -45,9 +45,19 @@ export interface Contribution {
         ctrLink: number;
         cpm: number;
         verdictMark: string;
-        // Catch-all for additional measures the aggregator tracks
-        // (target-independent — no `sealedTarget` may leak in).
-        [key: string]: unknown;
+        // Round-15 fix (coderabbit P2 contributionLedger.ts:49):
+        // the `[key: string]: unknown` index signature previously
+        // admitted any field name — including `sealedTarget`, which
+        // is a contribution INDEPENDENT field that must NEVER
+        // participate in equality / withdrawal-and-readd. A leaked
+        // `sealedTarget` would have changed `contributionsEqual`
+        // and triggered a spurious withdrawal + re-add on
+        // settings-resilience paths. Closed the shape to the three
+        // known measures; an extra measure is opt-in via the new
+        // `extras` map (still target-independent because the
+        // helper at `__tests__/phase969/sealedContext.test.ts:482`
+        // asserts no `sealedTarget` is ever passed).
+        extras?: { [key: string]: number | string | boolean };
     };
     /** The measurement inputs that produced the contribution. */
     measurementInputs: Record<string, unknown>;

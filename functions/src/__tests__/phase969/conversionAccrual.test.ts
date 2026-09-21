@@ -464,6 +464,94 @@ test("SC-041 isStopped: null / undefined → not stopped", () => {
     assert.equal(isStopped(undefined), false);
 });
 
+// ─── Round-15 — legacy `finalisedTotal` migration ───────────────────
+
+test("Round-15 migration: a legacy record with `finalisedTotal` migrates into finalisedConversions with finalisedSpend=0", () => {
+    // Pre-Batch-3 records on disk carry `{ finalisedTotal }` (a
+    // single number). Reading the new fields directly produced
+    // `undefined` and crashed arithmetic. Round-15 makes the
+    // migration explicit; the legacy total maps to
+    // `finalisedConversions` because the legacy shape tracked
+    // conversions only (no per-day spend). `finalisedSpend`
+    // defaults to zero because the legacy shape did not record it.
+    const legacy: any = {
+        days: {},
+        finalisedTotal: 7,
+        // The new fields are absent — simulating a pre-Batch-3 doc.
+    };
+    const out = accrueDays(legacy, [], window("2025-01-08", "2025-01-14"));
+    assert.equal(out.finalisedConversions, 7,
+        `legacy finalisedTotal=7 → finalisedConversions=7 (got ${out.finalisedConversions})`);
+    assert.equal(out.finalisedSpend, 0,
+        `finalisedSpend defaults to 0 for legacy records (got ${out.finalisedSpend})`);
+});
+
+// ─── Round-15 — finalised-day re-add guard ────────────────────────
+
+test("Round-15: a delayed retry with the same window does NOT silently inflate accumulations", () => {
+    // The bounded read at `metaSync/shared.ts:1097` records
+    // `lastObservedWindow`. A delayed retry arrives with the same
+    // window AND the same daily rows. Step 2 (`for (const isoDate of
+    // Object.keys(days))`) handles out-of-window dates; for a same-
+    // window retry, the per-row update branch on `prior = days[isoDate]`
+    // applies FR-083 upward-only. This test pins that the loop has
+    // no implicit-inflation path for a same-window retry.
+    const prior: any = {
+        days: { "2025-01-01": { conversions: 3, spend: 100 } },
+        finalisedConversions: 0,
+        finalisedSpend: 0,
+        finalisedDayCount: 0,
+        lastObservedWindow: { since: "2025-01-01", until: "2025-01-07" },
+    };
+    // Same-window retry with the SAME observation and a NEW higher one.
+    const retryRows: InsightsDailyRow[] = [
+        day("2025-01-01", 3, 100),        // identical — no move
+        day("2025-01-02", 5, 200),        // new — adds
+        day("2025-01-03", 999, 100000),  // much higher — replaces per FR-083
+    ];
+    const out = accrueDays(prior, retryRows, window("2025-01-01", "2025-01-07"));
+    assert.equal(out.days["2025-01-01"]?.conversions, 3,
+        "an equal observation is a no-op (FR-083 upward-only)");
+    assert.equal(out.days["2025-01-02"]?.conversions, 5,
+        "a previously-unobserved date is added");
+    assert.equal(out.days["2025-01-03"]?.conversions, 999,
+        "a higher observation replaces (FR-083 upward-only)");
+});
+
+test("Round-15: a forward-rolling window finalises out-of-window dates and shifts the running totals", () => {
+    // The window from Jan 8-14 rolls forward: dates Jan 1-7 are
+    // out of the new window and get finalised by step 2 of
+    // `accrueDays`. A delayed retry in this window for the SAME
+    // out-of-window date (e.g. Jan 7 in the new dailyRows) cannot
+    // re-add it because the loop's window filter rejects it before
+    // it reaches the days map. The running totals are monotone —
+    // any new observation in `existing.days` lifts them.
+    const prior: any = {
+        days: { "2025-01-01": { conversions: 1, spend: 100 } },
+        finalisedConversions: 0,
+        finalisedSpend: 0,
+        finalisedDayCount: 0,
+        lastObservedWindow: { since: "2025-01-01", until: "2025-01-07" },
+    };
+    // Same as above but the new window is Jan 8-14; Jan 1 falls
+    // out of window and finalises.
+    const newRows: InsightsDailyRow[] = [
+        day("2025-01-08", 2, 50),
+        // A "stale retry" carrying Jan 1 (would-be finalised) is
+        // dropped by the window filter at the top of step 3.
+        day("2025-01-01", 999, 999),
+    ];
+    const out = accrueDays(prior, newRows, window("2025-01-08", "2025-01-14"));
+    assert.equal(out.finalisedConversions, 1,
+        `out-of-window date Jan 1 finalised (got ${out.finalisedConversions})`);
+    assert.equal(out.finalisedSpend, 100,
+        `Jan 1's spend folds into finalisedSpend (got ${out.finalisedSpend})`);
+    assert.equal(out.days["2025-01-08"]?.conversions, 2,
+        "the new Jan 8 observation is recorded");
+    assert.equal(out.days["2025-01-01"], undefined,
+        "Jan 1's finalisation removed it from days");
+});
+
 // ─── FR-086 / FR-086a — days-lost-to-gaps ─────────────────────
 
 test("FR-086a days-lost: zero when the windows are adjacent (1 day elapsed between syncs)", () => {
@@ -472,7 +560,7 @@ test("FR-086a days-lost: zero when the windows are adjacent (1 day elapsed betwe
     assert.equal(daysLostToGaps(window("2025-01-01", "2025-01-07"), window("2025-01-08", "2025-01-14")), 0);
 });
 
-test("FR-086a days-lost: 1 day when the windows are disjoint by 1 day (seventh missed sync threshold)", () => {
+test("FR-086a days-lost: 2 days when the windows are separated by 2 missing dates (seventh missed sync threshold)", () => {
     // Last sync observed [Jan 1..Jan 7]. Today observed [Jan 10..Jan 16].
     // Gap: Jan 8, Jan 9 (2 days). This is the seventh-missed-sync
     // boundary — first time any gap exists.

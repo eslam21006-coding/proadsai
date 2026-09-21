@@ -125,15 +125,26 @@ test("SC-015 [no settings doc]: resolveSealedContext returns null when derived i
     assert.equal(out, null);
 });
 
-test("SC-015 [version gate]: an unstamped derived payload returns null (R-1, FR-041)", () => {
-    const derived: DerivedTargets = {
+test("SC-015 [version gate]: a legacy-version payload with a paid branch still returns null (R-1, FR-041)", () => {
+    // Round-15 fix (chatgpt-codex minor sealedContext.test.ts:132):
+    // the previous fixture had `paid: undefined, free: undefined`,
+    // so a wrong impl that ignored `economicsVersion` also returned
+    // null (no branch to read) — the test did NOT distinguish the
+    // right impl from the wrong one. The corrected fixture sets a
+    // real `paid` branch with `economicsVersion: 1` (deliberately
+    // legacy). The right impl checks the version and returns `null`.
+    // A wrong impl that ignores the version returns
+    // `paid.effectiveTargetCpa` (50) instead of `null`. The assertion
+    // `out === null` fails against the wrong impl.
+    const derived = {
         economicsVersion: 1 as any, // deliberately legacy
-        paid: undefined,
+        paid: { effectiveTargetCpa: 50, paidEventLabel: "purchase", cpaLowerBound: 10, cpaUpperBound: 100 },
         free: undefined,
         computedAt: 1_700_000_000_000,
-    } as DerivedTargets;
+    } as unknown as DerivedTargets;
     const out = resolveSealedContext(derived, "paid_event", 1_700_000_000_000);
-    assert.equal(out, null);
+    assert.equal(out, null,
+        "FR-041: legacy version with paid branch must still return null (a wrong impl that ignores the version would return 50)");
 });
 
 // ═══ FR-005c — both halves of the transition test ═══
@@ -501,6 +512,31 @@ test("SC-032 / FR-011(a) [structural]: contributionLedger.ts does not import fro
     const text2 = readFile(path2);
     assert.equal(/from\s+["']\.\/contributionLedger/.test(text2), false,
         "sealedContext.ts must not import from contributionLedger.ts");
+});
+
+// Round-15 (coderabbit P2 contributionLedger.ts:49) — the closed-shape
+// guard must hold at the type level: `contributedValues` carries
+// `ctrLink`, `cpm`, `verdictMark`, and the optional `extras` map.
+// It MUST NOT list `sealedTarget` (target-independent contract per
+// FR-011(a), Amendment 2 — a leaked `sealedTarget` would participate
+// in `contributionsEqual` and trigger spurious withdrawal-then-readd
+// on settings-resilience paths).
+test("SC-032 / FR-011(a) [structural]: contributedValues type does NOT admit sealedTarget", () => {
+    const path = join(__dirname, "..", "..", "..", "src", "learning", "contributionLedger.ts");
+    const text = readFile(path);
+    // Find the `contributedValues` block, strip line comments, then
+    // assert no `sealedTarget` appears between its braces. Comments
+    // naturally mention the field by name (the doc block warns
+    // against leaking it), so the test strips them to avoid
+    // matching commentary.
+    const m = text.match(/contributedValues:\s*\{([\s\S]*?)\}/);
+    assert.ok(m !== null, "contributedValues object literal should be present");
+    const blockBody = m![1]
+        .split("\n")
+        .map((line) => line.replace(/\/\/.*$/, ""))
+        .join("\n");
+    assert.equal(/\bsealedTarget\b/.test(blockBody), false,
+        "contributedValues MUST NOT admit `sealedTarget` (FR-011(a) Amendment 2 — target-independent contract)");
 });
 
 // ─── Summary ────────────────────────────────────────────────────────────────
