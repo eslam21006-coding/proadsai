@@ -105,14 +105,6 @@ function test(name: string, fn: () => void | Promise<void>): void | Promise<void
     }
 }
 
-function runner(): void {
-    console.log("");
-    console.log("=== Round-16 T053 — seal-transition race discriminator ===");
-    console.log(`Passed: ${passed}, Failed: ${failed}`);
-    if (failed > 0) process.exit(FAILED);
-    process.exit(PASSED);
-}
-
 // ─── Discriminator ────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires

@@ -425,7 +425,19 @@ export async function applyLearningWrites(
     }
     try {
         const dbLikeForRead = params.db as unknown as Parameters<typeof readExistingAdDocs>[0];
-        const refsForRead = params.learnedAds.map((ad) => ({ id: ad.adId }));
+        // Round-21 (CodeRabbit): construct Firestore
+        // DocumentReference instances via `adAccountRef.collection(
+        // "adPerformance").doc(ad.adId)`, matching the ledger-write
+        // path. Production refs carry `{id, path}` (the full
+        // document path). Test stubs that accept `{id, path?}`
+        // (the applyLearningWritesLease, t064bEndToEnd, and
+        // efficiencyWiring stubs) look up by full path when
+        // `path` is present and by id alone otherwise.
+        const refsForRead = params.learnedAds.map((ad) =>
+            (params.adAccountRef as unknown as {
+                collection(name: string): { doc(id: string): { id: string; path?: string } };
+            }).collection("adPerformance").doc(ad.adId),
+        );
         const boundedResult = await readExistingAdDocs(dbLikeForRead, refsForRead);
         freshFailedReads = boundedResult.failedIds;
         // Merge the live read onto the pre-lease data, NOT
