@@ -247,6 +247,40 @@ export interface ApplyLearningWritesParams {
     learnedAds: AdForLearning[];
     /** Per-ad doc index keyed by adId — same shape as `ledgerAdDocsByAdId` in `shared.ts`. The post-pass patch has already filled each doc's `ledger` with the resolved keys. */
     ledgerAdDocsByAdId: Map<string, AdDocLike>;
+    /**
+     * Round-16 — T053. Map<adId, AdSealFields> produced by the
+     * per-ad loop in `metaSync/shared.ts` when `decideSealedTransition`
+     * returns `allowed: true`. The seal fields here are the ONLY
+     * path the new seal values take to Firestore — the operational
+     * merge in `shared.ts:1439` no longer carries them. This map
+     * commits its entries inside `applyLearningWrites`'s lease-held
+     * critical section (the same lease that `runSyncForAccount`
+     * acquired at `shared.ts:1603+`), so two concurrent runs for
+     * the same account cannot both write the seal. A refused run
+     * never reaches this function (early return at line 1636) and
+     * therefore never commits seal fields.
+     */
+    /**
+     * Round-16 — T053. Map<adId, AdSealFields> produced by the
+     * per-ad loop in `metaSync/shared.ts` when `decideSealedTransition`
+     * returns `allowed: true`. The seal fields here are the ONLY
+     * path the new seal values take to Firestore — the operational
+     * merge in `shared.ts:1439` no longer carries them. This map
+     * commits its entries inside `applyLearningWrites`'s lease-held
+     * critical section (the same lease that `runSyncForAccount`
+     * acquired at `shared.ts:1603+`), so two concurrent runs for
+     * the same account cannot both write the seal. A refused run
+     * never reaches this function (early return at line 1636) and
+     * therefore never commits seal fields.
+     *
+     * Default: empty map. Pre-T053 tests that don't care about the
+     * seal-transition path pass through without modification — the
+     * production call site (round-16 onward) passes the per-ad-loop
+     * collection. The discriminator
+     * `sealedTransitionRaceDiscriminator.test.ts` exercises the
+     * non-empty shape.
+     */
+    sealedAdocsById?: Map<string, import("./sealedContext.js").AdSealFields>;
     /** The bounded adPerformance read, keyed by adId. The post-pass patch has already populated this BEFORE the call (see `readExistingAdDocs` at the top of `runSyncForAccount`). */
     existingByAdId: ExistingByAdId;
     /** Sync timestamp used by `applyHookAggregatesDelta` for `lastUpdated`. */
@@ -728,6 +762,62 @@ export async function applyLearningWrites(
             const chunk = aggregateWrites.slice(i, i + chunkSize);
             const batch = dbLike.batch();
             for (const w of chunk) batch.set(w.ref, w.data, { merge: true });
+            await batch.commit();
+        }
+        // Round-16 — T053. Commit the per-ad seal transitions for
+        //   the rows whose `decideSealedTransition` verdict
+        //   permitted the transition. These writes land inside the
+        //   lease-held critical section (`applyLearningWrites`
+        //   runs only between `acquireLearningLease` and
+        //   `releaseLearningLease` in `runSyncForAccount`); the
+        //   lease at `metaSync/shared.ts:1603+` is the per-account
+        //   serialisation barrier against two concurrent fan-out
+        //   syncs. The data shape is the four seal fields written
+        //   through `merge: true` so the underlying FR-005c one-way
+        //   guard holds — a subsequent consult sees the persisted
+        //   target and `decideSealedTransition` refuses on the
+        //   "sealed-target-already-set-and-differs" branch.
+        //
+        //   Why merge: true and not a wholesale replace:
+        //   the bounded-read cache has the full adDoc; the seal
+        //   fields are the only ones this function writes. With
+        //   merge: true, every other top-level field is preserved
+        //   (the operational fields committed upstream at line
+        //   1565 stand; nothing else is touched). The seal sub-
+        //   object is wholesale replaced — fine, because the
+        //   in-memory value carries only the seal fields (it came
+        //   from `sealVerdict.fields` at `shared.ts:1255`, never
+        //   the full adDoc).
+        //
+        //   Lease-refused run: this function is only called inside
+        //   the lease-held try block at `shared.ts:1717+`. The
+        //   refused-run early return at `shared.ts:1636` returns
+        //   BEFORE this call, so the refused run never writes the
+        //   seal — the invariant holds.
+        const sealWritesMap = params.sealedAdocsById ?? new Map<string, import("./sealedContext.js").AdSealFields>();
+        for (let i = 0; i < sealWritesMap.size; i += chunkSize) {
+            const entries = Array.from(sealWritesMap.entries()).slice(i, i + chunkSize);
+            if (entries.length === 0) break;
+            const batch = dbLike.batch();
+            for (const [adId, fields] of entries) {
+                // Strip undefined / null-valued fields so the merge
+                // doesn't carry a `null` value across the merge
+                // (Round-15 fix on the operational path applies the
+                // same discipline here). `decideSealedTransition`'s
+                // `didTransition: true` branch only sets the four
+                // fields; on refusal, `params.sealedAdocsById` does
+                // not contain the adId.
+                const cleaned: Record<string, unknown> = {};
+                if (fields.sealedTarget !== undefined && fields.sealedTarget !== null) cleaned.sealedTarget = fields.sealedTarget;
+                if (fields.sealedAt !== undefined && fields.sealedAt !== null) cleaned.sealedAt = fields.sealedAt;
+                if (fields.sealedFunnelType !== undefined && fields.sealedFunnelType !== null) cleaned.sealedFunnelType = fields.sealedFunnelType;
+                if (fields.contributionState !== undefined && fields.contributionState !== null) cleaned.contributionState = fields.contributionState;
+                batch.set(
+                    params.adAccountRef.collection("adPerformance").doc(adId),
+                    cleaned as unknown as Record<string, unknown>,
+                    { merge: true },
+                );
+            }
             await batch.commit();
         }
         // CodeRabbit (Round 14): commit the per-ad ledger entries

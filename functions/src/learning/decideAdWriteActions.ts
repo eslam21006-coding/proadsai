@@ -108,14 +108,15 @@ export interface PerAdVaryingInputs {
      */
     adStatus?: string | null;
     /**
-     * Batch 2 (T028) — the already-resolved sealed fields for this
-     * row. The worker has consulted `resolveSealedContext` once per
-     * sync and `decideSealedTransition` per row against the existing
-     * `adDoc`. The result lands here for inclusion in `baseDoc`.
-     * Absent / empty when the transition was refused or the row has
-     * no contribution at all (failed-read, FR-070).
+     * Round-16 — T053 REMOVED `sealFields` from the varying inputs.
+     * The seal transition now lives inside the lease-held critical
+     * section in `applyLearningWrites`; the per-ad loop in
+     * `metaSync/shared.ts` captures the verdict into
+     * `sealedAdocsById: Map<adId, AdSealFields>` and passes that
+     * map alongside the aggregates. The operational commit at
+     * `metaSync/shared.ts:1416/1565` no longer writes the seal
+     * fields, which is the race-window fix.
      */
-    sealFields?: DecideAdWriteInput["sealFields"];
 }
 
 // ─── Outputs ────────────────────────────────────────────────────
@@ -171,7 +172,6 @@ export function decideAdWriteActions(
         verdict: varying.verdict,
         keepMetadataUnavailable: ctx.keepMetadataUnavailable,
         adStatus: varying.adStatus ?? null,
-        sealFields: varying.sealFields ?? {},
     });
 
     // Tally: independent of FR-070. Counts the resolved linkage so

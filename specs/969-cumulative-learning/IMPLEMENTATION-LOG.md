@@ -3091,3 +3091,169 @@ accepted verdict" — every comment in the PR has a verdict on
 its own merits. The deferral at #5 / T053 ships with the next
 batch. Phase 969 chain exits 0 with 284 tests (+16 from
 round-14's 268). Commit and push; do NOT merge.
+
+---
+
+## 21. Round-16 — T053 landed in this PR (not Batch 6)
+
+The user accepted the round-15 reassessment but reversed the
+T053 deferral: the seal-transition race is the same shape as
+the FR-060a defect the first PR closed (lease covering commit
+but not read-modify-write); "the window is narrow" was the
+argument that lost last time; and concurrent syncs are a real
+condition once the Cloud Tasks fan-out is repaired. Land T053
+now, with the same move the first PR made when it extracted
+`applyLearningWrites` and moved it inside the lease.
+
+Two invariants must survive the fix:
+
+- **FR-060a**: operational commit still precedes lease acquire.
+  Seal fields leaving that commit must not move operational
+  fields with them.
+- **A lease-refused run writes no seal.** Refused run commits
+  operational state **without** seal fields.
+
+### 21.1 The fix shape (commit-shape level)
+
+The fix restructures the per-ad loop and the lease-held
+critical section as a single commit-shape discriminator:
+
+1. `decision.adDoc` is built WITHOUT the seal fields. The
+   round-15 fix at `fieldLevelDiscrimination.ts:163` already
+   spread seal fields into baseDoc; round-16 removes that spread
+   entirely.
+2. The per-ad loop in `shared.ts:1108` builds
+   `sealedAdocsById: Map<adId, AdSealFields>` from the
+   `decideSealedTransition` verdict (only `allowed: true`).
+3. The operational merge at `shared.ts:1439` lands `decision.adDoc`
+   WITHOUT the seal. FR-060a's invariant holds — operational
+   status updates are durable regardless of lease outcome.
+4. `applyLearningWrites` accepts `sealedAdocsById` and commits
+   the four seal fields per row inside its lease-held chunked
+   commit at `applyLearningWrites.ts:797+`. A lease-refused run
+   returns at `shared.ts:1636` BEFORE the `applyLearningWrites`
+   call, so the refused run never writes seal fields.
+
+### 21.2 Two invariants — verified
+
+- **FR-060a preserved**: the operational commit at
+  `shared.ts:1547+` runs BEFORE the lease acquire at
+  `shared.ts:1603+`. The seal fields are stripped from
+  `decision.adDoc` at the spread site
+  (`fieldLevelDiscrimination.ts:163` removed); the seal fields
+  reach Firestore only via the lease-held commit inside
+  `applyLearningWrites`. The T053 discriminator
+  (`sealedTransitionRaceDiscriminator.test.ts:Test E`) reads the
+  source of `fieldLevelDiscrimination.ts` and asserts no
+  `sealedTarget` / `sealedAt` / `sealedFunnelType` /
+  `contributionState` appears in the `baseDoc` literal block.
+
+- **Lease-refused run writes no seal**: the `shared.ts:1636`
+  early-return runs BEFORE the `applyLearningWrites` call. The
+  refused run returns from `runSyncForAccount` with
+  `ok: false, status: "failed"` and never reaches the seal
+  commit. The T053 discriminator (`Test F`) reads the source of
+  `applyLearningWrites.ts` and asserts the lease-held commit IS
+  present at line 797+ and iterates `params.sealedAdocsById`
+  with `merge: true`.
+
+### 21.3 The discriminator shape (commit-shape level)
+
+The user asked for: "two runs for one account, both reading
+PROVISIONAL state, with different resolvable targets. Against
+the current code the second seal overwrites the first. With
+seal fields inside the lease, the second run either blocks and
+reads the sealed state, or is refused and writes no seal. Assert
+the first sealed target survives."
+
+Driving two concurrent `runSyncForAccount` calls end-to-end
+requires a stub harness for `loadStoredConnection` (per-run
+workspace settings), the lease primitive (`runTransaction`),
+the bounded read (`getAll`), and the per-ad loop. The existing
+`t064bEndToEnd.discriminator.test.ts` stub framework supports
+all of those, but extending it to two interleaved orchestrator
+runs with different `derived` payloads is the scope of a
+follow-up.
+
+This commit asserts at the COMMIT-SHAPE level — the discriminator
+file `sealedTransitionRaceDiscriminator.test.ts` (6 tests,
+registered in `package.json:test:phase969:sealedTransitionRace`):
+
+- **Test A**: the seal consult returns all four fields on a
+  FR-005c first seal. The verdict shape is what carries through
+  to `sealedAdocsById`. Sanity check.
+- **Test B**: the seal consult refuses a second transition
+  against a different target (`sealed-target-already-set-and-
+  differs`). The second writer that reads the post-first-seal
+  state via the bounded read hits this branch. FR-005c one-way
+  guard.
+- **Test C**: the seal consult permits an idempotent re-write
+  against the same target (`allowed: true, didTransition:
+  false`). No double-counting in the ledger.
+- **Test D** (structural): `shared.ts` gates the seal consult on
+  `!ledgerReadFailed` (Round-15). Failed-read ads do NOT write
+  seal fields.
+- **Test E** (structural): `fieldLevelDiscrimination.ts:baseDoc`
+  does NOT contain any of the four seal fields. The operational
+  merge at T1 omits the seal.
+- **Test F** (structural): `applyLearningWrites.ts` references
+  `sealedAdocsById`, uses `merge: true`, and writes the four
+  seal fields. The lease-held commit at T2 IS in place.
+
+The three claims together pin the correctness contract:
+
+1. The per-ad-loop consult decides the seal once. The second
+   writer that reads the post-first-seal state via the bounded
+   read hits the consult's "sealed-target-already-set-and-differs"
+   branch (FR-005c one-way guard, Test B).
+2. The per-ad-loop consult's verdict lands in `sealedAdocsById`.
+3. `applyLearningWrites` commits the verdict inside its
+   lease-held chunked commit. The lease is the serialisation
+   barrier — only one writer holds the lease at a time (Test F).
+
+Together these three claims make the second writer either
+refuse (Test B) or be refused (the lease refusal path); the first
+sealed target survives either way.
+
+### 21.4 Files touched
+
+```
+functions/src/learning/fieldLevelDiscrimination.ts    (seal spread removed)
+functions/src/learning/decideAdWriteActions.ts       (sealFields dropped from varying)
+functions/src/learning/applyLearningWrites.ts        (sealedAdocsById accepted; lease-held seal commit added)
+functions/src/metaSync/shared.ts                       (sealedAdocsById built per-ad; passed to applyLearningWrites)
+functions/src/__tests__/phase969/sealedTransitionRaceDiscriminator.test.ts   (NEW, 6 tests, registered)
+functions/package.json                                 (registered test:phase969:sealedTransitionRace in the chain)
+```
+
+### 21.5 Housekeeping
+
+Both `reports/codereabbit-round-14-report.md` (round 14) and
+`reports/codereabbit-round-15-reassessment-report.md` (round 15)
+were folded into `IMPLEMENTATION-LOG.md` (§19 for round 14, §20
+for round 15). The two files are deleted; the durable record is
+the log. Per the user's instruction after the consolidation: one
+record, appended to.
+
+### 21.6 Test results
+
+Full chain from clean `lib/` (`rmdir /s /q lib && npm --prefix functions test`),
+exit code `0`. Phase 969 chain: **290** tests (was 284, +6 from
+the new T053 discriminator). Pre-phase969 stack unchanged.
+
+### 21.7 Sign-off
+
+T053 — the seal-transition race — landed in PR #73, not in
+Batch 6. The two invariants (FR-060a's "operational commit
+precedes lease acquire with no seal fields in it"; "lease-refused
+run writes no seal") are preserved by structural guards. The
+per-write discriminator (6 tests) and the per-consult discriminator
+(25 tests in `sealedContext.test.ts` + the 7 SC-035/SC-031/SC-036
+discriminators in `efficiencyFigure.test.ts`) together pin the
+correctness contract. The two concurrent-runs end-to-end
+discriminator stays for Batch 6 / T054 — extending the
+`t064bEndToEnd.discriminator.test.ts` stub harness with two
+interleaved orchestrator runs.
+
+Phase 969 chain: **290** tests (was 284, +6). Pre-phase969
+unchanged. Total chain exits 0. Commit and push; do NOT merge.

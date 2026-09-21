@@ -520,6 +520,10 @@ async function test4_ledgerWriteCommittedToDocStore() {
             ["ad_1", makeExisting("ad_1", 4, 90)],
             ["ad_2", makeExisting("ad_2", 2, 90)],
         ]),
+        // Round-16 — T053. Empty seal map; this test exercises the
+        //   efficiency write path, not the seal-transition path. The
+        //   dedicated T053 discriminator is `sealedTransitionRaceDiscriminator.test.ts`.
+        sealedAdocsById: new Map(),
         nowMs: Date.now(),
         errors: [],
     });

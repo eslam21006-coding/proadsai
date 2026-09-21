@@ -107,6 +107,7 @@ import {
 } from "../learning/decideAdWriteActions.js";
 import type { ContributionLedgerEntry } from "../learning/types.js";
 import { applyLearningWrites } from "../learning/applyLearningWrites.js";
+import type { AdSealFields } from "../learning/sealedContext.js";
 import {
     decidePerAdActionsForWorker,
     resolveCreativeKeyByAdId,
@@ -1088,6 +1089,17 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // re-introduce the unbounded scan under the new one.
     const existingByAdId = new Map<string, Partial<AdDoc>>();
     const failedLedgerReads = new Set<string>();
+    // Round-16 — T053. Map<adId, AdSealFields> captured per row by
+    // the per-ad loop below when `decideSealedTransition` returns
+    // `allowed: true`. This is the only place seal fields land now
+    // — not in `decision.adDoc` (round-15 fix removed them from the
+    // operational merge) but in this local map. It is forwarded to
+    // `applyLearningWrites` (line 1717+) which commits them inside
+    // the lease-held critical section. The lease itself is the
+    // serialisation barrier. Declared at the function scope (NOT
+    // inside the bounded-read try block) so the per-ad loop can
+    // reach it after the catch.
+    const sealedAdocsById = new Map<string, AdSealFields>();
     try {
         const adIdRefs = ads.map((ad) =>
             adAccountRef.collection("adPerformance").doc(ad.id),
@@ -1252,6 +1264,21 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             )
             : { allowed: false, reason: "sealed-target-already-set-and-differs" };
         const sealFields = sealVerdict.allowed ? sealVerdict.fields : {};
+        // Round-16 — T053. Capture the seal fields locally when the
+        //   consult permitted the transition. The per-acquire map
+        //   `sealedAdocsById` is the only path the new fields take
+        //   to Firestore. The operational merge at line 1439 (was:
+        //   1378) writes `decision.adDoc` WITHOUT the seal; this map
+        //   is forwarded to `applyLearningWrites` (line 1717+) which
+        //   commits the seal inside the lease-held chunked commit.
+        //   The two paths cannot both write the seal because the
+        //   bounded read cache has the seal committed by the first
+        //   path before the second path reads; the second writer's
+        //   `decideSealedTransition` consult sees the persisted seal
+        //   and refuses. The lease itself serialises acquire.
+        if (sealVerdict.allowed) {
+            sealedAdocsById.set(ad.id, sealVerdict.fields);
+        }
         if (!sealVerdict.allowed) {
             // One line per refusal, deduplicated by adId within the
             // sync. FR-051c enumerated-reason discipline.
@@ -1364,33 +1391,50 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 // parent-level pauses by design (effective_status is
                 // deferred, FR-085 accepted cost).
                 adStatus: ad.status ?? null,
-                // Round-15 (chatgpt-codex P2 — serialize the sealed transition):
-                //     DEFERRED to Batch 6 / T053. The seal fields
-                //     joining the operational merge at line 1378/1547
-                //     before the per-account lease acquire creates a
-                //     race window for two concurrent `runSyncForAccount`
+                // Round-16 — T053 LANDED. The seal fields previously joined the
+                //     operational merge at line 1378 (BEFORE the
+                //     per-account lease was acquired), opening a race
+                //     window for two concurrent `runSyncForAccount`
                 //     calls (Cloud Tasks fan-out path): both can read
                 //     existingData as PROVISIONAL, both can accept a
                 //     seal, and the last write wins even when settings
-                //     change between reads. The correct fix is to
-                //     move the seal-decide step inside the
-                //     lease-held critical section that already runs
-                //     `applyLearningWrites` (the per-account lease at
-                //     line 1599+ is FR-060a's invariant — both
-                //     writers cannot both hold it). The minimal
-                //     restructuring has shape:
-                //       1. Build a `sealedAdocsById` map during the
-                //          per-ad loop carrying the new seal fields
-                //          keyed by adId.
-                //       2. Strip `sealFields` from `decision.adDoc`
-                //          at line 1372 (so the operational commit
-                //          lands without the seal).
-                //       3. Pass `sealedAdocsById` to
-                //          `applyLearningWrites` and add a `sealWrites`
-                //          list to its lease-held chunked commit.
-                //     Stays in `applyLearningWrites` for Batch 6 —
-                //     current code is unchanged from Batch 2.
-                sealFields,
+                //     change between reads. The fix:
+                //       1. The seal fields are captured into a
+                //          `sealedAdocsById: Map<adId, AdSealFields>`
+                //          during the per-ad loop (when
+                //          `sealVerdict.allowed === true`).
+                //       2. `decision.adDoc` is built WITHOUT the seal
+                //          fields — the FR-005c-guard verdict was
+                //          already computed earlier in this loop, so
+                //          we don't need to re-decide.
+                //       3. The operational merge at line 1416/1565
+                //          lands the doc WITHOUT the seal — FR-060a's
+                //          invariant ("the operational commit precedes
+                //          the lease acquire") holds: the operational
+                //          status updates are durable regardless of
+                //          whether the lease succeeds.
+                //       4. `applyLearningWrites` receives
+                //          `sealedAdocsById` and commits the seal
+                //          fields inside its lease-held chunked
+                //          commit. A lease-refused run (the early
+                //          return at line 1621) never calls
+                //          `applyLearningWrites`, so it never writes
+                //          seal fields — the invariant "a lease-
+                //          refused run writes no seal" holds.
+                //     Two invariants preserved:
+                //     - FR-060a: operational commit precedes the
+                //       lease acquire and the seal fields leave that
+                //       commit.
+                //     - FR-005c: the seal transition is one-way. The
+                //       second writer that reads the post-first-seal
+                //       state via the bounded read hits
+                //       `decideSealedTransition` "sealed-already-set"
+                //       refusal; the second writer that fails to
+                //       acquire the lease is refused before reading
+                //       the new state. Either way, the first sealed
+                //       target survives. The discriminator test at
+                //       `__tests__/phase969/sealedTransitionRaceDiscriminator.test.ts`
+                //       pins both shapes.
                 verdict: {
                     verdict: verdictResult.verdict,
                     ruleCode: verdictResult.ruleCode,
@@ -1697,12 +1741,20 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         // here from the post-pass try block, so the lease covers the
         // entire critical section. A lease-refused run skips this block
         // entirely (no read, no compute, no commit).
-        await applyLearningWrites({
+await applyLearningWrites({
             db: getDb(),
             adAccountRef,
             learnedAds,
             ledgerAdDocsByAdId,
             existingByAdId,
+            // Round-16 — T053. The seal-transition writes ride inside
+            //   this function's lease-held critical section (see the
+            //   `sealWrites` block inside `applyLearningWrites`).
+            //   A lease-refused run returns at line 1636 BEFORE this
+            //   call, so the seal fields are not committed in the
+            //   refused case — the invariant "a lease-refused run
+            //   writes no seal" holds.
+            sealedAdocsById,
             nowMs,
             errors,
         });

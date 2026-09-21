@@ -103,19 +103,19 @@ export interface DecideAdWriteInput {
      */
     adStatus?: string | null;
     /**
-     * Batch 2 (T028) — the sealed fields produced by the
-     * FR-005c-guard-verdict `decideSealedTransition` for this ad.
-     * The four fields are written through `merge: true` so the
-     * failed-transition case (FR-005c refusal) leaves the existing
-     * values intact. **Used only when the worker has confirmed a
-     * contribution** — failed-read ads do not seal.
+     * Round-16 — T053 REMOVED `sealFields` from `DecideAdWriteInput`.
+     * The four seal fields (`sealedTarget`, `sealedFunnelType`,
+     * `sealedAt`, `contributionState`) used to be passed through
+     * `input.sealFields` and merged into `decision.adDoc.seal*`
+     * via `...(sealFields ?? {})` below. T053 moves the seal
+     * transition write inside the lease-held critical section in
+     * `applyLearningWrites`; the operational commit no longer
+     * carries the seal fields. The discriminated shape is the
+     * "merge: true" doc commit at line 1416 in `shared.ts`: it
+     * writes the operational + linking fields but NOT the seal
+     * fields. The seal fields land in the lease-held chunked
+     * commit at `applyLearningWrites.ts:670+` instead.
      */
-    sealFields?: {
-        sealedTarget?: number | null;
-        sealedFunnelType?: import("./sealedContext.js").WorkspaceFunnelType | null;
-        sealedAt?: number | null;
-        contributionState?: "PROVISIONAL" | "SEALED";
-    };
 }
 
 // ─── Outputs ─────────────────────────────────────────────────────
@@ -160,7 +160,6 @@ export function decideAdWrite(input: DecideAdWriteInput): DecideAdWriteResult {
         verdict,
         keepMetadataUnavailable,
         adStatus,
-        sealFields,
     } = input;
 
     // ─── Linking fields, decision: precedence or omit ───────────
@@ -250,24 +249,21 @@ export function decideAdWrite(input: DecideAdWriteInput): DecideAdWriteResult {
         // written for every ad, including failed-read ads. The merge
         // semantics ensure `null` clears any prior value.
         adStatus: adStatus ?? null,
-        // Batch 2 (T028) — sealed fields. The worker supplies
-        // `sealFields` only after consulting the FR-005c guard
-        // (`decideSealedTransition`); defaults to null/absent so a
-        // failed read or an unspecified input doesn't accidentally
-        // overwrite the prior seal. The merge write semantics keep the
-        // existing fields intact when these are omitted, which is what
-        // FR-070's field-level discrimination was designed for.
-        // Round-15 fix: omit the four sealed fields wholesale when
-        // `sealFields` is empty (i.e. when `decideSealedTransition`
-        // returned a refusal). The previous shape put explicit
-        // `null` into each, and the merge write top-level merge
-        // (Firestore `set(ref, data, { merge: true })`) writes
-        // each provided field — including a `null` value, which
-        // CLEARS the persisted seal. A later sync could then
-        // seal the row against a different target and defeat FR-005c's
-        // one-way guard. Spreading `sealFields` (or nothing) preserves
-        // the persisted values via the merge semantics.
-        ...(sealFields ?? {}),
+        // Round-16 — T053. The seal fields (`sealedTarget`,
+        //   `sealedAt`, `sealedFunnelType`, `contributionState`) are
+        //   removed from `decision.adDoc` entirely. They used to
+        //   spread in via `...(sealFields ?? {})` below. The fix moves
+        //   the seal-transition write inside the lease-held critical
+        //   section (`applyLearningWrites` at line 1710+, the per-
+        //   account lease at line 1603+). The operational commit at
+        //   line 1416 lands WITHOUT the seal fields, preserving
+        //   FR-060a's invariant ("the operational commit precedes the
+        //   lease acquire"). The lease-held commit inside
+        //   `applyLearningWrites` does the seal transition, and the
+        //   lease itself is the serialisation barrier — two concurrent
+        //   `runSyncForAccount` calls for the same account can never
+        //   both hold the lease, so the second either blocks-and-
+        //   reads (consult refuses) or is refused and writes nothing.
     };
 
     const adDoc: AdDoc = includeLinkingFields
