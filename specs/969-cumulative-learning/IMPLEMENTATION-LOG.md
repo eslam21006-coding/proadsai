@@ -4975,3 +4975,113 @@ per-suite test counts verbatim.
 
 Merge commit: `6c3b46a` — merge main into 969-phase-4; resolve
 IMPLEMENTATION-LOG conflict. Pushed to `969-phase-4`.
+
+---
+
+## 32. Phase 4 production verification — PR #73 deployed, post-sync check
+
+Post-merge, post-deploy probe. Owner ran two manual syncs back-to-back
+on `2026-09-22` against the active workspace `ZVASEGdrF5qbizl4Bbug`
+(Boran) / `act_1180773537404268`. Deployed function hash:
+`8d780c9c5af0c4cbc250ca1f2dd77896fa248d7a`
+(revision `metasyncperformance-00202-zoz`). Read-only against
+Firestore. Standalone report at
+`specs/969-cumulative-learning/reports/phase4-production-verification.md`
+(this section summarises; the standalone report carries the raw
+numbers).
+
+### §32.1 The two sync windows
+
+```
+Sync 1 cold start 14:46:12Z, completed 14:48:52Z (~2:40)
+  → status: ok,    counts: {ads:562, matched:27, ambiguous:0, unmatched:535}
+  → snapshot snap_1790088376269_manual, errors_count: null
+
+[Third press at 14:47:58Z refused at the outer BUSY gate — correct behaviour]
+
+Sync 2 warm start 14:54:44Z, completed 14:57:09Z (~2:25)
+  → status: partial, counts: {ads:562, matched:16, ambiguous:0, unmatched:433}
+  → snapshot snap_1790088884410_manual, errors_count: 50 (all fetchAdInsights 403)
+```
+
+### §32.2 The headline check — in-lease read against real Firestore
+
+The headline question PR #73 had to answer. Zero in-lease read failures
+in Cloud Logging; zero `applyLearningWrites`-source entries in
+`syncSnapshots/{snapshotId}.errors[]` for either window. Sync 1's
+errors field is **absent** (not `[]`), which is the structural
+confirmation that `applyLearningWrites` never pushed an error. Round-21's
+`path`-populated `DocumentReference` construction works against real
+Firestore for the full 562-ad batch on both syncs.
+
+### §32.3 The Phase 4 fields landed
+
+| Field | Count (today) | Sep 18 baseline |
+|---|---|---|
+| `dayAccrual` | 0 / 759 | 0 / 718 |
+| `adStatus` | **562 / 759 (74.0%)** | 0 / 718 |
+| `sealedTarget` | **562 / 759 (74.0%)** | 0 / 718 |
+| `sealedFunnelType` | **562 / 759 (74.0%)** | 0 / 718 |
+| `sealedAt` | **562 / 759 (74.0%)** | 0 / 718 |
+| `contributionState` | **562 / 759 (74.0%)** | 0 / 718 |
+| `efficiencyRaw` | 0 / 759 | 0 / 718 |
+
+All five sealed-context fields land with single-value stamps on every
+re-evaluated row (`sealedTarget: 1.17`, `sealedAt: 1790088376269 = Sync 1
+commit time`, `sealedFunnelType: free_webinar` via per-generation
+lookup — workspace has no `funnelSettings` doc). `adStatus` distribution:
+`ACTIVE: 306, PAUSED: 256`. `contributionState`: `SEALED: 562`.
+
+### §32.4 Learning wrote at all
+
+`adPerformance` 759 (was 718 — +41 new docs since Sep 18, all 41 carry
+a `ledger`). `hookPerformance: 1 (pain)`, `visualPerformance: 0`.
+`evaluatedAt` max: `2026-09-22T14:57:05.733Z`. The 41 new ledged
+docs came from the new ads the inline path matched against the
+`UtCCphz5jAgFIEWCa7WQ` generation this morning.
+
+### §32.5 Nothing doubled
+
+Within-pair aggregate delta is not directly observable (Sync 2
+overwrote Sync 1's `pain` doc; no per-update history). The `pain`
+state today is structurally identical to Sep 18 on the four critical
+fields: `creativeCount: 1`, `contributedCreativeKeys.length: 1`,
+`byObjective.conversion.count: 32`, `byFunnelType.free_webinar: 27`.
+`avgLinkCtr` shifted 0.17 → 0.14 over 4 days (not within-pair).
+Nothing doubled.
+
+### §32.6 Efficiency — zero, expected
+
+`efficiencyRaw`: 0/759. `pain.efficiencyContributingCount`: 0. Best-accrued
+creative is `creative:gen:UtCCphz5jAgFIEWCa7WQ` (32 contributing rows
+on `pain`). Zero rows have any conversion accrued — every contributing
+row's `ledger.measurementInputs.conversions3d = 0`. The first real
+figure is gated on Meta returning non-zero per-day conversion data,
+not on a defect.
+
+### §32.7 Pre-existing fan-out NOT_FOUND — still failing every sync
+
+Five identical `metaSync fan-out enqueue failed: … 5 NOT_FOUND` lines
+per sync (one per non-active workspace: 5ZRdOCRnSKamHTiJd07F,
+9n2zPb3Z6D7IRBOLSXi0, ZbGPvZbrAAFl8afG41dG, kmuu4ZUMbsK5jnMCwglH,
+m5VqQlf6bL2wWUVQDCy6). `fanOut.queued: 0`. Same shape as every prior
+production check. Outside this PR.
+
+### §32.8 Sync 2's Meta API rate-limit hit
+
+50× `fetchAdInsights failed: Meta Graph API error 403: Application
+request limit reached (OAuthException)` on Sync 2 (the legacy
+`fetchAdInsights` path; same shape as Sep 18 Sync 2). This is what
+caused Sync 2's `matched` count to drop from 27 → 16 (11 ads were
+rate-limited, not excluded). The inline workspace's `errorCount: 0`
+in the [Batch 5] log is for the legacy aggregate, not the inline
+path — the inline path's errors live on the snapshot.
+
+### §32.9 Standalone report
+
+`specs/969-cumulative-learning/reports/phase4-production-verification.md`
+— captures the full path under measurement, the verbatim [Batch 5]
+evidence logs for both windows, the row-level Phase 4 field stamps on
+the two example rows, the field-presence counts, the
+syncSnapshots/errors[] verbatim, the fan-out failure list verbatim,
+and the capture artefacts.

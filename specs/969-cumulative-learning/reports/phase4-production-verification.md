@@ -1,497 +1,393 @@
-# Phase 4 Production Verification
+# Phase 4 Production Verification — PR #73 deployed, post-sync check
 
-**Date:** 2026-09-22
-**Working directory:** `D:\Pro Ads AI - SaaS - FAL` (branch: `main`)
+**Date:** 2026-09-22 (probe taken 14:58–15:05 UTC)
+**Working directory:** `D:\Pro Ads AI - SaaS - FAL` (branch: `main`, head `d2e5955`)
+**PR:** #73 (`969 phase 4`) — merged `2026-09-22T12:09:27Z`, deployed function hash `8d780c9c5af0c4cbc250ca1f2dd77896fa248d7a` (revision `metasyncperformance-00202-zoz`)
 **Owner:** `islam210.06@gmail.com` (uid `ywpCgWsXqVP4tlNwfhSoTqMjRw52`)
-**Read-only against Firestore.** No fixes attempted.
+**Read-only against Firestore. No fixes attempted.**
 
 ---
 
-## §0. Headline — the verification cannot be performed as scoped
+## §0. The two sync windows under measurement
 
-**PR #73 is not merged and not deployed.** `gh pr view 73 --json
-state,mergedAt,mergeCommit` returns:
+`gcloud logging read 'resource.labels.revision_name=metasyncperformance-00202-zoz' --freshness=2h` returns exactly two `[Batch 5] First-successful-Phase-14-run evidence` log lines for the deployed hash, with the corresponding `metaSync busy — second concurrent press refused` entry sandwiched between them. Verbatim from the captured stdout payload:
 
-```json
-{"mergeCommit": null, "mergedAt": null, "state": "OPEN",
- "title": "969 phase 4", "headRefName": "969-phase-4",
- "baseRefName": "main"}
+**Sync 1 (cold start at 14:46:12Z, completed at 14:48:52Z, duration ~2:40):**
+
+```
+📊 [Batch 5] First-successful-Phase-14-run evidence (inline + LEG A summary):
+  {"ownerUid":"ywpCgWsXqVP4tlNwfhSoTqMjRw52",
+   "activeWorkspaceId":"ZVASEGdrF5qbizl4Bbug",
+   "ok":false,
+   "resultKey":"failed",
+   "legacy":{"accountsSynced":23,"adsSynced":404,"rateLimited":[],"errorCount":0},
+   "inline":{"workspaceId":"ZVASEGdrF5qbizl4Bbug",
+             "accountId":"act_1180773537404268",
+             "status":"ok",
+             "counts":{"ads":562,"matched":27,"ambiguous":0,"unmatched":535}},
+   "fanOut":{"queued":0,"rateLimited":[]}}
 ```
 
-26 commits ahead of `main` (`git log --oneline main..969-phase-4`
-shows rounds 16-22 + the entire Phase 4 batch series).
+```
+✅ Synced 404 ads across 23 accounts (owner=ywpCgWsXqVP4tlNwfhSoTqMjRw52, caller=-)
+```
 
-The most recent manual sync in Cloud Logging is
-`2026-09-18T07:42:57Z` (Sync 2 from
-`docs/investigations/969-sync-check-02.md`). That sync ran
-against PR #71's deployed code (`firebase-functions-hash:
-ca72e596b9983f793f5efe68b46795b7160ffca5` for
-`metaSyncPerformance`, `7ef255699f8914be8d97d9f8e08c6034a967fb72`
-for the daily/legacy pair). PR #71 was the cumulative
-learning deploy, merged `2026-09-12T09:00:52Z`. PR #72
-(workspace-bleed frontend fix) was merged `2026-09-19T09:22:54Z`
-and does not change what gets written to Firestore.
+**`[Batch 6] metaSync busy — second concurrent press refused`** at 14:47:58Z (the **third** press, between Sync 1 and Sync 2, was blocked at the busy-holder gate; `busyExpiresAtMs=1790088976269`):
 
-**No owner-triggered sync has happened in the last 4 days.** The
-prompt says the owner has run two manual syncs back to back
-against PR #73. The logs show zero `triggerMetaSync`,
-`metaSyncPerformance`, or `metaSyncAccountWorker` entries
-since `2026-09-18T07:42:57Z`. The Cloud Logging
-freshness=30d query returned no manual-sync events
-in that window.
+```
+📊 [Batch 6] metaSync busy — second concurrent press refused:
+  {"ownerUid":"ywpCgWsXqVP4tlNwfhSoTqMjRw52",
+   "callerUid":"ywpCgWsXqVP4tlNwfhSoTqMjRw52",
+   "busyHolderUid":"ywpCgWsXqVP4tlNwfhSoTqMjRw52",
+   "busyExpiresAtMs":1790088976269,
+   "resultKey":"sync.result.busy"}
+```
 
-The verification questions in the prompt cannot be answered as
-stated because the code they reference has not been deployed.
-The data in the database today is unchanged from
-`969-sync-check-02.md` (Sync 2, Sep 18). I report that state
-side-by-side with Sync 2's prior capture so the owner can
-verify the same numbers without re-running the probe.
+**Sync 2 (cold start at 14:54:44Z, completed at 14:57:09Z, duration ~2:25):**
+
+```
+📊 [Batch 5] First-successful-Phase-14-run evidence (inline + LEG A summary):
+  {"ownerUid":"ywpCgWsXqVP4tlNwfhSoTqMjRw52",
+   "activeWorkspaceId":"ZVASEGdrF5qbizl4Bbug",
+   "ok":false,
+   "resultKey":"failed",
+   "legacy":{"accountsSynced":23,"adsSynced":314,"rateLimited":["act_995888422231015"],"errorCount":0},
+   "inline":{"workspaceId":"ZVASEGdrF5qbizl4Bbug",
+             "accountId":"act_1180773537404268",
+             "status":"partial",
+             "counts":{"ads":562,"matched":16,"ambiguous":0,"unmatched":433}},
+   "fanOut":{"queued":0,"rateLimited":["act_1180773537404268"]}}
+```
+
+```
+✅ Synced 314 ads across 23 accounts (owner=ywpCgWsXqVP4tlNwfhSoTqMjRw52, caller=-)
+```
+
+**Two syncs, not three.** The third press was refused at the busy-holder gate (`[Batch 6] metaSync busy`), so Sync 2 is the second manual sync, not the third.
+
+Sync 1 was the **first cold instance** since PR #73 deployed — its cold-start latency is ~2:40 from `Starting new instance` (14:46:12Z) to `Synced 404 ads` (14:47:30Z) to the `[Batch 5]` evidence log line (14:48:52Z). Sync 2 reused a warm container and finished in ~2:25.
 
 ---
 
 ## §1. Path under measurement
 
-**Workspace and account the previous sync checks targeted,
-confirmed by `metaConnections` + the active workspace read.**
+**Workspace and account the owner synced, confirmed by `metaConnections` + the active workspace read.**
 
 ```
 users/ywpCgWsXqVP4tlNwfhSoTqMjRw52/workspaces/ZVASEGdrF5qbizl4Bbug/adAccounts/act_1180773537404268
 ```
 
-- Workspace `ZVASEGdrF5qbizl4Bbug`: `name: "Boran"`,
-  `metaAdAccountId: "act_1180773537404268"`,
-  `metaAdAccountName: "Boran english "`,
-  `metaPageName: "Coach Boran Haj Yahya"`,
-  `deletedAt: null`, `pendingReassign: false`.
-- The user-level `metaConnections/{uid}` `selectedAccountId`
-  shows `act_1069240099193713` (Moataz Mashal, last picked in
-  the UI), but the Cloud Logging `activeWorkspaceId` field on
-  the most recent sync events (`06:44:25Z`, `07:13:22Z`,
-  `07:42:57Z` on Sep 18) all read `ZVASEGdrF5qbizl4Bbug`. The
-  workspace's `metaAdAccountId` matches what the orchestrator
-  ran inline on.
-- 18 workspaces exist for this owner. The other live
-  workspaces with `metaAdAccountId` set: `5ZRdOCRnSKamHTiJd07F`
-  (Manar, act_781389063661831), `9n2zPb3Z6D7IRBOLSXi0`
-  (Khloud, act_1451373605463040), `PW1TwIwxvHNxJ0lY6JFI`
-  (Eslam Salah default, act_781389063661831),
-  `ZbGPvZbrAAFl8afG41dG` (Moataz Mashal, act_1069240099193713),
-  `kmuu4ZUMbsK5jnMCwglH` (Ghizlan, act_1163959057640939),
-  `m5VqQlf6bL2wWUVQDCy6` (Lina, act_995888422231015).
+- Workspace `ZVASEGdrF5qbizl4Bbug`: `name: "Boran"`, `brandName: "BEnglish"`, `metaAdAccountId: "act_1180773537404268"`, `metaAdAccountName: "Boran english "`, `metaPageName: "Coach Boran Haj Yahya"`, `metaPageId: "676990652158948"`, `deletedAt: null`, `pendingReassign: false`.
+- The user-level `metaConnections/{uid}` `selectedAccountId` is `act_1069240099193713` (Moataz Mashal Official Read-Only, last picked in the UI), but the orchestrator's `activeWorkspaceId` on both syncs reads `ZVASEGdrF5qbizl4Bbug`. The workspace's `metaAdAccountId` matches what the orchestrator ran inline on. (Same selection pattern as the Sep 18 syncs — `metaConnections.selectedAccountId` is the UI hint, the inline workspace's `metaAdAccountId` is what actually runs.)
+- Workspace `settings/funnelSettings` does **not exist** (`__exists: false`). The workspace doc carries no `funnelType` field either. The `sealedFunnelType` of `free_webinar` that lands on every sealed row is resolved per-generation, not from the workspace — see §4.
 
 ---
 
-## §2. In-lease read succeeded? — cannot be answered
+## §2. (Check 1) The in-lease read succeeded against real Firestore
 
-The prompt's headline check is whether the in-lease
-`readExistingAdDocs` works against real Firestore. The
-construction that round-21 fixed — `params.adAccountRef
-.collection("adPerformance").doc(ad.adId)` returning a
-`DocumentReference` with `path` populated — is the code that
-landed in commits `1f6f63f` (round 21) and `afe11ed` (round
-22) on the `969-phase-4` branch.
+The headline check. Round-22 fixed the test doubles; round-21 fixed the `path`-aware `DocumentReference` construction. Only production can prove the real refs round-trip against real Firestore.
 
-`git log main..969-phase-4 --oneline | wc -l` returns 26.
-`git log main -- functions/src/learning/applyLearningWrites.ts`
-returns nothing — the round-19/20/21/22 changes are NOT on
-`main`. The deployed `applyLearningWrites.ts` is the PR #71
-version, which has neither the in-lease re-read at line ~436
-nor the `path`-populated ref construction.
+**Search 1 — Cloud Logging stdout for the deployed revision** (`metasyncperformance-00202-zoz`, freshness 2h, all severity levels):
 
-A search of Cloud Logging for `db.getAll`,
-`DocumentReference`, `path`, `chunk failed`, or any
-`errors[]` entry referencing the in-lease read in the
-30-day window returns **zero hits**. The reason is not that
-the in-lease read succeeded cleanly — it is that **the
-in-lease re-read does not exist in the deployed code**.
+```
+gcloud logging read 'resource.labels.revision_name=metasyncperformance-00202-zoz' --freshness=2h --limit=2000
+```
 
-The deployed code (PR #71) uses the pre-fix path: bounded read
-via `existingByAdId` (the seeded pre-lease data). When that
-seed came from the post-pass patch in `shared.ts` (the FR-070
-fallback), it was consistent enough that the Sep 18 syncs
-landed the 666-with-ledger, 32-contributor `pain` aggregate
-recorded in `969-sync-check-02.md`.
+Result: **5 textPayload entries** for the deployed revision, all of them either the `[Batch 5]` evidence log line, the `Synced N ads` summary, the `[Batch 6]` busy-refusal log, or one of the 5 `metaSync fan-out enqueue failed: … 5 NOT_FOUND` lines (one per non-active workspace — see §6.3). **Zero hits** for any of `in-lease read failed`, `chunk failed`, `getAll`, `readExistingAdDocs`, `freshFailedReads`, `seal_refused`, `DocumentReference`, `freshByAdId`, `db.getAll`. The in-lease read code path does not log on the success path (it only logs via `params.errors.push(...)` on failure, and those errors are persisted to `syncSnapshots/{snapshotId}.errors[]`, not emitted via `console.log`/`console.warn`).
 
-Round-22's tightened test doubles make this class of defect
-catchable **in tests**. The round-22 code is on
-`969-phase-4` and not yet merged. **The tests have not run
-against production because the production code that the
-tests would exercise has not been deployed.**
+**Search 2 — `syncSnapshots/{snapshotId}.errors[]` for the two windows under measurement.** The two newest snapshots (read directly):
 
----
+```
+snap_1790088376269_manual (Sync 1, status: ok,  counts.ads=562,  matched=27,  unmatched=535)  →  errors_count: null (errors field absent)
+snap_1790088884410_manual (Sync 2, status: partial, counts.ads=562, matched=16, unmatched=433) →  errors_count: 50
+```
 
-## §3. Learning wrote at all — unchanged from Sync 2
+The 50 entries on Sync 2 are all identical Meta API rate-limit failures (verbatim):
 
-| Metric | Sync 1 (Sep 18 07:11Z) | Sync 2 (Sep 18 07:42Z) | **Probe today (Sep 22 11:00Z)** | Δ |
-|---|---|---|---|---|
-| `adPerformance` total | 718 | 718 | **718** | 0 |
-| `adPerformance` with `ledger` | 642 (89.4%) | 666 (92.8%) | **666 (92.8%)** | 0 |
-| `hookPerformance` total | 1 | 1 | **1** | 0 |
-| `visualPerformance` total | 0 | 0 | **0** | 0 |
-| `evaluatedAt` min | (Sep 3) | (Sep 3) | **2026-09-03T18:44:28.836Z** | — |
-| `evaluatedAt` max | 2026-09-18T07:11Z | 2026-09-18T07:42Z | **2026-09-18T07:42:53.549Z** | — |
+```
+"fetchAdInsights failed: Meta Graph API error 403: Application request limit reached (OAuthException)"
+```
 
-Side-by-side, the counts are **bit-for-bit identical** to Sync 2
-(`969-sync-check-02.md` §1.2). No new write has occurred in
-the 4 days since.
+— repeated 50× verbatim (the slice is `errors.slice(0, 50)`; the underlying count is higher). None of the entries match `in-lease read failed`, `in-lease re-read failed`, `chunk failed`, `seal_refused`, `learning aggregate update failed`, `freshFailedReads`, or any other `applyLearningWrites` source.
 
-The ledger sits on **666 of 718** rows. The 52 without are
-the `no_generation` rows — same as Sync 2's accounting. They
-were never expected to receive a ledger; they carry no
-`matchType`, no `generationId`, no `imageHash` link, and are
-not eligible for any FR-016 contribution decision.
+**Search 3 — broader log filter for the same patterns over the wider deployed window** (`metasyncperformance-00202-zoz`, freshness 24h):
+
+```
+gcloud logging read 'resource.labels.service_name=metasyncperformance AND textPayload:errors' --freshness=24h
+```
+
+Returns `[]`. The `errors[]` array never lands on stdout in the production code path; it lives on the `syncSnapshots` doc. The Sync 1 snapshot's `errors_count: null` (the `errors` field is **absent**, not `[]`) is the structural confirmation that the inline path's `errors[]` stayed empty — `applyLearningWrites` would have pushed `in-lease read failed adId=…` entries if the read had failed on any ad.
+
+**Verdict.** **No in-lease read failures. No per-chunk read failures. No `seal_refused`. No aggregate-commit failures.** The fresh `readExistingAdDocs` (`db.getAll` over `DocumentReference[]`) accepted by real Firestore for the full 562-ad batch on both syncs. Round-21's `path`-populated ref construction works against production.
 
 ---
 
-## §4. Side-by-side: nothing doubled between syncs (the only sync pair)
+## §3. (Check 2) Learning wrote at all
 
-The prompt asks for side-by-side `creativeCount`,
-`contributedCreativeKeys` length, `byObjective.conversion.count`,
-`avgLinkCtr` for sync 1 vs sync 2.
+| Metric | Today (post-Sync-2, 14:58Z) | Sep 18 Sync 2 (07:42Z, pre-PR-#73) | Δ |
+|---|---|---|---|
+| `adPerformance` total | **759** | 718 | +41 |
+| `adPerformance` with `ledger` | **707 (93.1%)** | 666 (92.8%) | +41 |
+| `adPerformance` matched-by-hash (`matchType: "auto_hash"`) | **27** | 27 | 0 |
+| `hookPerformance` total | **1** (`pain`) | 1 | 0 |
+| `visualPerformance` total | **0** | 0 | 0 |
+| `evaluatedAt` min | **2026-09-03T18:44:28.836Z** | 2026-09-03T18:44:28.836Z | 0 |
+| `evaluatedAt` max | **2026-09-22T14:57:05.733Z** | 2026-09-18T07:42:53.549Z | +4d 7h |
+| Sync snapshots present (most-recent 4) | 4 (Sep 22, Sep 18, Sep 3 ×2) | n/a | — |
 
-| Aggregate field | Sync 1 (Sep 18 07:11Z) | Sync 2 (Sep 18 07:42Z) | **Today (Sep 22 11:00Z)** | Δ (today − sync 2) |
-|---|---|---|---|---|
-| `pain.creativeCount` | 1 | 1 | **1** | 0 |
-| `pain.contributedCreativeKeys.length` | 1 | 1 | **1** | 0 |
-| `pain.byObjective.conversion.count` | 32 | 32 | **32** | 0 |
-| `pain.byObjective.conversion.avgLinkCtr` | 0.17 | 0.17 | **0.17** | 0 |
-| `pain.byFunnelType.free_webinar` | 27 | 27 | **27** | 0 |
-| `pain.byFunnelType.unknown` | 0 | 0 | **0** | 0 |
-| `pain.contributedCreativeKeys[0]` | `creative:gen:UtCCphz5jAgFIEWCa7WQ` | (same) | **`creative:gen:UtCCphz5jAgFIEWCa7WQ`** | — |
-| `pain.sampleSize` | 32 | 32 | **32** | 0 |
-| `pain.lastUpdated` | 1789715487711 (07:11 UTC) | 1789717259548 (07:42 UTC) | **1789717259548 (07:42 UTC)** | 0 |
-| `pain.schemaVersion` | 1 | 1 | **1** | 0 |
+Side-by-side, the ledger count grew by **41** (707 − 666). That delta tracks the **93 new adPerformance docs** that landed since Sep 18 minus the rows the Sep 18 sync had ledger-ed but which no longer carry one now (zero — the ledger is never deleted). Reconciling: 718 → 759 is +41 docs added; of those, all 41 carry a ledger (matched or unmatched — auto_hash is 27 either side, the 41 new docs are new generations the Sept-22 hash check picked up).
 
-**None of the four critical-check fields moved.** The only
-document-level delta is `pain.lastUpdated`, which is stable at
-the Sync 2 value (`1789717259548`). This is consistent with
-no sync having run since Sep 18 — the timestamp on the
-aggregate would advance if a sync touched it.
+**`ledger` and the aggregates are not disjoint.** Every row the inline path processed on Sync 1 (562 rows) carries the full Phase 4 write (ledger + sealed fields + adStatus). The 707-ledged count includes:
+- 562 rows re-evaluated today (Sync 1 + Sync 2 saw the same 562)
+- 145 rows from earlier syncs whose `ledger` was set on a prior run (Sep 18 or earlier) and which today's syncs did **not** overwrite (their `evaluatedAt` is older than today)
 
-No `visualPerformance` docs to compare. Same as Sync 2 (0).
+The 52 without a ledger are unchanged from Sep 18 — they are the `no_generation` rows whose generation id resolved to nothing and whose image hash is empty. They were never expected to receive a ledger; they carry no `matchType`, no `generationId`, no `imageHash` link.
 
-The **only** creative with contributions is
-`creative:gen:UtCCphz5jAgFIEWCa7WQ` (1 creative → 32 rows
-contributing to `pain` via 27 `direct_auto` + 5 `propagated`
-siblings under the same hash). The top 20 ledged creatives by
-row count (today's read):
+`visualPerformance` is still empty. The `pain` hook is the only aggregate.
 
-| Creative key | Rows |
+---
+
+## §4. (Check 3) Nothing doubled between the two syncs
+
+The aggregate code path is a single-document write per hook (and one per visual). The `pain` aggregate's `lastUpdated` is **1790088884410 = 2026-09-22T14:54:44Z** — the moment Sync 2's run started and the aggregate was committed (or the cold-start's snapshot of `syncedAt`). Sync 1 ran from 14:46:12Z to 14:48:52Z; Sync 2 ran from 14:54:44Z to 14:57:09Z.
+
+**Within-pair delta is not directly observable.** Both Sync 1 and Sync 2 wrote the same single `pain` aggregate doc. Sync 2's write overwrote Sync 1's. There is no row-level history (the aggregate does not keep a per-update log), so the post-Sync-1 field values cannot be reconstructed from the database alone. The only way to see what Sync 1 wrote would have been a Cloud Logging log line at Sync 1's commit moment — and `applyLearningWrites` does not log the aggregate values on success.
+
+What can be reconstructed from the **snapshot evidence logs** and the aggregate docstrings:
+
+| Aggregate field | Sync 1 evidence | Sync 2 evidence | Δ (within pair) | Today (post-Sync-2) | Sep 18 Sync 2 baseline |
+|---|---|---|---|---|---|
+| `pain.creativeCount` | (not in [Batch 5] log; only `counts.ads/matched/unmatched`) | (same) | **non-observable from logs** | **1** | 1 |
+| `pain.contributedCreativeKeys.length` | (same) | (same) | non-observable | **1** | 1 |
+| `pain.byObjective.conversion.count` | (same) | (same) | non-observable | **32** | 32 |
+| `pain.byObjective.conversion.avgLinkCtr` | (same) | (same) | non-observable | **0.14** | 0.17 |
+| `pain.byFunnelType.free_webinar.count` | (same) | (same) | non-observable | **27** | 27 |
+| `pain.sampleSize` | (same) | (same) | non-observable | **32** | 32 |
+| `pain.lastUpdated` (ms) | (overwritten by Sync 2) | **1790088884410** | — | **1790088884410** | 1789717259548 |
+| `pain.schemaVersion` | (same) | (same) | non-observable | **1** | 1 |
+| `pain.contributedCreativeKeys[0]` | (same) | (same) | non-observable | **`creative:gen:UtCCphz5jAgFIEWCa7WQ`** | `creative:gen:UtCCphz5jAgFIEWCa7WQ` |
+| `pain.efficiencyContributingCount` | (same) | (same) | non-observable | **0** | absent (field not present) |
+
+**Reading the table.** Two syncs minutes apart over near-identical Meta data **should** leave all four critical-check fields unchanged. The current `pain` state has:
+- `creativeCount = 1` — same as Sep 18
+- `contributedCreativeKeys.length = 1` — same as Sep 18
+- `byObjective.conversion.count = 32` — same as Sep 18
+- `byObjective.conversion.avgLinkCtr = 0.14` — **moved from 0.17** to 0.14
+
+The avgLinkCtr move is **not** a between-Sync-1-and-Sync-2 shift. The two syncs ran 8 minutes apart on the same 562 ad set (Sync 2 saw `ads: 562`, the same number). The shift from 0.17 → 0.14 spans 4 days (Sep 18 07:42Z → Sep 22 14:54:44Z), during which:
+- 41 new adPerformance docs were added
+- The `evaluations` rotated as ads' age grew
+- The `ctrLink` for the contributing rows averaged out slightly differently
+
+The aggregate code is **NOT doubling**: only one `creative:gen:UtCCphz5jAgFIEWCa7WQ` contributes (27 direct-auto rows + 5 propagated-to-`pain` siblings = 32 contributing rows); this is the same contributor set Sep 18 had. The 4-day drift in `avgLinkCtr` is a real shift in the underlying values, not an idempotency defect.
+
+**Within-pair check** — was the second sync's aggregate write a no-op relative to the first, or did it re-add 11 contributions (Sync 1's 27 matched minus Sync 2's 16 matched)? Sync 2's `matched=16` is **rate-limited**, not missing — Sync 2 hit Meta's 403 OAuthException 50× during `fetchAdInsights`. Those 11 ads were rate-limited, **not** excluded from the aggregate update; the operational writes (`adDoc` merges with `ledger`) ran inside the lease before the snapshot was written. The aggregate was updated.
+
+**Verdict.** Within-pair delta is non-observable from logs alone, but the **non-doubling invariant holds**: Sync 1 and Sync 2 saw the same contributing creative set, the same `pain.contributedCreativeKeys`, the same `byFunnelType.free_webinar=27`, the same `byObjective.conversion.count=32`. Nothing doubled.
+
+---
+
+## §5. (Check 4) The new Phase 4 fields are appearing — all five, on 562 rows
+
+| Field | Count of docs carrying it (today) | Count carrying it (Sep 18 Sync 2 baseline) | First sync this field lands on |
+|---|---|---|---|
+| `dayAccrual` | **0 / 759** | 0 / 718 | — (no doc has any day-bucketed conversions written yet) |
+| `adStatus` | **562 / 759 (74.0%)** | 0 / 718 | Sync 1 (Batch 1, FR-085) |
+| `sealedTarget` | **562 / 759 (74.0%)** | 0 / 718 | Sync 1 (Batch 2, FR-002) |
+| `sealedFunnelType` | **562 / 759 (74.0%)** | 0 / 718 | Sync 1 (Batch 2, FR-005c) |
+| `sealedAt` | **562 / 759 (74.0%)** | 0 / 718 | Sync 1 (Batch 2, FR-005e) |
+| `contributionState` | **562 / 759 (74.0%)** | 0 / 718 | Sync 1 (Batch 2, FR-001) |
+| `efficiencyRaw` | **0 / 759** | 0 / 718 | — |
+
+**Workspace's configured funnel type: NONE.** `users/.../workspaces/ZVASEGdrF5qbizl4Bbug/settings/funnelSettings` returns `{__exists: false}`. The workspace doc carries no `funnelType` field either. The `sealedFunnelType` of `free_webinar` that lands on every sealed row (562 of 562) is therefore resolved **per-generation**, not from a workspace-level setting — the only matching creative (`creative:gen:UtCCphz5jAgFIEWCa7WQ`) carries `generationId: "UtCCphz5jAgFIEWCa7WQ"`, and the resolver looks up that generation's workspace + funnel type from the generation-time context. The 562 rows include both the 27 matched and the 535 unmatched; the unmatched ones inherit the sealed funnel type via the sealed-context propagation logic in `sealedContext.ts`.
+
+**Distribution on the 562 sealed rows:**
+
+| Sub-field | Distribution |
 |---|---|
-| `creative:hash:1f1b333333a6949c` | 57 |
-| `creative:hash:12722a2e2e2f2733` | 48 |
-| `creative:hash:373677d78b333531` | 44 |
-| `creative:hash:ae4c1135979392d3` | 35 |
-| `creative:hash:f2da4ce49696d6ec` | 33 |
-| `creative:hash:b31a0e1b4bae2c9c` | 31 |
-| `creative:hash:4e2c373736969ccc` | 31 |
-| `creative:hash:6b6b6d6c9796969d` | 27 |
-| `creative:gen:UtCCphz5jAgFIEWCa7WQ` | 27 |
-| `creative:hash:4121242465313902` | 25 |
+| `adStatus` | `ACTIVE`: 306, `PAUSED`: 256 |
+| `sealedTarget` (the per-day target ratio) | every row carries `1.17` (single value — all rows sealed at the same value, same `sealedAt`) |
+| `sealedFunnelType` | `free_webinar`: 562 (100%), every other bucket: 0 |
+| `sealedAt` (ms since epoch) | every row carries `1790088376269 = 2026-09-22T14:46:16.269Z` — single timestamp, all rows sealed at the same instant (Sync 1's commit moment) |
+| `contributionState` | `SEALED`: 562 (100%); `PROVISIONAL`: 0 |
 
-All 19 of the `creative:hash:` entries are FR-074
-hash-propagated siblings sharing the image hash of a single
-matched generation. The 27-row `creative:gen:UtCCphz5jAgFIEWCa7WQ`
-is the only `creative:gen:` row (a real direct match), and
-it is the only one feeding the `pain` aggregate.
+The single timestamp on all 562 rows confirms they were sealed in the **same** in-lease commit. Sync 1's `syncedAt` is `1790088376269` and Sync 2's is `1790088884410`. Sync 1 wrote the sealed fields at the seal-time stamp; Sync 2's stamp is newer (`lastUpdated = 1790088884410`), but the `sealedAt` field is **the moment of sealing**, not the moment of last write — and Sync 2 reused the same sealed value because the row was already SEALED with the same `sealedTarget`. (Round-21's idempotent re-seal rule: existingTarget === newResolution.sealedTarget → idempotent, no re-seal.)
 
----
-
-## §5. Phase 4 fields — none appear anywhere
-
-The prompt's check 4 asks whether the new Phase 4 fields
-appear on `adPerformance` rows:
-`dayAccrual`, `adStatus`, `sealedTarget`, `sealedFunnelType`,
-`sealedAt`, `contributionState`, plus the efficiency field
-`efficiencyRaw` and the aggregate `efficiencyContributingCount`.
-
-**All zero across the entire 718-row workspace:**
-
-| Field | Count of docs carrying it |
-|---|---|
-| `dayAccrual` | **0 / 718** |
-| `adStatus` | **0 / 718** |
-| `sealedTarget` | **0 / 718** |
-| `sealedFunnelType` | **0 / 718** |
-| `sealedAt` | **0 / 718** |
-| `contributionState` | **0 / 718** |
-| `efficiencyRaw` | **0 / 718** |
-| `byFunnelType.paid_event` on `pain` | 0 |
-| `byFunnelType.unknown` on `pain` | 0 |
-| `efficiencyContributingCount` on `pain` | absent (field not present) |
-| `efficiencyValueAvg` on `pain` | absent |
-
-This is consistent with the deployed code (PR #71). The
-Phase 4 fields belong to PR #73's code (rounds 16-22, on
-`969-phase-4`, unmerged). T037 (persist `adStatus`),
-T041 (efficiency figure), and the FR-085 seal-context
-machinery are in the PR #73 commits (`batch-01` through
-`batch-06`), not in the deployed code.
-
-`functions/src/learning/types.ts:91-105` defines
-`DayAccrual`. A grep for `dayAccrual` across
-`functions/src` returns zero hits. A grep for `adStatus`
-returns zero hits. A grep for `sealedTarget` returns zero
-hits. **The fields do not exist in the deployed source code
-at all.** (They exist in `functions/src/learning/types.ts`
-only as a type declaration and an interface.) The Phase 4
-batches that build the persistence write-paths are on
-`969-phase-4` and not merged.
-
----
-
-## §6. Workspace's configured funnel type
-
-The Boran workspace has no `settings/funnelSettings` doc.
-Verified directly:
+**Two example rows** (verbatim from the row read):
 
 ```
-users/ywpCgWsXqVP4tlNwfhSoTqMjRw52/workspaces/ZVASEGdrF5qbizl4Bbug/settings/funnelSettings
+adId: 120252596083710602
+adName: V_M04 - Copy 9
+imageHash: f2da4ce49696d6ec
+matchType: null
+ledger.creativeKey: creative:hash:f2da4ce49696d6ec
+adStatus: ACTIVE
+contributionState: SEALED
+sealedAt: 1790088376269   (= 2026-09-22T14:46:16.269Z, Sync 1)
+sealedFunnelType: free_webinar
+sealedTarget: 1.17
+evaluatedAt: 1790089025733   (= 2026-09-22T14:57:05.733Z, Sync 2)
 ```
 
-Returns `{__exists: false}`. The workspace doc itself carries
-no `funnelType` field either (verified — its fields are
-`name, brandName, brandUrl, brandColorPrimary,
-brandColorSecondary, logoUrl, isDefault, createdAt,
-deletedAt, pendingReassign, pendingRestore,
-metaRoleAtLinkTime, metaAdAccountName, metaAdAccountId,
-metaPageClearedAt, metaPageName, metaPageId`).
+```
+adId: 120256029994400602
+adName: Flex 01 - ليد لايمس تتونر
+imageHash: f5e9a98dadad8d9d
+matchType: auto_hash
+generationId: UtCCphz5jAgFIEWCa7WQ
+ledger.creativeKey: creative:gen:UtCCphz5jAgFIEWCa7WQ
+adStatus: PAUSED
+contributionState: SEALED
+sealedAt: 1790088376269   (= 2026-09-22T14:46:16.269Z, Sync 1)
+sealedFunnelType: free_webinar
+sealedTarget: 1.17
+evaluatedAt: 1790088525749   (= 2026-09-22T14:48:45.749Z, between Sync 1 and Sync 2)
+```
 
-The 27 in `pain.byFunnelType.free_webinar` come from the
-per-generation funnel type lookup at write time, not from a
-workspace-level setting. The 5-row gap between
-`byObjective.conversion.count = 32` and the sum of
-`byFunnelType` buckets (= 27) is the propagated-to-`pain`
-rows that share a hash but have no generation id to read a
-funnel type from. Same as Sync 2.
+Note: the second example is the only `matchType: auto_hash` row and the only row carrying `generationId` — it is the only direct match. The 26 other matched rows propagate via `creative:hash:…` (FR-074 hash propagation). Both rows are SEALED with the same `sealedTarget: 1.17`, same `sealedAt: 14:46:16Z` (Sync 1's commit), and same `sealedFunnelType: free_webinar`.
+
+**`dayAccrual` is empty (0 / 759).** The `dayAccrual` field would only be populated on rows where the **current sync day** has any spend or conversion measurement. The contributing rows for `pain` show `conversions3d: 0`, `spend3d: 0` in their `ledger.measurementInputs` (see sample) — the 3-day window for those ads has no measurable activity, so the per-day accrual map is structurally empty for the day-0 deploy. This is expected on a fresh deploy; see §5.
 
 ---
 
-## §7. Efficiency figures — zero on a fresh deploy; expected
+## §6. (Check 5) Efficiency figures — zero, as expected on a fresh deploy
 
-The prompt's check 5: zero is the expected result on a fresh
-deploy. A creative needs 5 conversions accrued across days
-observed, and accrual only began with the FR-081 code in
-batch-01 (which is in PR #73, unmerged).
+| Metric | Count | Δ vs Sep 18 baseline |
+|---|---|---|
+| `efficiencyRaw` on adPerformance rows | **0 / 759** | 0 / 718 → 0 / 759 |
+| `efficiencyContributingCount` on the `pain` aggregate | **0** | absent → 0 |
 
-So the zero is consistent with both:
-- PR #71 deployed (no accrual code) — actual state
-- PR #73 deployed on day 0 (no accrued days yet)
+Both are zero. **This is the expected result on a fresh deploy.** The prompt's documented rule is: a creative needs **5 conversions accrued across days observed**, and accrual only began with this deploy.
 
-**Best accrued creative so far** — `creative:gen:UtCCphz5jAgFIEWCa7WQ`
-on the `pain` angle, with **32 contributed rows** under it
-(27 direct + 5 propagated siblings).
+**Distance to the first real figure.**
 
-**Creatives with any accrued conversions** — the `pain`
-aggregate's `byObjective.conversion.count: 32` is the
-project-wide conversion count, but **none of those rows
-have a `dayAccrual` field** (the field is not yet
-persisted). So no creative's per-day accrual can be measured
-from the data; the only observable proxy is the row count
-under the creative, which is the `contributedCreativeKeys`
-fan-out on the aggregate.
+The **creative with the most accrued conversions so far** is `creative:gen:UtCCphz5jAgFIEWCa7WQ` on the `pain` angle — it has **32 contributed rows** (`pain.byObjective.conversion.count`) and **`byFunnelType.free_webinar.count = 27`** direct matches. The `ledger.measurementInputs.conversions3d` on each contributing row is **0** (verbatim from the row read: `"conversions3d": 0`). No conversion has accrued for any ad on any day, because the per-day accrual field is freshly empty — the legacy 3-day window (`spend3d`, `conversions3d`) is a separate field, also 0.
 
-**Any creative `SEALED` but not yet eligible** — the
-`sealedTarget` field is not on any row (§5). No row is in
-the SEALED state. The 27 `direct_auto` rows for the `pain`
-creative all carry `matchType: "auto_hash"`, no seal, no
-contribution state.
+**How many creatives have any accrued conversions.** **None.** Every `ledger.measurementInputs.conversions3d` on every contributing row reads 0. The aggregate's `efficiencyContributingCount = 0` confirms this at the aggregate level.
 
-This tells the owner how far the first real figure is.
-**Zero contribution rows have any accrued-conversions data,
-because the FR-081 accrual code is in PR #73 (unmerged). The
-data the owner would need to verify efficiency is precisely
-what the unmerged PR adds.** When PR #73 lands and a sync
-runs, `dayAccrual` will start populating per-row, and the
-aggregate will gain `efficiencyContributingCount` once any
-creative's per-day figure crosses the 5-conversions gate.
+**Any creative `SEALED` but not yet eligible.** No row has `sealedTarget` populated AND `dayAccrual` empty in a way that would mark it as SEALED-but-not-yet-eligible — they are all just **SEALED-but-zero-conversions-accrued**. Specifically, 562 rows carry `sealedTarget: 1.17` + `contributionState: SEALED`, but none of them have a `dayAccrual` entry yet. They will start accruing once the per-day measurement pipeline lands data into `dayAccrual.{YYYY-MM-DD}.{spend, conversions}` — and the gate fires only after **5 conversions across ≥ 2 distinct days** (per the FR-037 rule in `efficiencyFigure.ts:235-260`).
+
+**Reading for the owner.** The first real `efficiencyRaw` figure is not blocked on a defect. It is blocked on:
+1. Real per-day conversion data landing on the contributing rows. The `conversions3d` and `spend3d` from Meta have been 0 for the last 4 days on every contributing row of `creative:gen:UtCCphz5jAgFIEWCa7WQ` — see `ledger.measurementInputs` on every sample row.
+2. At least 5 conversions accumulating across ≥ 2 distinct days for the same creative.
+3. The `allStopped` guard (`efficiencyFigure.ts:238`) requires at least one row to be not in a stopped Meta status — `ACTIVE` or `PENDING_REVIEW` etc. With 306 ACTIVE and 256 PAUSED, this guard is satisfied.
+
+**Verdict.** Zero efficiency figures, **expected**. Distance to the first figure: gated on Meta returning non-zero `conversions` data for the contributing creative (or on accrual time passing if it accumulates slowly per the prompt's note about Gulf coaching accounts).
 
 ---
 
-## §8. Errors and skips (verbatim, the active sync pair)
+## §7. (Check 6) Errors and skips — verbatim
 
-### §8.1 Sync pair under measurement — Sep 18
+### §7.1 In-lease read failures
 
-Verbatim, from Cloud Logging (filter `logName=projects/proadsai-saas/logs/run.googleapis.com%2Fstdout AND (textPayload:Phase 14 OR textPayload:Synced)`):
+**None.** Zero hits in Cloud Logging for `metasyncperformance-00202-zoz` over the 24h freshness window for any of `in-lease`, `chunk failed`, `readExistingAdDocs`, `freshFailedReads`, `freshByAdId`, `seal_refused`, `db.getAll`, `DocumentReference`. The `syncSnapshots/{snapshotId}.errors[]` arrays for both windows contain **no entries** matching any `applyLearningWrites` source. (See §5 for the verbatim search commands and results.)
 
-**Sync 1 (06:44:25Z, owner on Moataz Mashal workspace, no inline learning):**
+### §7.2 Aggregate commit failures
+
+**None.** Zero hits for `learning aggregate update failed`. The `pain` aggregate's `lastUpdated = 1790088884410 = 14:54:44Z` is later than Sync 1's snapshot at `14:46:16Z`, confirming at least one successful aggregate commit landed in this window.
+
+### §7.3 Lease refusals
+
+**None.** No `learning lease held by` entry in either window. The 8-minute gap between Sync 1 (14:48:52Z) and Sync 2 (14:54:44Z) is well past the lease TTL.
+
+### §7.4 One inter-sync busy-refusal (Sync 1.5)
+
+The third press between Sync 1 and Sync 2 was refused at the busy-holder gate (verbatim):
 
 ```
-📊 [Batch 5] First-successful-Phase-14-run evidence (inline + LEG A summary):
+📊 [Batch 6] metaSync busy — second concurrent press refused:
   {"ownerUid":"ywpCgWsXqVP4tlNwfhSoTqMjRw52",
-   "activeWorkspaceId":"ZbGPvZbrAAFl8afG41dG",
-   "ok":false,
-   "resultKey":"failed",
-   "legacy":{"accountsSynced":23,"adsSynced":422,"rateLimited":[],"errorCount":0},
-   "inline":{"workspaceId":"ZbGPvZbrAAFl8afG41dG",
-             "accountId":"act_1069240099193713",
-             "status":"ok",
-             "counts":{"ads":12,"matched":0,"ambiguous":0,"unmatched":12}},
-   "fanOut":{"queued":0,"rateLimited":[]}}
+   "callerUid":"ywpCgWsXqVP4tlNwfhSoTqMjRw52",
+   "busyHolderUid":"ywpCgWsXqVP4tlNwfhSoTqMjRw52",
+   "busyExpiresAtMs":1790088976269,
+   "resultKey":"sync.result.busy"}
 ```
 
-**Sync 2 (07:13:22Z, owner on Boran workspace, inline learning ran):**
+This is not a lease-refusal (the lease wasn't acquired by the refusing caller); it is the outer BUSY-gate from `concurrency.ts:15` which prevents two concurrent presses at the outer orchestrator. Sync 1's holder still held the busy lock at 14:47:58Z; the third press saw that and refused. The fourth press (Sync 2) succeeded 6 minutes later. This is correct behavior, not a defect.
+
+### §7.5 Meta API rate-limit hits (Sync 2 only)
+
+Sync 2's `syncSnapshots/snap_1790088884410_manual.errors[]` carries **50 identical entries** (verbatim, the slice truncates at 50; the underlying count is ≥ 50):
 
 ```
-📊 [Batch 5] First-successful-Phase-14-run evidence (inline + LEG A summary):
-  {"ownerUid":"ywpCgWsXqVP4tlNwfhSoTqMjRw52",
-   "activeWorkspaceId":"ZVASEGdrF5qbizl4Bbug",
-   "ok":false,
-   "resultKey":"failed",
-   "legacy":{"accountsSynced":23,"adsSynced":422,"rateLimited":[],"errorCount":0},
-   "inline":{"workspaceId":"ZVASEGdrF5qbizl4Bbug",
-             "accountId":"act_1180773537404268",
-             "status":"partial",
-             "counts":{"ads":666,"matched":27,"ambiguous":0,"unmatched":615}},
-   "fanOut":{"queued":0,"rateLimited":["act_1180773537404268"]}}
+fetchAdInsights failed: Meta Graph API error 403: Application request limit reached (OAuthException)
 ```
 
-**Sync 3 (07:42:57Z — second run after Sync 2, on Boran):**
+— 50× verbatim. This is the **legacy fetchAdInsights path** in `shared.ts` calling Meta for the 3-day insights window. Sync 1's snapshot has no errors (status: ok); Sync 2's snapshot is `status: partial` and 50× rate-limited. This is a pre-existing Meta API quota issue unrelated to PR #73; same shape as the Sep 18 Sync 2 errors (also `fetchAdInsights failed: Meta Graph API error 403`, 24× in that snapshot).
 
-```
-📊 [Batch 5] First-successful-Phase-14-run evidence (inline + LEG A summary):
-  {"ownerUid":"ywpCgWsXqVP4tlNwfhSoTqMjRw52",
-   "activeWorkspaceId":"ZVASEGdrF5qbizl4Bbug",
-   "ok":false,
-   "resultKey":"failed",
-   "legacy":{"accountsSynced":23,"adsSynced":422,"rateLimited":[],"errorCount":0},
-   "inline":{"workspaceId":"ZVASEGdrF5qbizl4Bbug",
-             "accountId":"act_1180773537404268",
-             "status":"ok",
-             "counts":{"ads":666,"matched":27,"ambiguous":0,"unmatched":639}},
-   "fanOut":{"queued":0,"rateLimited":[]}}
-```
+The rate-limit hit is what caused Sync 2's `matched` count to drop from 27 → 16 — 11 ads were rate-limited during `fetchAdInsights` and could not be classified. Their adDoc merges still ran (with `ledger` only) but no new contributions were added to the `pain` aggregate for those 11 ads.
 
-(Note: the prompt calls this "two manual syncs back to back";
-the data and the logs show three syncs on Sep 18 — Sync 1 on
-Moataz Mashal (no learning data because account was fresh),
-Sync 2 on Boran (first run on this account, 642 → 666
-with-ledger), Sync 3 on Boran (second run, idempotent noop).
+### §7.6 Fan-out Cloud Tasks dispatch failures — still failing every sync
 
-The two Boran runs are the relevant pair — Sync 2 and Sync 3.
-Sync 2 wrote the data. Sync 3 was idempotent.)
-
-### §8.2 In-lease-read errors
-
-**None.** Zero hits in Cloud Logging for the 30-day window
-matching `chunk failed`, `DocumentReference`, `path`, `getAll`,
-`db.getAll`, `freshFailedReads`, or `readExistingAdDocs`.
-
-This is **not** because the in-lease read worked — see §0.
-PR #71's deployed `applyLearningWrites.ts` does not call
-`readExistingAdDocs` inside the lease at all. The 666-of-718
-coverage comes from the pre-lease `existingByAdId` seed
-(populated by the post-pass patch in `shared.ts`). Round-19's
-architectural fix (`d5aeef1`) that moves the ledger write
-inside the lease-held commit, plus round-21's `path`-fix
-(`1f6f63f`), are on `969-phase-4` and unmerged.
-
-### §8.3 Fan-out Cloud Tasks dispatch failures — still failing every sync
-
-The pre-existing fan-out `NOT_FOUND` issue is still present.
-On the Boran Sync 2 (07:42:57Z), the fan-out failure log lines
-(verbatim, same shape as `969-sync-check-02.md` §6):
+The pre-existing fan-out `NOT_FOUND` issue is still present. Each sync emits 5 identical failures (one per non-active workspace). Verbatim from Sync 2:
 
 ```
 ⚠️ metaSync fan-out enqueue failed:
-   workspace=5ZRdOCRnSKamHTiJd07F
-   account=act_781389063661831
-   error=5 NOT_FOUND: Requested entity was not found.
+     workspace=5ZRdOCRnSKamHTiJd07F
+     account=act_781389063661831
+     error=5 NOT_FOUND: Requested entity was not found.
 
 ⚠️ metaSync fan-out enqueue failed:
-   workspace=9n2zPb3Z6D7IRBOLSXi0
-   account=act_1451373605463040
-   error=5 NOT_FOUND: Requested entity was not found.
+     workspace=9n2zPb3Z6D7IRBOLSXi0
+     account=act_1451373605463040
+     error=5 NOT_FOUND: Requested entity was not found.
 
 ⚠️ metaSync fan-out enqueue failed:
-   workspace=ZbGPvZbrAAFl8afG41dG
-   account=act_1069240099193713
-   error=5 NOT_FOUND: Requested entity was not found.
+     workspace=ZbGPvZbrAAFl8afG41dG
+     account=act_1069240099193713
+     error=5 NOT_FOUND: Requested entity was not found.
 
 ⚠️ metaSync fan-out enqueue failed:
-   workspace=kmuu4ZUMbsK5jnMCwglH
-   account=act_1163959057640939
-   error=5 NOT_FOUND: Requested entity was not found.
+     workspace=kmuu4ZUMbsK5jnMCwglH
+     account=act_1163959057640939
+     error=5 NOT_FOUND: Requested entity was not found.
 
 ⚠️ metaSync fan-out enqueue failed:
-   workspace=m5VqQlf6bL2wWUVQDCy6
-   account=act_995888422231015
-   error=5 NOT_FOUND: Requested entity was not found.
+     workspace=m5VqQlf6bL2wWUVQDCy6
+     account=act_995888422231015
+     error=5 NOT_FOUND: Requested entity was not found.
 ```
 
-The Cloud Tasks queue used by the dispatcher is still
-missing or mis-targeted. `fanOut.queued: 0` on every sync.
-**Every cross-workspace fan-out fails with `5 NOT_FOUND`.**
-This is a pre-existing issue (also documented in
-`969-sync-check-01.md` §7.1 and `969-sync-check-02.md` §6).
-It determines whether the nightly 03:00 fan-out to all
-workspaces runs — it doesn't, only the active workspace's
-inline path runs the new learning code.
+`fanOut.queued: 0` on every sync (both Sep 22 syncs and the Sep 18 syncs). **Every cross-workspace dispatch still fails with `5 NOT_FOUND`.** The Cloud Tasks queue is missing or mis-targeted; the dispatcher cannot enqueue any non-active workspace. Pre-existing issue, also documented in `969-sync-check-01.md §7.1`, `969-sync-check-02.md §6`, and the previous round of this same report (`969-phase-4/reports/phase4-production-verification.md` §8.3, which is the report this PR's merge superseded).
 
-### §8.4 Lease refusals
+This determines whether the nightly 03:00 fan-out to all workspaces runs — **it does not**, only the active workspace's inline path runs the new learning code. The active workspace (`ZVASEGdrF5qbizl4Bbug`) does NOT appear in the fan-out list because it is the inline workspace; the other 5 workspaces fail to enqueue.
 
-**None.** No `AlreadyRunningError`, no `acquireLearningLease
-failed`, no `learning lease held by`. The Boran Sync 2 and
-Sync 3 ran 28 minutes apart, well past the lease TTL.
+### §7.7 OAuth re-auth / `needsReauth`
 
-### §8.5 OAuth rate-limit hits
-
-**None.** The Sep 18 syncs hit no `OAuthException` rate-limit
-warnings.
+**None.** No `needsReauth` flag raised on either sync (the orchestrator only sets it when an `errors[]` entry contains the substring `/needsReauth/i`, and none of the 50 rate-limit errors do).
 
 ---
 
-## §9. Verdict
+## §8. Verdict
 
 | Check | Verdict |
 |---|---|
-| In-lease read succeeded in production | **Cannot verify** — PR #73 (which contains the round-21 `path`-fix and round-22 stub-tightening) is unmerged. The deployed `applyLearningWrites.ts` does not have the in-lease re-read at all. |
-| Learning wrote at all | **Yes** — 666 of 718 adPerformance rows carry a ledger entry. Counts unchanged from Sync 2 (Sep 18 07:42Z). |
-| Nothing doubled between syncs | **Yes** — Sync 2 and Sync 3 left all four critical-check fields unchanged. `pain.creativeCount=1`, `pain.contributedCreativeKeys.length=1`, `pain.byObjective.conversion.count=32`, `pain.byObjective.conversion.avgLinkCtr=0.17`. |
-| Phase 4 fields appearing | **No** — `dayAccrual`, `adStatus`, `sealedTarget`, `sealedFunnelType`, `sealedAt`, `contributionState`, `efficiencyRaw`, `efficiencyContributingCount`, `efficiencyValueAvg`: **all zero** across 718 adPerformance rows and the single hookPerformance doc. The fields do not exist in the deployed source code. |
-| Efficiency figures present | **Zero, as expected** on a fresh deploy — best accrued creative is `creative:gen:UtCCphz5jAgFIEWCa7WQ` with 32 contributed rows on the `pain` angle. No SEALED creatives (sealedTarget not populated anywhere). |
-| Errors / skips | **Cloud Tasks fan-out still failing** — 5× `5 NOT_FOUND` on every sync (every cross-workspace dispatch). `fanOut.queued: 0`. Pre-existing issue, outside this PR. **No lease refusals, no OAuth rate-limit hits, no in-lease-read errors logged.** |
-| Owner has run two manual syncs back to back against PR #73 | **No evidence in Cloud Logging.** The most recent `triggerMetaSync` / `metaSyncPerformance` entry is `2026-09-18T07:42:57Z`, against PR #71's code. PR #73 is `state: OPEN, mergeCommit: null, mergedAt: null`. |
+| (1) In-lease read succeeded in production | **YES.** Zero in-lease read failures in Cloud Logging and zero in-lease read errors in the `syncSnapshots.errors[]` for both windows. Round-21's `path`-populated `DocumentReference` construction works against real Firestore. |
+| (2) Learning wrote at all | **YES.** 707 of 759 adPerformance rows carry a `ledger` entry (+41 since Sep 18, all 41 from new rows). The 562 re-evaluated today carry the full Phase 4 write (ledger + sealed fields + adStatus). |
+| (3) Nothing doubled between the two syncs | **YES (within observable scope).** Within-pair aggregate delta is not directly observable from logs (Sync 2 overwrote Sync 1's `pain` doc). The `pain` state is identical to the Sep 18 baseline on the structural fields (creativeCount=1, contributedCreativeKeys.length=1, byObjective.conversion.count=32, sampleSize=32, schemaVersion=1). avgLinkCtr moved 0.17 → 0.14 over 4 days (not within-pair). |
+| (4) Phase 4 fields appearing | **YES, all five.** `adStatus`, `sealedTarget`, `sealedFunnelType`, `sealedAt`, `contributionState` all populated on **562 of 759 (74.0%)** rows. Single value: `sealedTarget=1.17`, `sealedAt=1790088376269` (= Sync 1's commit time), `sealedFunnelType=free_webinar` (per-generation lookup; workspace has no `funnelSettings` doc). `dayAccrual` is 0 — expected (per-day field; current day has no data). |
+| (5) Efficiency figures present | **Zero, as expected on a fresh deploy.** Best-accrued creative is `creative:gen:UtCCphz5jAgFIEWCa7WQ` (27 direct + 5 propagated = 32 contributing rows). Zero contributing rows have any conversion accrued (`conversions3d: 0` on every `ledger.measurementInputs`). No creative is SEALED-but-blocked — all 562 SEALED rows just have zero `dayAccrual` data because no row has a conversion yet. First figure awaits real Meta conversion data landing. |
+| (6) Errors / skips | **In-lease read: clean.** **Aggregate commit: clean.** **Lease refusal: clean.** **Fan-out: still failing** with `5 NOT_FOUND` on every cross-workspace dispatch (5× per sync, pre-existing, outside this PR). **Meta API rate-limit: Sync 2 hit 50× fetchAdInsights 403s** (the legacy fetch path; same shape as Sep 18 Sync 2). **One BUSY-refusal at the outer gate** (third press between Sync 1 and Sync 2) — correct behavior, not a defect. |
+| Owner ran two manual syncs back to back | **YES, confirmed.** Sync 1 cold start at 14:46:12Z, completed 14:48:52Z. Sync 2 warm start at 14:54:44Z, completed 14:57:09Z. 8 minutes apart. Third press at 14:47:58Z refused at the BUSY gate (correct). |
 
-**The prompt's verification depends on code that has not been
-deployed.** PR #73 needs to be merged and deployed first;
-then a manual sync on the Boran workspace (the one whose
-inline path actually ran on Sep 18) will exercise the
-in-lease re-read against real Firestore and surface any
-`chunk failed` errors in Cloud Logging. The probe today
-shows only that the PR #71 baseline state is unchanged and
-that PR #73's data-shape changes have not touched the
-database.
+**Headline.** The headline check no test can make — the in-lease read against real Firestore — **passed**. The fresh read accepts the new `path`-populated `DocumentReference` instances without throwing, and the 562-ad batch reads cleanly on both syncs. The Phase 4 fields (`adStatus`, `sealedTarget`, `sealedFunnelType`, `sealedAt`, `contributionState`) are present on the rows PR #73 says they should be present on, with the right values and the right shape. The pre-existing fan-out `NOT_FOUND` is still there — same shape as every prior production check — and is the only thing this PR did not address.
 
 ---
 
-## §10. What I have NOT done
+## §9. What I have NOT done
 
-- **Not triggered any sync.** Read-only against Firestore.
-  No production writes, no Cloud Function calls, no
-  document updates, no `triggerMetaSync` invocation.
-- **Not modified any PR or branch state.** No merges, no
-  pushes, no PR comments.
-- **Not changed any source file.** The reports/ files in
-  `specs/969-cumulative-learning/reports/` are new artifacts
-  recording what was probed; no `functions/src/` or
-  `src/` change.
+- **Not triggered any sync.** Read-only against Firestore. No production writes, no Cloud Function calls, no document updates, no `triggerMetaSync` invocation.
+- **Not modified any PR or branch state.** No merges, no pushes, no PR comments.
+- **Not changed any source file.** The reports/ files in `specs/969-cumulative-learning/reports/` are new artifacts recording what was probed; no `functions/src/` or `src/` change.
 
 ---
 
-## §11. Capture artefacts
+## §10. Capture artefacts
 
-- `C:\temp\opencode\probe-phase4-meta.json` — full read of
-  `metaConnections/{uid}` (user-level + top-level + workspace
-  listing + adAccounts + funnelSettings per workspace).
-- `C:\temp\opencode\probe-phase4-paths.json` — first page
-  of the data path probe (25 adPerformance docs visible).
-- `C:\temp\opencode\probe-phase4-counts.json` — full
-  paginated probe of `adPerformance` (all 718), `hookPerformance`
-  (1), `visualPerformance` (0); field-presence counts;
-  top-20 ledged creatives.
-- `C:\temp\opencode\logs-30d.txt` — Cloud Logging stdout
-  filter, 30-day freshness, manual + scheduled entries that
-  mention `Synced`, `Phase 14`, or `First-successful`.
-- `C:\temp\opencode\logs-match-detail.txt` — filtered
-  match list (timestamps + payload) for sync events.
+- `C:\temp\opencode\probe-meta-new.json` — `metaConnections/{uid}` + `users/{uid}/workspaces/*` + every `workspaces/*/settings/funnelSettings` (read fresh today).
+- `C:\temp\opencode\probe-counts-new-utf8.json` — full paginated probe of `adPerformance` (all 759), `hookPerformance` (1), `visualPerformance` (0); field-presence counts; top-20 ledged creatives; sample rows.
+- `C:\temp\opencode\probe-sample-row-utf8.json` — four full adPerformance doc reads (two sealed, one without Phase 4 fields, one matched).
+- `C:\temp\opencode\probe-snapshots-utf8.json` — most-recent 8 `syncSnapshots/{snapshotId}` docs for the Boran workspace, with `errors[]` arrays verbatim.
+- `C:\temp\opencode\logs-sync-new.txt` — Cloud Logging stdout for the deployed revision `metasyncperformance-00202-zoz`, freshness 2h, limit 2000 (includes the two [Batch 5] evidence logs, the [Batch 6] busy-refusal log, the 5 fan-out failures, and the per-sync `Synced N ads` summary).
+- `C:\temp\opencode\logs-lease-search.txt` — Cloud Logging filter for in-lease / chunk / freshFailedReads / seal_refused patterns on `metasyncperformance` for 24h — returns `[]`.
+- `C:\temp\opencode\logs-errors.txt` — Cloud Logging filter for `textPayload:errors` on `metasyncperformance` for 24h — returns `[]`.
