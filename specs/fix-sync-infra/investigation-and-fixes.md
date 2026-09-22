@@ -180,7 +180,7 @@ The `setTasksServiceAccount()` export is preserved — callers can still overrid
 ### 1.6 Test: trigger a sync and verify `queued > 0`
 
 I called `triggerMetaSync` as the workspace owner via a Node.js script that:
-1. Mints a Firebase custom token for `islam210.06@gmail.com` (uid `ywpCgWsXqVP4tlNwfhSoTqMjRw52`) using the project's `firebase-adminsdk-fbsvc@proadsai-saas.iam.gserviceaccount.com` SA.
+1. Mints a Firebase custom token for the workspace owner (`<owner-email-redacted>`; uid `<owner-uid-redacted>`) using the project's `firebase-adminsdk-fbsvc@proadsai-saas.iam.gserviceaccount.com` SA.
 2. Exchanges it for an ID token via `identitytoolkit.googleapis.com`.
 3. POSTs `{ data: { workspaceId: "ZbGPvZbrAAFl8afG41dG" } }` to the function URL.
 
