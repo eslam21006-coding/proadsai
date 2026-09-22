@@ -222,11 +222,11 @@ test("mapWithConcurrency — limit of 1 is still valid (serial baseline)", async
 
 // ─── Structural guard: shared.ts really exports GRAPH_CONCURRENCY ───
 
-test("structural guard — shared.ts exports GRAPH_CONCURRENCY === 8", () => {
+test("structural guard — shared.ts exports GRAPH_CONCURRENCY === 4", () => {
     assert.equal(
         GRAPH_CONCURRENCY,
-        8,
-        "GRAPH_CONCURRENCY must stay at 8 unless the report is re-issued; the value is a named constant by design.",
+        4,
+        "GRAPH_CONCURRENCY must stay at 4 unless the report is re-issued; the value is a named constant by design.",
     );
 });
 

@@ -142,17 +142,22 @@ import {
  * (image pass); worst-case = 24. Under Cloud Tasks fan-out
  * (`maxConcurrentDispatches: 5`), aggregate peak = 120 simultaneous.
  *
- * Why 8 (and not 4, 6, 12, 16): wall-clock is not the constraint at
+ * Why 4 (and not 6, 8, 12): wall-clock is not the constraint at
  * any depth ≥ 4 for a 383-ad account — the budget is rate-limit
  * margin. Meta's published best-practices band is 50–200 simultaneous
- * calls per app; 24 sits a third of the way in and 120 aggregate sits
- * inside it. A drop to 4 (peak 12, aggregate 60) is the conservative
- * retune target if telemetry shows the limit is lower. Retune without
- * a code change if real production telemetry justifies it.
+ * calls per app; the peak-per-process at N=4 is 12 (insights pass)
+ * and 4 (image pass), worst-case = 12. Under Cloud Tasks fan-out
+ * (`maxConcurrentDispatches: 5`), aggregate peak = 60 simultaneous —
+ * inside the 200/hour/user band Meta documents for standard-access
+ * apps. The earlier N=8 value put the aggregate at 120 (inside the
+ * 200/hour band, but Sync 2 hit 50× 403 OAuthException "Application
+ * request limit reached" at the account-level limit, which is lower
+ * than the documented user-level band). Retune without a code change
+ * if real production telemetry justifies it.
  * Investigation report §6. Full reasoning in
  * `specs/970-sync-unification/reports/batch-01-report.md` §2.
  */
-export const GRAPH_CONCURRENCY = 8;
+export const GRAPH_CONCURRENCY = 4;
 
 // ─── Public types ─────────────────────────────────────────────
 
@@ -765,7 +770,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         // Phase 970 Batch 1 (D5) — bounded Graph concurrency. The bare
         // `Promise.allSettled(ads.map(…))` here previously fired every
         // fetchAdInsights call simultaneously; for a 383-ad account that
-        // was ~1,149 Graph calls at once. Capped at GRAPH_CONCURRENCY=8.
+        // was ~1,149 Graph calls at once. Capped at GRAPH_CONCURRENCY=4.
         const insightsEntries = await mapSettledWithConcurrency(
             ads,
             GRAPH_CONCURRENCY,
@@ -944,13 +949,13 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         ambiguous: boolean;
         imageHash: string | null;
     }>();
-    // Phase 970 Batch 1 (D5) — bounded Graph concurrency. The bare
-    // `Promise.allSettled(ads.map(…))` here previously fired every image
-    // download at once; for a 383-ad account that was ~383 simultaneous
-    // outbound fetches. Capped at GRAPH_CONCURRENCY=8. Semantics are
-    // preserved — the inner try/catch already swallows per-ad failures
-    // into `errors[]`, so the outer call never rejected (we use
-    // `mapWithConcurrency`, not `mapSettledWithConcurrency`).
+// Phase 970 Batch 1 (D5) — bounded Graph concurrency. The bare
+        // `Promise.allSettled(ads.map(…))` here previously fired every image
+        // download at once; for a 383-ad account that was ~383 simultaneous
+        // outbound fetches. Capped at GRAPH_CONCURRENCY=4. Semantics are
+        // preserved — the inner try/catch already swallows per-ad failures
+        // into `errors[]`, so the outer call never rejected (we use
+        // `mapWithConcurrency`, not `mapSettledWithConcurrency`).
     await mapWithConcurrency(ads, GRAPH_CONCURRENCY, async (ad) => {
         const result: { generationId: string | null; matchType: "auto_hash" | null; matchDistance: number | null; ambiguous: boolean; imageHash: string | null } = {
             generationId: null,
