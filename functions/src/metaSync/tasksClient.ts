@@ -14,6 +14,10 @@ let _client: CloudTasksClient | null = null;
 let _clientPromise: Promise<CloudTasksClient> | null = null;
 let _serviceAccountEmail: string | null = null;
 
+// Project number for `proadsai-saas`. See `serviceAccountEmail()` for why
+// this is hardcoded rather than looked up at runtime.
+const PROJECT_NUMBER = "544195266497";
+
 async function ensureClient(): Promise<CloudTasksClient> {
     if (_client) return _client;
     if (_clientPromise) return _clientPromise;
@@ -65,11 +69,26 @@ export function getTasksClient(): TasksClientFacade {
         },
         serviceAccountEmail(): string {
             if (_serviceAccountEmail) return _serviceAccountEmail;
-            // The OIDC token for the worker URL must use the project's default
-            // App Engine / Cloud Functions SA. We default to the well-known
-            // App Engine SA — callers can override via `setTasksServiceAccount`.
-            _serviceAccountEmail =
-                `proadsai-saas@appspot.gserviceaccount.com`;
+            // The OIDC token for the worker URL must use a service account
+            // that (a) exists in this project AND (b) holds
+            // `roles/run.invoker` on the worker function. The
+            // `{project}@appspot.gserviceaccount.com` (App Engine default
+            // SA) is the documented default in Firebase Functions docs, but
+            // it is only created when App Engine is enabled. This project
+            // (proadsai-saas) never had App Engine enabled, so the SA does
+            // not exist — every enqueue failed at task-creation time with
+            // `5 NOT_FOUND: Requested entity was not found` because Cloud
+            // Tasks validates the OIDC service account at enqueue time.
+            //
+            // The project's default compute SA
+            // (`{project_number}-compute@developer.gserviceaccount.com`)
+            // IS created automatically and holds the project-level
+            // `roles/run.invoker` binding that grants invoker permission on
+            // Cloud Functions 2nd gen (which run on Cloud Run). That is
+            // the correct SA for this project's Cloud Tasks OIDC token.
+            //
+            // Callers can still override via `setTasksServiceAccount`.
+            _serviceAccountEmail = `${PROJECT_NUMBER}-compute@developer.gserviceaccount.com`;
             return _serviceAccountEmail;
         },
     };
