@@ -4941,3 +4941,37 @@ database.
   baseline capture for the Boran workspace.
 - `specs/969-cumulative-learning/reports/phase4-production-verification.md`
   — the standalone report for this verification.
+
+---
+
+## 31. Round-23 — merge conflict resolution on PR #73
+
+PR #73 cannot merge because `IMPLEMENTATION-LOG.md` conflicts
+with `main`. The cause: round-22's PR-71 production-verification
+probe committed a new section to the log directly on `main`,
+while `969-phase-4` carries its own later sections (rounds
+16-22) on the same file path. Both sides appended to the
+same file. Documentation conflict only.
+
+Resolution: mechanical join. The branch's §1-§27 are preserved
+in order; `main`'s production-verification section is appended
+after §27 and renumbered §28-§30 (with subsections §28.1-§28.10)
+so no number repeats. All conflict markers removed
+(`<<<<<<<`, `=======`, `>>>>>>>`). A one-line note at the top
+of §28 explains that this section measured the pre-Phase-4
+deployment and points to round-24+ for the actual Phase 4
+numbers. Internal cross-references to external files
+(e.g. `969-sync-check-02.md §1.2`) are untouched. No code
+changes.
+
+Verification: `npm run build && npm test` exit 0 from a clean
+`lib/`. Phase 969 chain: **296 tests pass** (was 296 in round
+22; no count change — documentation-only join).
+
+A standalone report at
+`specs/969-cumulative-learning/reports/round-23-merge-conflict.md`
+records the join mechanics, conflict-marker positions, and
+per-suite test counts verbatim.
+
+Merge commit: `6c3b46a` — merge main into 969-phase-4; resolve
+IMPLEMENTATION-LOG conflict. Pushed to `969-phase-4`.
