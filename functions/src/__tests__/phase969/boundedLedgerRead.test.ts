@@ -70,7 +70,7 @@ interface DocSnap {
 }
 
 interface DbLike {
-    getAll(...refs: { id: string }[]): Promise<DocSnap[]>;
+    getAll(...refs: { id: string; path?: string }[]): Promise<DocSnap[]>;
 }
 
 function makeDb(opts: {
@@ -83,7 +83,27 @@ function makeDb(opts: {
 }): DbLike {
     const failChunks = opts.failChunks ?? [];
     return {
-        async getAll(...refs: { id: string }[]): Promise<DocSnap[]> {
+        async getAll(...refs: { id: string; path?: string }[]): Promise<DocSnap[]> {
+            // Round-22 — match real Firestore's contract. The SDK's
+            // `getAll` accepts only `DocumentReference` instances,
+            // which always carry a `path`. The `{id}`-only shape
+            // round-18's loose stub accepted would be rejected by
+            // production Firestore at the SDK boundary (a TypeError).
+            // This is the canonical stub for `readExistingAdDocs`;
+            // tightening it here means any caller in production
+            // shape (constructed via
+            // `adAccountRef.collection("adPerformance").doc(id)`,
+            // which carries `{id, path}`) passes, and a regression
+            // to the loose shape fails loudly with a TypeError
+            // matching what the real SDK would throw.
+            for (const ref of refs) {
+                if (typeof ref.path !== "string" || ref.path.length === 0) {
+                    throw new TypeError(
+                        `db.getAll: ref "${ref.id}" is not a DocumentReference (missing path); ` +
+                        `this matches what the real Firestore SDK would reject`,
+                    );
+                }
+            }
             const chunkIds = refs.map((r) => r.id);
             opts.recordChunkSizes?.push(chunkIds.length);
 
@@ -113,8 +133,13 @@ function makeDb(opts: {
     };
 }
 
-function refs(ids: string[]): { id: string }[] {
-    return ids.map((id) => ({ id }));
+function refs(ids: string[]): { id: string; path: string }[] {
+    // Round-22 — include `path` so the tightened stub at the top of
+    // this file (matching real Firestore) accepts these refs. Tests
+    // that exercise the helper now pass refs in the production
+    // shape, exactly what
+    // `applyLearningWrites.ts:436-440` constructs.
+    return ids.map((id) => ({ id, path: `users/owner_uid_AAAA/workspaces/ws_alpha/adAccounts/act_alpha/adPerformance/${id}` }));
 }
 
 // ═══ SC-023: read volume bounded by current batch size ═══

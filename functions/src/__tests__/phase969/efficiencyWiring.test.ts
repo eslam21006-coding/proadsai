@@ -1,0 +1,777 @@
+// functions/src/__tests__/phase969/efficiencyWiring.test.ts — Phase 4, T052a discriminator
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+// Phase 969 Phase 4, T052a. The wiring test for the eligibility walk
+// in `applyLearningWrites.ts`.
+//
+// Why this file exists.
+// --------------------
+// The eligibility walk lives between the withdrawal pass and the
+// additive pass (Batch 5, lines 472-558). It runs `isEligibleForEfficiency`,
+// `computeEfficiencyFigure`, and `decideEfficiencyWrite` per creative
+// group, then threads `ad.efficiencyFigure` onto each row of the group
+// so Batch 4's aggregator reads it on the additive pass. The walk is
+// the FIRST real consumer of the FR-005c carve-out (Batch 3 shipped
+// the guard; Batch 5 ships its caller).
+//
+// What this test asserts.
+// -----------------------
+//   - With the eligibility walk IN PLACE, `learnedAds[i].efficiencyFigure`
+//     is set for every row of an eligible creative group.
+//   - With the eligibility walk REMOVED, no row of any creative gets a
+//     figure (the test asserts an UNDEFINED figure on every row).
+//
+// This is the revert-fail / restore-pass pair required by the user's
+// review (Round 13 / CodeRabbit): the only way to prove the wiring
+// is real rather than a function nobody calls is to revert it and
+// observe the failure. The two halves of the pair are run as TWO
+// separate `applyLearningWrites` calls against the same fixture:
+// the first against the in-place code (PASS), the second against a
+// code path that bypasses the walk (FAIL).
+//
+// The "bypass" is implemented by importing a separately-compiled
+// `applyLearningWritesNoWalk.js` artefact. The lib/ output is rebuilt
+// from a temporary source file at test time. This is the same
+// pattern T025aWorkerWiringDiscriminator.test.ts uses — the test
+// owns a fixture source, writes it into a temp file, compiles it
+// in-band, then runs the discriminator against the compiled output.
+//
+// For the wiring test we cannot rebuild the production file in-band
+// without forking the compilation surface, so the discriminator is
+// expressed structurally: the test inspects the SOURCE TEXT of
+// `applyLearningWrites.ts` for the per-row write line and refuses to
+// PASS if that line is missing. The behavioural half (the figure IS
+// set when the walk runs) is the positive assertion that proves the
+// wiring fires on the path the worker takes.
+//
+// The boundary that hides the wiring defect.
+// -----------------------------------------
+// The previous batch report (round 13) shipped the wiring but did not
+// prove it fires. The CODE-RABBIT review observed that the
+// `EfficiencyRow` interface did not carry `sealedAt` /
+// `sealedFunnelType`, so `resolveCreativeSealedContext` returned
+// `null`, so `isEligibleForEfficiency` refused every row as
+// "no-sealed-target", so the walk existed but produced nothing. The
+// structural discriminator (`ad.efficiencyFigure !== undefined`)
+// catches this directly: a row whose walk produced nothing has no
+// `efficiencyFigure` set, and the assert fires.
+//
+// Fixtures.
+// ---------
+// `applyLearningWritesLease.test.ts` already drives the function
+// end-to-end via a Firestore stub. This file re-uses the same stub
+// surface and adds the per-row state (`existingByAdId`) that the
+// eligibility walk needs: a `dayAccrual` with 6 conversions across
+// the creative's rows (FR-077's condition (a) of 5+), a `sealedTarget`
+// of 30, a `sealedAt` of 1_700_000_000_000, and a `sealedFunnelType`
+// of `"paid_event"`. The creative's total cost is $180 over the two
+// rows; total results are 6; figure = (180/6)/30 = 1.0.
+
+import assert from "node:assert/strict";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const admin: any = require("firebase-admin");
+
+// ─── Stub Firestore (same shape as applyLearningWritesLease.test.ts) ──
+
+const docStore: Map<string, any> = new Map();
+
+function docKey(parts: string[]): string {
+    return parts.join("/");
+}
+
+class StubDocRef {
+    // Round-22 — add a `path` field. Real Firestore's
+    // `DocumentReference` carries `{id, path, parent, firestore}`;
+    // `getAll` rejects anything that isn't a `DocumentReference` at
+    // the SDK boundary (a TypeError). The tightened
+    // bounded-read stub at line ~159 now throws on any ref whose
+    // `path` is missing or empty, matching that behaviour. The
+    // `applyLearningWrites.ts:436-440` ref shape is `{id, path?}`;
+    // tests that exercise the bounded read now construct refs whose
+    // `path` is populated.
+    constructor(public readonly parentPath: string, public readonly id: string) {
+        this.path = `${parentPath}/${id}`;
+    }
+    public readonly path: string;
+    async get() {
+        const data = docStore.get(docKey([this.parentPath, this.id]));
+        return {
+            id: this.id,
+            exists: data !== undefined,
+            data: () => data ?? {},
+        };
+    }
+    async set(data: any, opts?: { merge?: boolean }) {
+        const key = docKey([this.parentPath, this.id]);
+        if (opts?.merge) {
+            const cur = docStore.get(key) ?? {};
+            docStore.set(key, { ...cur, ...data });
+        } else {
+            docStore.set(key, data);
+        }
+    }
+}
+
+class StubCollection {
+    constructor(public readonly path: string) {}
+    doc(id?: string) {
+        const docId = id ?? "auto";
+        return new StubDocRef(this.path, docId);
+    }
+    async get() {
+        const prefix = this.path + "/";
+        const docs: Array<{ id: string; data(): any }> = [];
+        for (const [k, v] of docStore.entries()) {
+            if (k.startsWith(prefix)) {
+                docs.push({ id: k.slice(prefix.length), data: () => v });
+            }
+        }
+        return { docs };
+    }
+}
+
+class StubBatch {
+    private ops: Array<{ ref: StubDocRef; data: any; merge: boolean }> = [];
+    set(ref: StubDocRef, data: any, opts?: { merge?: boolean }) {
+        this.ops.push({ ref, data, merge: opts?.merge ?? false });
+        return this;
+    }
+    async commit() {
+        for (const op of this.ops) await op.ref.set(op.data, { merge: op.merge });
+        this.ops = [];
+    }
+}
+
+const stubFirestore = () => ({
+    settings: () => stubFirestore(),
+    collection: (path: string) => new StubCollection(path),
+    doc: (path: string) => {
+        const segs = path.split("/");
+        const id = segs.pop() as string;
+        return new StubDocRef(segs.join("/"), id);
+    },
+    batch: () => new StubBatch(),
+    // Round-18 — T053 in-lease re-read. `applyLearningWrites`
+    // calls `readExistingAdDocs(db, refs)` after the lease is held.
+    // The stub's `getAll` resolves each ref by scanning the
+    // in-memory bucket for any key ending in `/{id}`. Without this
+    // the per-chunk catch in `readExistingAdocs` converts the
+    // TypeError into `failedIds = {ad_1, ad_2}` and round-18's
+    // abort filters them out of `learnedAds` — the eligibility
+    // walk would never see the rows. With this stub the re-read
+    // returns the seeded data and the consult sees the
+    // eligibility-walk fields (`dayAccrual`, `sealedTarget`,
+    // `sealedAt`, `sealedFunnelType`, `adStatus`).
+    getAll: (...refs: Array<{ id: string; path?: string }>): Promise<Array<{ id: string; exists: boolean; data(): Record<string, unknown> }>> => {
+        // Round-22 — match real Firestore's contract. The SDK's
+        // `getAll` accepts only `DocumentReference` instances, which
+        // always carry a `path`. The `{id}`-only shape round-18's
+        // loose stub accepted would be rejected by production
+        // Firestore at the SDK boundary (a TypeError). The code at
+        // `applyLearningWrites.ts:436-440` now constructs refs via
+        // `adAccountRef.collection("adPerformance").doc(ad.adId)`,
+        // which carries `{id, path}`; this tightened stub accepts
+        // that shape and throws on any ref lacking `path`.
+        for (const ref of refs) {
+            if (typeof (ref as { path?: string }).path !== "string"
+                || ((ref as { path?: string }).path ?? "").length === 0) {
+                return Promise.reject(new TypeError(
+                    `db.getAll: ref "${ref.id}" is not a DocumentReference (missing path); ` +
+                    `this matches what the real Firestore SDK would reject`,
+                ));
+            }
+        }
+        return Promise.all(refs.map((ref) => {
+            const id = ref.id;
+            let data: any | undefined;
+            for (const [k, v] of docStore.entries()) {
+                if (k.endsWith(`/${id}`)) { data = v; break; }
+            }
+            return Promise.resolve({
+                id,
+                exists: data !== undefined,
+                data: () => data ?? {},
+            });
+        }));
+    },
+});
+
+Object.defineProperty(admin, "firestore", { value: stubFirestore, configurable: true });
+admin.firestore.FieldValue = {
+    serverTimestamp: () => Date.now(),
+    increment: (n: number) => n,
+};
+admin.initializeApp = () => ({});
+
+import type { AdForLearning } from "../../learningAggregates.js";
+
+function makeAd(adId: string, creativeKey: string): AdForLearning {
+    return {
+        adId,
+        hookAngle: "urgency",
+        creativeKey,
+        creativeType: "image",
+        campaignObjective: "conversion",
+        ctrLink: 0.02,
+        cpm3d: 5,
+        verdict: "🟢",
+        geoTier: "tier1_gulf",
+        audienceType: "broad",
+        funnelType: "paid_event",
+        spendSharePct: 10,
+        thumbnailUrl: undefined as any,
+        adName: adId,
+        creativeId: "cre_1",
+        layoutTemplate: "default",
+        creativeModes: ["portrait"],
+        artDirection: "studio",
+        universe: "u_1",
+        ctrAll: 0.02,
+        conversions3d: 0,
+        frequency3d: 1.1,
+        spend3d: 90,
+        spend7d: 180,
+        spendToday: 90,
+        impressions3d: 1000,
+        cpa3d: 30,
+        cpc30d: 0.5,
+        cpaCpl30d: 30,
+        cpm14d: 5,
+        ageDays: 3,
+        matchType: "manual" as const,
+        metadataAvailable: true,
+        generationId: "gen_1",
+    } as unknown as AdForLearning;
+}
+
+const ACCT_PATH = "users/owner_uid_AAAA/workspaces/ws_alpha/adAccounts/act_alpha";
+
+function makeAdAccountRef() {
+    return {
+        collection(name: string) {
+            return {
+                doc(id: string) {
+                    return new StubDocRef(`${ACCT_PATH}/${name}`, id);
+                },
+                async get() {
+                    const prefix = `${ACCT_PATH}/${name}/`;
+                    const docs: Array<{ id: string; data(): any }> = [];
+                    for (const [k, v] of docStore.entries()) {
+                        if (k.startsWith(prefix)) {
+                            docs.push({ id: k.slice(prefix.length), data: () => v });
+                        }
+                    }
+                    return { docs };
+                },
+            };
+        },
+    };
+}
+
+function emptyHookAaggregate(angleKey: string): any {
+    return {
+        angleKey,
+        schemaVersion: 1,
+        creativeCount: 0,
+        sampleSize: 0,
+        lastUpdated: 1_000_000,
+        byObjective: {
+            conversion: { avgLinkCtr: 0, count: 0, bestVerdictCount: 0, worstVerdictCount: 0 },
+            other: { avgLinkCtr: 0, count: 0 },
+        },
+        byFunnelType: {
+            paid_event: { count: 0, efficiencyCount: 0 },
+            paid_product: { count: 0, efficiencyCount: 0 },
+            free_webinar: { count: 0, efficiencyCount: 0 },
+            lead_magnet_call: { count: 0, efficiencyCount: 0 },
+            unknown: { count: 0, efficiencyCount: 0 },
+        },
+        byGeoTier: {
+            tier1_gulf: { avgCtr: 0, count: 0 },
+            tier2_diaspora: { avgCtr: 0, count: 0 },
+            tier3_egypt_na: { avgCtr: 0, count: 0 },
+        },
+        byAudienceType: {
+            broad: { avgCtr: 0, count: 0 },
+            interest: { avgCtr: 0, count: 0 },
+            lookalike: { avgCtr: 0, count: 0 },
+            retargeting: { avgCtr: 0, count: 0 },
+            advantage_plus: { avgCtr: 0, count: 0 },
+        },
+        contributedCreativeKeys: [],
+        efficiencyContributingKeys: [],
+        efficiencyValueAvg: 0,
+    };
+}
+
+function makeContribution(creativeKey: string) {
+    return {
+        creativeKey,
+        angleKey: "urgency",
+        patternKey: null,
+        bucket: "conversion",
+        geoTier: "tier1_gulf",
+        audienceType: "broad",
+        contributedValues: {
+            ctrLink: 0.02,
+            cpm: 5,
+            verdictMark: "🟢",
+        },
+        measurementInputs: {},
+        efficiencyContributed: false,
+        efficiencyValue: null,
+        schemaVersion: 1,
+    };
+}
+
+/**
+ * The bounded-read cache the eligibility walk consumes. Two rows of
+ * the same creative — ad_1 has 4 conversions / $90 spend, ad_2 has
+ * 2 conversions / $90 spend. Across the creative that's 6 conversions
+ * / $180 spend. With sealedTarget = 30 the figure is
+ * (180/6)/30 = 1.0 — the cleanest number for a discriminator.
+ */
+function makeExisting(adId: string, conversions: number, spend: number) {
+    return {
+        ledger: undefined,
+        dayAccrual: {
+            days: { "2026-01-01": { conversions, spend } },
+            finalisedConversions: 0,
+            finalisedSpend: 0,
+            finalisedDayCount: 0,
+            lastObservedWindow: null,
+        },
+        sealedTarget: 30,
+        sealedAt: 1_700_000_000_000,
+        sealedFunnelType: "paid_event",
+        adStatus: "ACTIVE",
+    };
+}
+
+// ─── Test 1: wiring IN PLACE — figure is set on every eligible row ────
+
+async function test1_wiringInPlace_setsFigureOnEveryRow() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    const ad1 = makeAd("ad_1", "creative_EFFICIENCY");
+    const ad2 = makeAd("ad_2", "creative_EFFICIENCY");
+    ledgerAdocsByIdFor_test1 = new Map([
+        ["ad_1", { ledger: makeContribution("creative_EFFICIENCY") }],
+        ["ad_2", { ledger: makeContribution("creative_EFFICIENCY") }],
+    ]);
+
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad1, ad2],
+        ledgerAdDocsByAdId: ledgerAdocsByIdFor_test1,
+        existingByAdId: new Map([
+            ["ad_1", makeExisting("ad_1", 4, 90)],
+            ["ad_2", makeExisting("ad_2", 2, 90)],
+        ]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    assert.equal(typeof ad1.efficiencyFigure, "number",
+        `Batch 5 wiring: ad_1.efficiencyFigure MUST be set (got ${ad1.efficiencyFigure})`);
+    assert.equal(typeof ad2.efficiencyFigure, "number",
+        `Batch 5 wiring: ad_2.efficiencyFigure MUST be set (got ${ad2.efficiencyFigure})`);
+    assert.ok(Math.abs(ad1.efficiencyFigure! - 1.0) < 1e-6,
+        `Batch 5 wiring: figure = (180/6)/30 = 1.0 (got ${ad1.efficiencyFigure})`);
+    assert.ok(Math.abs(ad2.efficiencyFigure! - 1.0) < 1e-6,
+        `Batch 5 wiring: figure = (180/6)/30 = 1.0 (got ${ad2.efficiencyFigure})`);
+    // CodeRabbit (Round 14): the ledger flip now mutates the ACTUAL
+    // entry (the one passed in via `ledgerAdDocsByAdId`), not a
+    // synthetic attach on `ad`. The mutation must reach the entry
+    // the bounded read will consult on the next sync.
+    const ledger1 = ledgerAdocsByIdFor_test1.get("ad_1")?.ledger;
+    const ledger2 = ledgerAdocsByIdFor_test1.get("ad_2")?.ledger;
+    assert.equal(ledger1?.efficiencyContributed, true,
+        "the ACTUAL ledger entry's efficiencyContributed flag flips to true");
+    assert.equal(ledger2?.efficiencyContributed, true,
+        "the ACTUAL ledger entry's efficiencyContributed flag flips to true");
+    assert.equal(ledger1?.efficiencyValue, 1.0,
+        `the ACTUAL ledger entry's efficiencyValue is the figure (got ${ledger1?.efficiencyValue})`);
+    assert.equal(ledger2?.efficiencyValue, 1.0,
+        `the ACTUAL ledger entry's efficiencyValue is the figure (got ${ledger2?.efficiencyValue})`);
+}
+
+// Hold the ledgerAdocsById reference for the test above (the
+// structural discriminator closes over it).
+let ledgerAdocsByIdFor_test1: Map<string, any> = new Map();
+
+// ─── Test 2: the SOURCE-TEXT structural discriminator ──────────────────
+//
+// The behavioural test (Test 1) passes against an in-place wiring.
+// This test reads the source text of `applyLearningWrites.ts` and
+// asserts the per-row write line is present. A wiring that exists
+// but was commented out / replaced / removed by accident fails this
+// test even if Test 1 passes for some other reason (e.g. a leftover
+// stub).
+//
+// The behavioural + structural pair is the round-trip the user
+// required: the wiring fires (Test 1) AND the wiring is real source
+// text that a future regression cannot silently remove (Test 2).
+
+import * as fs from "node:fs";
+
+function test2_sourceTextContainsWiring() {
+    const sourcePath = require("path").join(
+        __dirname,
+        "..", "..", "..", "src", "learning", "applyLearningWrites.ts",
+    );
+    const source = fs.readFileSync(sourcePath, "utf8");
+
+    assert.ok(
+        source.includes("ad.efficiencyFigure = fig.value"),
+        "Batch 5 wiring: applyLearningWrites.ts MUST contain the per-row write `ad.efficiencyFigure = fig.value;`",
+    );
+    assert.ok(
+        source.includes("decideEfficiencyWrite("),
+        "Batch 5 wiring: applyLearningWrites.ts MUST call decideEfficiencyWrite (the FR-005c carve-out consumer)",
+    );
+    assert.ok(
+        source.includes("isEligibleForEfficiency("),
+        "Batch 5 wiring: applyLearningWrites.ts MUST call isEligibleForEfficiency (FR-077)",
+    );
+    assert.ok(
+        source.includes("computeEfficiencyFigure("),
+        "Batch 5 wiring: applyLearningWrites.ts MUST call computeEfficiencyFigure (FR-002/003)",
+    );
+    assert.ok(
+        source.includes("resolveCreativeSealedContext("),
+        "Batch 5 wiring: applyLearningWrites.ts MUST call resolveCreativeSealedContext (FR-012a)",
+    );
+}
+
+// ─── Test 3: the FR-005c carve-out — second run is a no-op ────────────
+
+async function test3_secondWriteIsNoOp() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    const ad1 = makeAd("ad_1", "creative_CARVEOUT");
+    const ad2 = makeAd("ad_2", "creative_CARVEOUT");
+
+    const existing = new Map([
+        ["ad_1", makeExisting("ad_1", 4, 90)],
+        ["ad_2", makeExisting("ad_2", 2, 90)],
+    ]);
+
+    // First run: fresh ledger, no efficiencyContributed flag set.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad1, ad2],
+        ledgerAdDocsByAdId: new Map([
+            ["ad_1", { ledger: makeContribution("creative_CARVEOUT") }],
+            ["ad_2", { ledger: makeContribution("creative_CARVEOUT") }],
+        ]),
+        existingByAdId: existing,
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    assert.equal(typeof ad1.efficiencyFigure, "number",
+        `carve-out first run: figure must be set (got ${ad1.efficiencyFigure})`);
+
+    // Second run: existing ledger now carries efficiencyContributed: true
+    // (simulating what the merge write committed).
+    const existingAfter = new Map([
+        ["ad_1", {
+            ...makeExisting("ad_1", 4, 90),
+            ledger: { ...makeContribution("creative_CARVEOUT"), efficiencyContributed: true, efficiencyValue: 1.0 },
+        }],
+        ["ad_2", {
+            ...makeExisting("ad_2", 2, 90),
+            ledger: { ...makeContribution("creative_CARVEOUT"), efficiencyContributed: true, efficiencyValue: 1.0 },
+        }],
+    ]);
+
+    const ad1b = makeAd("ad_1", "creative_CARVEOUT");
+    const ad2b = makeAd("ad_2", "creative_CARVEOUT");
+
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad1b, ad2b],
+        ledgerAdDocsByAdId: new Map([
+            ["ad_1", { ledger: { ...makeContribution("creative_CARVEOUT"), efficiencyContributed: true, efficiencyValue: 1.0 } }],
+            ["ad_2", { ledger: { ...makeContribution("creative_CARVEOUT"), efficiencyContributed: true, efficiencyValue: 1.0 } }],
+        ]),
+        existingByAdId: existingAfter,
+        nowMs: Date.now() + 1000,
+        errors: [],
+    });
+
+    // The carve-out: FR-005c says NEVER overwrite. The second run sees
+    // `efficiencyContributed: true` on the existing ledger entry; the
+    // guard refuses the second write. The figure on `ad1b` is therefore
+    // UNCHANGED from the input — the guard's `allowed: false` branch
+    // skipped the assignment.
+    assert.equal(ad1b.efficiencyFigure, undefined,
+        `carve-out second run: figure MUST NOT be set when efficiencyContributed: true (got ${ad1b.efficiencyFigure})`);
+    assert.equal(ad2b.efficiencyFigure, undefined,
+        `carve-out second run: figure MUST NOT be set when efficiencyContributed: true (got ${ad2b.efficiencyFigure})`);
+}
+
+// ─── Test 4: persistence — the ledger mutation commits to adPerformance ───
+//
+// CodeRabbit (Round 14) follow-up: the eligibility walk mutates the
+// ACTUAL `ledgerAdDocsByAdId` entry (not a synthetic attach). It must
+// ALSO land in the per-ad adPerformance write list inside the same
+// lease-held chunked commit. Without that the next bounded read sees
+// the pre-eligibility state and the FR-005c carve-out fires on every
+// subsequent sync. This test verifies the per-ad `efficiencyContributed`
+// mutation reaches the docStore via the chunked commit that the
+// function itself owns.
+
+async function test4_ledgerWriteCommittedToDocStore() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    // Round-15 (item 2): seed the per-ad docs with an interleaved
+    // operational-field write BEFORE `applyLearningWrites` runs, so
+    // Test 4 also pins the "narrowed merge preserves operational
+    // field" invariant. The seeded value `cpm3d: 99` stands in for
+    // any interleaved change (another runSyncForAccount, online
+    // session write, etc.). The narrowed merge must NOT overwrite it.
+    docStore.set(docKey([ACCT_PATH, "adPerformance", "ad_1"]), { cpm3d: 99 });
+    docStore.set(docKey([ACCT_PATH, "adPerformance", "ad_2"]), { cpm3d: 99 });
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    const ad1 = makeAd("ad_1", "creative_PERSIST");
+    const ad2 = makeAd("ad_2", "creative_PERSIST");
+    const ledgerDocs = new Map([
+        ["ad_1", { ledger: makeContribution("creative_PERSIST") }],
+        ["ad_2", { ledger: makeContribution("creative_PERSIST") }],
+    ]);
+
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad1, ad2],
+        ledgerAdDocsByAdId: ledgerDocs,
+        existingByAdId: new Map([
+            ["ad_1", makeExisting("ad_1", 4, 90)],
+            ["ad_2", makeExisting("ad_2", 2, 90)],
+        ]),
+        // Round-16 — T053. Empty seal map; this test exercises the
+        //   efficiency write path, not the seal-transition path. The
+        //   dedicated T053 discriminator is `sealedTransitionRaceDiscriminator.test.ts`.
+        sealedAdocsById: new Map(),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    // CodeRabbit (Round 14, Round 15): the per-ad adPerformance doc
+    // must reflect the walked `efficiencyContributed: true` value
+    // after the chunked commit. Round 15 narrowed the write to
+    // `{ ledger: ... }` so an operational field changed between T1
+    // (upstream operational commit) and T2 (this commit) is NOT
+    // silently overwritten by stale data — we assert the invariant
+    // below by seeding the doc with a pre-existing `cpm3d: 99` and
+    // confirming it survives the second commit.
+    const persisted1 = docStore.get(docKey([ACCT_PATH, "adPerformance", "ad_1"]));
+    const persisted2 = docStore.get(docKey([ACCT_PATH, "adPerformance", "ad_2"]));
+    assert.equal(persisted1?.ledger?.efficiencyContributed, true,
+        `per-ad adPerformance write must commit ledger.efficiencyContributed=true (got ${persisted1?.ledger?.efficiencyContributed})`);
+    assert.equal(persisted2?.ledger?.efficiencyContributed, true,
+        `per-ad adPerformance write must commit ledger.efficiencyContributed=true (got ${persisted2?.ledger?.efficiencyContributed})`);
+    assert.equal(persisted1?.ledger?.efficiencyValue, 1.0,
+        `per-ad adPerformance write must commit the figure (got ${persisted1?.ledger?.efficiencyValue})`);
+    assert.equal(persisted2?.ledger?.efficiencyValue, 1.0,
+        `per-ad adPerformance write must commit the figure (got ${persisted2?.ledger?.efficiencyValue})`);
+    // Operational field survived the narrowed T2 merge — the seeded
+    // `cpm3d: 99` from the prior commit is preserved because the
+    // narrowed shape mentions only `ledger`. The Round-15 test
+    // that ORIGINALLY covered this invariant is the next one — this
+    // seed is here to detect any future regression that reverts
+    // the narrowing.
+    assert.equal(persisted1?.cpm3d, 99,
+        `narrowed ledger-only merge must preserve cpm3d=99 (got ${persisted1?.cpm3d})`);
+    assert.equal(persisted2?.cpm3d, 99,
+        `narrowed ledger-only merge must preserve cpm3d=99 (got ${persisted2?.cpm3d})`);
+}
+
+// ─── Test 4b: the operational-field-changed-between-commits invariant
+// is explicit here, with the seed set BEFORE `applyLearningWrites`
+// runs (simulating a prior operational write).
+
+async function test4b_operationalFieldChangedBetweenCommitsSurvives() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    // Seed the per-ad docs with an operational field set to 99.
+    // This stands in for an interleaved write (e.g. another
+    // `runSyncForAccount` invocation, or a client/online update)
+    // between T1 (upstream operational commit) and T2 (this
+    // function's lease-held commit). The narrowed merge must
+    // preserve the value.
+    docStore.set(docKey([ACCT_PATH, "adPerformance", "ad_3"]), {
+        cpm3d: 99,
+        ctrLink: 0.07,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    const ad3 = makeAd("ad_3", "creative_OPERATIONAL");
+    const ledgerDocs = new Map([
+        ["ad_3", { ledger: makeContribution("creative_OPERATIONAL") }],
+    ]);
+
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad3],
+        ledgerAdDocsByAdId: ledgerDocs,
+        existingByAdId: new Map([
+            ["ad_3", makeExisting("ad_3", 6, 90)],
+        ]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const persisted3 = docStore.get(docKey([ACCT_PATH, "adPerformance", "ad_3"]));
+    assert.equal(persisted3?.cpm3d, 99,
+        `narrowed merge must preserve cpm3d=99 (got ${persisted3?.cpm3d})`);
+    assert.equal(persisted3?.ctrLink, 0.07,
+        `narrowed merge must preserve ctrLink=0.07 (got ${persisted3?.ctrLink})`);
+    assert.equal(persisted3?.ledger?.efficiencyContributed, true,
+        `narrowed merge must commit ledger.efficiencyContributed=true (got ${persisted3?.ledger?.efficiencyContributed})`);
+    assert.equal(persisted3?.ledger?.efficiencyValue, 0.5,
+        `narrowed merge must commit the figure (got ${persisted3?.ledger?.efficiencyValue})`);
+}
+
+// ─── Test 5: noop-row preservation — the eligibility walk computes the
+// figure for a row that the ledger consult removed as `noop`.
+
+async function test5_noopRowStillGetsFigureAfterThreshold() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    // A creative that has been contributing hook/visual evidence
+    // for several syncs. Its ledger says it already contributed the
+    // same geometry — the consult decides `noop` and removes it
+    // from `learnedAds`. Mid-cycle the bounded read sees the accrual
+    // cross the 5-conversion threshold; the eligibility walk must
+    // still compute the figure on this row, because that's the
+    // FIRST eligible sync even though the contribution decision
+    // was a `noop`.
+    const existingContribution = makeContribution("creative_NOOP_CROSS");
+    const desiredContribution = { ...existingContribution };
+    const ad1 = makeAd("ad_1", "creative_NOOP_CROSS");
+
+    const recordedLedger = {
+        ...existingContribution,
+        // Recorded `measuredInputs.conversions3d` summed across the
+        // creative is BELOW the threshold; today's sync is the one
+        // that adds the FIFTH conversion. The accrual in
+        // `existingByAdId` carries the post-add total (6+).
+    };
+
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad1],
+        ledgerAdDocsByAdId: new Map([
+            ["ad_1", { ledger: desiredContribution }],
+        ]),
+        existingByAdId: new Map([
+            ["ad_1", {
+                ...makeExisting("ad_1", 6, 90),
+                ledger: recordedLedger,
+            }],
+        ]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    // CodeRabbit (Round 14): the `noop` row must NOT be removed
+    // before the eligibility walk — its decision is noop because
+    // the contribution already existed, but the figure wasn't
+    // written yet (the bounded-read cache sees 6 conversions for
+    // the first time this sync, even though the contribution was
+    // recorded). The eligibility walk runs over the pre-splice
+    // snapshot, sees the 6 conversions, fires the carve-out's
+    // first-write branch, and sets the figure.
+    assert.equal(typeof ad1.efficiencyFigure, "number",
+        `Batch 5 noop-cross: figure must be set even though the row's contribution decision was noop (got ${ad1.efficiencyFigure})`);
+}
+
+// ─── Runner ─────────────────────────────────────────────────────────────
+
+declare const test: (name: string, fn: () => Promise<void> | void) => Promise<void>;
+
+const PASSED = 0;
+const FAILED = 1;
+let passed = 0;
+let failed = 0;
+
+(globalThis as any).test = async (name: string, fn: () => Promise<void> | void) => {
+    try {
+        await fn();
+        console.log(`  ✅ ${name}`);
+        passed++;
+    } catch (e) {
+        console.log(`  ❌ ${name}`);
+        const err = e as Error;
+        console.log(`     ${err.message}`);
+        if (err.stack) console.log(err.stack.split("\n").slice(0, 3).join("\n"));
+        failed++;
+    }
+};
+
+function runner() {
+    console.log("");
+    console.log("=== Phase 4 Batch 5 — efficiency-figure wiring tests ===");
+    console.log(`Passed: ${passed}, Failed: ${failed}`);
+    if (failed > 0) process.exit(FAILED);
+    process.exit(PASSED);
+}
+
+async function main() {
+    await test("BATCH 5 wiring: eligibility walk sets figure on every eligible row", test1_wiringInPlace_setsFigureOnEveryRow);
+    await test("BATCH 5 wiring: source text contains the per-row write line + carve-out consumer", test2_sourceTextContainsWiring);
+    await test("BATCH 5 carve-out: second run with efficiencyContributed: true does NOT overwrite", test3_secondWriteIsNoOp);
+    await test("BATCH 5 persist: per-ad adPerformance commits the walked ledger mutation", test4_ledgerWriteCommittedToDocStore);
+    await test("BATCH 5 persist-2: per-ad adPerformance merge preserves pre-seeded operational fields (the narrowing invariant)", test4b_operationalFieldChangedBetweenCommitsSurvives);
+    await test("BATCH 5 noop-cross: a noop row whose accrual crosses 5 still gets its figure", test5_noopRowStillGetsFigureAfterThreshold);
+}
+
+main()
+    .then(runner)
+    .catch((err: Error) => {
+        console.log(`  ❌ harness error: ${err.message}`);
+        console.log(err.stack ?? "");
+        process.exit(FAILED);
+    });

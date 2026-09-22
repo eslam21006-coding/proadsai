@@ -47,6 +47,18 @@ export type FunnelTypeBucketKey =
 /** Per-funnel-type bucket shared by hook + visual aggregates. */
 export interface FunnelTypeBucket {
     count: number;
+    /**
+     * Batch 5 (FR-030) — distinct creatives in this funnel bucket
+     * that have CONTRIBUTED AN EFFICIENCY FIGURE (not just any
+     * contribution). Optional on read so records written before
+     * this field existed read as absent. The gating follows the
+     * same `?? 0` discipline as `efficiencyContributingCount` on the
+     * top-level aggregate (FR-037). The efficiency figure is
+     * FR-002a's cost-per-result divided by the per-creative sealed
+     * target, so absent means "no efficiency evidence yet for this
+     * funnel bucket" — read 0 and fail the gate.
+     */
+    efficiencyCount?: number;
 }
 
 /** Whole per-funnel-type breakdown on a hook or visual aggregate. */
@@ -149,6 +161,38 @@ export interface HookPerformanceAggregate {
      * this field are new in Phase 969 and unmerged.
      */
     contributedCreativeKeys?: string[];
+    /**
+     * Batch 4 (FR-037) — the creative keys that have contributed an
+     * efficiency figure to this angle. Mirrors the shape of
+     * `contributedCreativeKeys` above: a persisted array as state, the
+     * count derived from its length on the way out. Same fix Batch 28
+     * applied for `creativeCount` — without persistence the count
+     * inflates on every sync (Batch 06's defect), without re-derivation
+     * on read the bound becomes unbounded against account age (FR-068
+     * removed that pattern entirely).
+     *
+     * Optional on read for the same reason `contributedCreativeKeys` is.
+     * The FR-037 gate reads `efficiencyContributingCount ?? 0` — absent
+     * means "no efficiency evidence yet" and the gate MUST refuse, never
+     * silently fall back to a different unit.
+     */
+    efficiencyContributingKeys?: string[];
+    /**
+     * Batch 4 (FR-037) — DERIVED from `efficiencyContributingKeys.length`,
+     * never incremented independently. The two cannot disagree (the same
+     * invariant Batch 28 asserted for `creativeCount`). Used by the
+     * FR-037 efficiency-evidence gate at `rankingEngine.ts`.
+     */
+    efficiencyContributingCount?: number;
+    /**
+     * Batch 4 (FR-038) — the running mean of CLAMPED efficiency figures
+     * across creatives that have contributed to this angle. The clamp is
+     * `Math.min(figure, 3.0)` applied on the way IN (at addition time);
+     * the stored average is therefore bounded in [0, 3.0] forever. The
+     * raw figure stays on `AdDoc.efficiencyRaw` (unbounded; the audit
+     * field at `shared.ts:276-289`).
+     */
+    efficiencyValueAvg?: number;
     sampleSize: number;
     lastUpdated: number;
     byObjective: {
@@ -215,6 +259,22 @@ export interface VisualPerformanceAggregate {
      * creatives per pattern — not rows, not syncs.
      */
     contributedCreativeKeys?: string[];
+    /**
+     * Batch 4 (FR-037) — the creative keys that have contributed an
+     * efficiency figure to this pattern. Mirrors the hook equivalent
+     * structurally and motivationally.
+     */
+    efficiencyContributingKeys?: string[];
+    /**
+     * Batch 4 (FR-037) — DERIVED from `efficiencyContributingKeys.length`.
+     */
+    efficiencyContributingCount?: number;
+    /**
+     * Batch 4 (FR-038) — running mean of clamped efficiency figures
+     * (≤ 3.0 per contribution). See HookPerformanceAggregate's parallel
+     * doc for the bound rationale.
+     */
+    efficiencyValueAvg?: number;
     sampleSize: number;
     lastUpdated: number;
     byObjective: {
@@ -285,6 +345,18 @@ export interface AdForLearning {
     creativeModes: string[];
     artDirection: string | null;
     universe: string | null;
+    /**
+     * Batch 3 / Batch 4 (FR-002a / FR-038) — the row's stored
+     * efficiency figure (unbounded; the 3.0 bound is applied at the
+     * aggregate-side addition, not here). Set by the worker's
+     * Batch-5 post-walk from `decideEfficiencyWrite`'s result. `null`
+     * for an unsealed row or one that has not yet been eligible
+     * (FR-077). The aggregator reads it ONLY for adding to the
+     * `efficiencyValueAvg` running mean; absent or null
+     * contributes 0 to the bounded average (FR-006's explicit-
+     * absent guard at the aggregate layer).
+     */
+    efficiencyFigure?: number | null;
 }
 
 /**

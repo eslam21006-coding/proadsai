@@ -35,13 +35,29 @@ export interface Contribution {
     bucket: "conversion" | "other";
     geoTier: string;
     audienceType: string;
-    /** The values this contribution would add to the aggregates. */
+    /** The values this contribution would add to the aggregates.
+     *  Deliberately TARGET-INDEPENDENT (FR-011(a), Amendment 2): only
+     *  usage / click-through / cost-per-thousand live here. The
+     *  efficiency figure is recorded on a separate field of
+     *  `ContributionLedgerEntry` and never participates in the
+     *  re-evaluation decision. */
     contributedValues: {
         ctrLink: number;
         cpm: number;
         verdictMark: string;
-        // Catch-all for additional measures the aggregator tracks.
-        [key: string]: unknown;
+        // Round-15 fix (coderabbit P2 contributionLedger.ts:49):
+        // the `[key: string]: unknown` index signature previously
+        // admitted any field name — including `sealedTarget`, which
+        // is a contribution INDEPENDENT field that must NEVER
+        // participate in equality / withdrawal-and-readd. A leaked
+        // `sealedTarget` would have changed `contributionsEqual`
+        // and triggered a spurious withdrawal + re-add on
+        // settings-resilience paths. Closed the shape to the three
+        // known measures; an extra measure is opt-in via the new
+        // `extras` map (still target-independent because the
+        // helper at `__tests__/phase969/sealedContext.test.ts:482`
+        // asserts no `sealedTarget` is ever passed).
+        extras?: { [key: string]: number | string | boolean };
     };
     /** The measurement inputs that produced the contribution. */
     measurementInputs: Record<string, unknown>;
@@ -66,6 +82,18 @@ export type ContributionDecision =
  * field matches. `contributedValues` and `measurementInputs` use deep
  * equality via JSON canonicalisation. This is the no-op decision's
  * criterion — anything else triggers withdraw-then-add.
+ *
+ * **FR-011(a) narrowing (Amendment 2):** the comparison basis is
+ * deliberately TARGET-INDEPENDENT. `ContributedValues` here carries
+ * only `ctrLink`, `cpm` and `verdictMark` — usage, click-through and
+ * cost-per-thousand — none of which involves the cost target. The
+ * efficiency figure (FR-002a, FR-077) lands in a SEPARATE field on
+ * `ContributionLedgerEntry` (`efficiencyValue` + `efficiencyContributed`)
+ * with its own write-once guard (FR-079, FR-005c carve-out / SC-031).
+ * Its writes never fire `withdraw_then_add` — re-evaluation of the
+ * efficiency figure is forbidden even when the underlying measures
+ * change, because the figure is compute-once-stable-once and
+ * permanents the moment FR-077's eligibility is met.
  */
 export function contributionsEqual(
     a: ContributionLedgerEntry,

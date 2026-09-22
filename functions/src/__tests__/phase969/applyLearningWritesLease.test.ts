@@ -62,7 +62,19 @@ function docKey(parts: string[]): string {
 }
 
 class StubDocRef {
-    constructor(public readonly parentPath: string, public readonly id: string) {}
+    // Round-22 — add a `path` field. Real Firestore's
+    // `DocumentReference` carries `{id, path, parent, firestore}`;
+    // `getAll` rejects anything that isn't a `DocumentReference` at
+    // the SDK boundary (a TypeError). The tightened
+    // bounded-read stub at line ~163 (and at ~792) now throws on
+    // any ref whose `path` is missing or empty, matching that
+    // behaviour. The `applyLearningWrites.ts:436-440` ref shape
+    // is `{id, path?}`; tests that exercise the bounded read
+    // now construct refs whose `path` is populated.
+    constructor(public readonly parentPath: string, public readonly id: string) {
+        this.path = `${parentPath}/${id}`;
+    }
+    public readonly path: string;
     async get() {
         const data = docStore.get(docKey([this.parentPath, this.id]));
         return {
@@ -112,6 +124,14 @@ class StubBatch {
     }
 }
 
+// Round-18 — T053 failed-read ABORT. Tests 12 and 13 simulate a
+// chunk read failure via `failChunks` (matches an `id` set and
+// throws). The stub's `getAll` reads the option from a global
+// per-test; cleared by `resetStub()`.
+let currentFailChunks: Array<{ ids: string[] }> = [];
+function setFailChunks(chunks: Array<{ ids: string[] }>) { currentFailChunks = chunks; }
+function clearFailChunks() { currentFailChunks = []; }
+
 const stubFirestore = () => ({
     settings: () => stubFirestore(),
     collection: (path: string) => new StubCollection(path),
@@ -121,6 +141,79 @@ const stubFirestore = () => ({
         return new StubDocRef(segs.join("/"), id);
     },
     batch: () => new StubBatch(),
+    // Round-17 — T053 in-lease re-read. `applyLearningWrites`
+    // calls `readExistingAdDocs(db, refs)` after the lease is held
+    // to re-consult seal and ledger verdicts on fresh state. The
+    // stub's `getAll` is intentionally MINIMAL: it accepts refs
+    // with `{id}` (the shape round-17's `applyLearningWrites`
+    // passes — refs without `path`).
+    //
+    // Production Firestore refs carry `{id, path}`. The stub does
+    // not need `path` because `readExistingAdDocs` only uses
+    // `ref.id` for its lookup; the path is for the real Firestore
+    // SDK's internal `getAll` implementation. Round-18's
+    // `t064bEndToEnd.discriminator.test.ts` stub handles the
+    // `{id, path}` shape because `runSyncForAccount` constructs
+    // refs via `adAccountRef.collection("adPerformance").doc(id)`
+    // and that path needs the full path to look up in its bucket.
+    //
+    // Round-18 — T053 failed-read ABORT. When `currentFailChunks`
+    // matches the chunk's id set as a SET (order-independent), the
+    // stub throws — `readExistingAdDocs` surfaces this in
+    // `failedIds`, and the round-18 fix treats it as abort (the
+    // consult, withdrawal pass, eligibility walk, additive pass,
+    // and seal commit all skip the failed ids). When no
+    // `currentFailChunks` match, the stub resolves each ref by
+    // scanning the in-memory bucket for any key ending in
+    // `/{id}`. Tests 9–11 use the success path to assert the
+    // race window: run A commits to the bucket, run B's
+    // in-lease re-read sees A's commit.
+    getAll: (...refs: Array<{ id: string; path?: string }>): Promise<Array<{ id: string; exists: boolean; data(): Record<string, unknown> }>> => {
+        // Round-22 — match real Firestore's contract. The SDK's
+        // `getAll` accepts only `DocumentReference` instances, which
+        // always carry a `path`. The `{id}`-only shape round-18's
+        // loose stub accepted would be rejected by production
+        // Firestore at the SDK boundary (a TypeError). The code at
+        // `applyLearningWrites.ts:436-440` now constructs refs via
+        // `adAccountRef.collection("adPerformance").doc(ad.adId)`,
+        // which carries `{id, path}`; this tightened stub accepts
+        // that shape and throws on any ref lacking `path`.
+        const ids = refs.map((r) => r.id);
+        for (const ref of refs) {
+            if (typeof (ref as { path?: string }).path !== "string"
+                || ((ref as { path?: string }).path ?? "").length === 0) {
+                return Promise.reject(new TypeError(
+                    `db.getAll: ref "${ref.id}" is not a DocumentReference (missing path); ` +
+                    `this matches what the real Firestore SDK would reject`,
+                ));
+            }
+        }
+        for (const failure of currentFailChunks) {
+            const wanted = new Set(failure.ids);
+            const got = new Set(ids);
+            if (wanted.size === got.size && wanted.size > 0) {
+                let allMatch = true;
+                for (const id of wanted) {
+                    if (!got.has(id)) { allMatch = false; break; }
+                }
+                if (allMatch) {
+                    return Promise.reject(new Error(`chunk failed: ${failure.ids.join(",")}`));
+                }
+            }
+        }
+        return Promise.all(refs.map((ref) => {
+            const id = ref.id;
+            let data: any | undefined;
+            for (const [k, v] of docStore.entries()) {
+                if (k.endsWith(`/${id}`)) { data = v; break; }
+            }
+            return Promise.resolve({
+                id,
+                exists: data !== undefined,
+                data: () => data ?? {},
+            });
+        }));
+    },
 });
 
 Object.defineProperty(admin, "firestore", { value: stubFirestore, configurable: true });
@@ -271,7 +364,7 @@ async function test1_creativeDedupedWithinCall() {
     const ad2 = makeAd("ad_2", "urgency", "creative_SHARED", 0.04);
 
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad1, ad2],
         ledgerAdDocsByAdId: new Map([
@@ -312,7 +405,7 @@ async function test2_differentCreatives() {
     const ad2 = makeAd("ad_2", "urgency", "creative_B", 0.04);
 
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad1, ad2],
         ledgerAdDocsByAdId: new Map([
@@ -353,7 +446,7 @@ async function test3_ctrLinkAverage() {
     const ad2 = makeAd("ad_2", "urgency", "creative_B", 0.04);
 
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad1, ad2],
         ledgerAdDocsByAdId: new Map([
@@ -399,7 +492,7 @@ async function test4_unfenced_losesFirstRowInAvg() {
     // `merge:true` merges onto the stored doc, putting the
     // function's avgLinkCtr=0.02 into the document.
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad1],
         ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_A")]]),
@@ -417,7 +510,7 @@ async function test4_unfenced_losesFirstRowInAvg() {
     // avgLinkCtr=0.04, count=1. Commits a scalar write. Stub
     // `merge:true` REPLACES the scalar avgLinkCtr with 0.04.
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad2],
         ledgerAdDocsByAdId: new Map([["ad_2", makeLedger("ad_2", "creative_B")]]),
@@ -458,7 +551,7 @@ async function test5_fenced_retainsBothInAvg() {
 
     // Call 1: reads baseline {0,0} → writes {avgLinkCtr:0.02, count:1}.
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad1],
         ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_A")]]),
@@ -472,7 +565,7 @@ async function test5_fenced_retainsBothInAvg() {
     // adds its row (ctrLink=0.04), and computes the weighted
     // average (0.02*1 + 0.04) / 2 = 0.03, count=2.
     await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad2],
         ledgerAdDocsByAdId: new Map([["ad_2", makeLedger("ad_2", "creative_B")]]),
@@ -550,7 +643,7 @@ async function test6_visualPatternWithdrawal() {
 
     const errors: string[] = [];
     const result = await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad],
         ledgerAdDocsByAdId,
@@ -644,7 +737,7 @@ async function test7_visualStaysWhenHookChanges() {
 
     const errors: string[] = [];
     const result = await applyLearningWrites({
-        db: { batch: () => new StubBatch() },
+        db: stubFirestore(),
         adAccountRef: makeAdAccountRef(),
         learnedAds: [ad],
         ledgerAdDocsByAdId,
@@ -690,6 +783,14 @@ async function test8_commitFailureReturnsNotRan() {
     // write BUILT, not COMMITTED). The reviewer named this Bug 3.
     // The fix: throw on commit, the outer try/catch records the
     // error in `errors` and returns emptyResult (`ran: false`).
+    //
+    // Round-18 — the stub now includes `getAll` so the in-lease
+    // re-read at the top of `applyLearningWrites` succeeds (the
+    // stub `docStore` has no ad_1 entry, so the re-read returns
+    // `exists: false` — the legitimate does-not-exist case, NOT
+    // a failed chunk read). The function proceeds normally to the
+    // commit step; the rejected commit throws and the outer
+    // catch records the failure.
     const result = await applyLearningWrites({
         db: {
             batch(): unknown {
@@ -697,6 +798,34 @@ async function test8_commitFailureReturnsNotRan() {
                     set(): unknown { return undefined; },
                     commit: async () => { throw new Error("simulated commit failure"); },
                 };
+            },
+            getAll: (...refs: Array<{ id: string; path?: string }>): Promise<Array<{ id: string; exists: boolean; data(): Record<string, unknown> }>> => {
+                // Round-22 — match real Firestore's contract (see the
+                // outer stub at line ~159 for the full rationale).
+                // Throws on any ref lacking `path`; the code at
+                // `applyLearningWrites.ts:436-440` now constructs refs
+                // via `adAccountRef.collection("adPerformance")
+                // .doc(ad.adId)`, which carries `{id, path}`.
+                for (const ref of refs) {
+                    if (typeof (ref as { path?: string }).path !== "string"
+                        || ((ref as { path?: string }).path ?? "").length === 0) {
+                        return Promise.reject(new TypeError(
+                            `db.getAll: ref "${ref.id}" is not a DocumentReference (missing path); ` +
+                            `this matches what the real Firestore SDK would reject`,
+                        ));
+                    }
+                }
+                return Promise.all(refs.map((ref) => {
+                    let data: any | undefined;
+                    for (const [k, v] of docStore.entries()) {
+                        if (k.endsWith(`/${ref.id}`)) { data = v; break; }
+                    }
+                    return Promise.resolve({
+                        id: ref.id,
+                        exists: data !== undefined,
+                        data: () => data ?? {},
+                    });
+                }));
             },
         },
         adAccountRef: makeAdAccountRef(),
@@ -777,9 +906,464 @@ function emptyVisualAggregate(patternKey: string): any {
     };
 }
 
+// ─── Round-17 — T053 in-lease re-read discriminator ────────────
+//
+// Three tests pin the round-17 fix at the `applyLearningWrites`
+// level. The function-level surface is the cleanest place to
+// observe the race because:
+//   - `existingByAdId` is the parameter the caller (pre-lease
+//     bounded read at `shared.ts:1090`) passes in. The test can
+//     construct that map freely.
+//   - `sealedAdocsById` is the parameter the per-ad loop
+//     populated pre-lease (`shared.ts:1280`). The test can
+//     populate that map freely.
+//   - The stub commit IS the lease-held commit; the in-lease
+//     re-read inside `applyLearningWrites` (after the fix) hits
+//     the same `docStore`.
+//
+// To simulate the race: snapshot the bucket state BEFORE run A,
+// run A (which writes its commit), restore the snapshot so run
+// B reads what A would not yet have committed, then run B.
+// Against current code, B's commit overwrites A's commit. Against
+// the fix, B's in-lease re-read sees A's commit and refuses.
+
+// ─── Test 9 (T053 unfenced): seal target overwrites across two runs ───
+
+async function test9_unfenced_sealOverwrites() {
+    docStore.clear();
+
+    const adPath = docKey([ACCT_PATH, "adPerformance", "ad_1"]);
+
+    const sealA = {
+        sealedTarget: 100,
+        sealedAt: 1000,
+        sealedFunnelType: "paid_event",
+        contributionState: "SEALED",
+    };
+    const sealB = {
+        // DIFFERENT target — A and B disagree on the target. The
+        // user's invariant: the FIRST sealed target survives; the
+        // second writer that reads PROVISIONAL must be refused.
+        sealedTarget: 200,
+        sealedAt: 2000,
+        sealedFunnelType: "paid_event",
+        contributionState: "SEALED",
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    // Stub learnedAds so the function reaches the seal commit block
+    // (the early-return at applyLearningWrites.ts:343 skips the seal
+    // commit when learnedAds is empty).
+    const stubAd = makeAd("ad_1", "urgency", "creative_X", 0.02);
+
+    // Run A: pre-lease read → existingByAdId[A]={} (empty).
+    // Run A: per-ad consult → allowed → sealedAdocsById[A]={sealA}.
+    // Run A: lease-held commit writes sealA.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [stubAd],
+        ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_X")]]),
+        existingByAdId: new Map(),
+        sealedAdocsById: new Map([["ad_1", sealA]]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterA = docStore.get(adPath);
+    assert.equal(afterA?.sealedTarget, 100,
+        `T053 unfenced (run A): stored sealedTarget should be 100 (A's seal); got ${afterA?.sealedTarget}. ` +
+        `A's commit must land before B's race simulation begins.`);
+
+    // Run B: pre-lease read → existingByAdId[B]={} (stale — B's
+    // bounded read happened BEFORE A's commit).
+    // Run B: per-ad consult → allowed → sealedAdocsById[B]={sealB}.
+    // Run B: lease-held in-lease RE-READ sees A's committed seal
+    //   (the bucket now has A's seal, because A's commit landed at
+    //   T6). decideSealedTransition re-runs against fresh state
+    //   and refuses on
+    //   "sealed-target-already-set-and-differs" (targetB=200 ≠
+    //   targetA=100). sealB is NOT committed.
+    //
+    //   Pre-fix: applyLearningWrites blindly commits
+    //   `params.sealedAdocsById` without re-consulting — sealB
+    //   overwrites A's seal.
+    //   Post-fix: the in-lease re-read catches the race; sealB is
+    //   refused; A's seal survives.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [stubAd],
+        ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_X")]]),
+        existingByAdId: new Map(),
+        sealedAdocsById: new Map([["ad_1", sealB]]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterB = docStore.get(adPath);
+    const storedTarget = afterB?.sealedTarget;
+
+    assert.equal(storedTarget, 100,
+        `T053 unfenced: first sealed target must survive (round-17 fix); stored should be 100 (A's seal), got ${storedTarget}. ` +
+        `This is the race: B's consult was on stale data (read pre-A-commit, commit post-A-commit). ` +
+        `The lease serialised turns; it did not refuse a decision made on a stale read. ` +
+        `The fix re-runs decideSealedTransition inside the lease against a fresh bounded read.`);
+
+    console.log(`     runA→sealTarget=100 committed; runB in-lease re-read sees A's seal and refuses; stored after B=${storedTarget} (FIX=100, BUG=200)`);
+}
+
+// ─── Test 10 (T053 unfenced ledger): pre-lease read drives the consult ───
+
+async function test10_unfenced_ledgerDoubleCounts() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    const hookPath = docKey([ACCT_PATH, "hookPerformance", "urgency"]);
+    const adPath = docKey([ACCT_PATH, "adPerformance", "ad_1"]);
+
+    const ad = makeAd("ad_1", "urgency", "creative_X", 0.02);
+    const ledgerEntry = makeLedger("ad_1", "creative_X");
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    // Run A: existingByAdId[A]={} (empty). decideContribution(add)
+    //   → keep ad_1. Additive pass reads aggregate baseline = empty,
+    //   writes {count: 1, avgLinkCtr: 0.02}.
+    // Run A's commit writes the aggregate. The ledger entry on
+    // ad_1 is normally committed by the OPERATIONAL merge at
+    // `shared.ts:1457` (FR-060a — before the lease). That merge is
+    // OUTSIDE `applyLearningWrites`'s scope; this test simulates
+    // it by writing the ledger entry to the bucket directly.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad],
+        ledgerAdDocsByAdId: new Map([["ad_1", ledgerEntry]]),
+        existingByAdId: new Map(),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterA = docStore.get(hookPath);
+    const countA = afterA?.byObjective?.conversion?.count ?? -1;
+    assert.equal(countA, 1,
+        `T053 ledger unfenced (run A): stored count should be 1 (A's contribution); got ${countA}`);
+
+    // Simulate A's operational merge: write the ledger entry onto
+    // the ad_1 doc, exactly as `shared.ts:1457` does.
+    docStore.set(adPath, { ledger: ledgerEntry.ledger });
+
+    const afterA_adDoc = docStore.get(adPath);
+    assert.ok(afterA_adDoc?.ledger !== undefined,
+        `T053 ledger unfenced (run A): ad_1 doc must carry A's ledger entry after A's commit; ` +
+        `got ledger=${JSON.stringify(afterA_adDoc?.ledger)}`);
+
+    // Run B: pre-lease read → existingByAdId[B]={} (stale — B's
+    // bounded read happened BEFORE A's commit; the per-ad consult
+    // decides whether ad_1 contributes based on
+    // `existingByAdId[B]`, which has no ledger entry).
+    //
+    // Run B's in-lease RE-READ sees A's committed ledger (the bucket
+    // now has A's ledger entry, because A's commit landed at T6 and
+    // the operational merge simulated above wrote the ledger).
+    // decideContribution(desired_B, recorded=A) → noop
+    // (contributionsEqual — same creativeKey, angleKey, etc.).
+    // learnedAds removes ad_1. Aggregate not incremented again.
+    //
+    //   Pre-fix: the ledger consult reads `recorded` from
+    //   `params.existingByAdId` (stale-empty) → decides `add` →
+    //   keeps ad_1 in learnedAds → additive pass reads
+    //   {count:1} and adds 1 → {count:2}. Double count.
+    //   Post-fix: the in-lease re-read catches the race; the
+    //   consult returns noop; ad_1 is removed from learnedAds;
+    //   aggregate stays at 1.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad],
+        ledgerAdDocsByAdId: new Map([["ad_1", ledgerEntry]]),
+        existingByAdId: new Map(),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterB = docStore.get(hookPath);
+    const countB = afterB?.byObjective?.conversion?.count ?? -1;
+
+    assert.equal(countB, 1,
+        `T053 ledger unfenced: aggregate count must be 1 after both runs (round-19 fix); got ${countB}. ` +
+        `Pre-fix double-counts because B's in-lease re-read sees A's just-committed ledger (which the pre-fix operational merge wrote outside the lease); decideContribution returns 'noop' → aggregate stays at 1 BUT the contribution from A was actually lost (no aggregate at all). ` +
+        `Post-fix: the ledger is committed INSIDE the lease, so B's in-lease re-read sees A's committed ledger and the consult correctly routes to noop. ` +
+        `The operational merge no longer writes the ledger (round-19 architectural fix).`);
+
+    console.log(`     runA→count=1; runB in-lease re-read sees A's in-lease committed ledger and routes to noop; stored after B=${countB} (FIX=1, BUG=0)`);
+}
+
+// ─── Test 11 (T053 fenced positive case): sequential — second run sees first's commit ───
+
+async function test11_fenced_sealRefusesSecondWriter() {
+    docStore.clear();
+
+    const adPath = docKey([ACCT_PATH, "adPerformance", "ad_1"]);
+
+    const sealA = {
+        sealedTarget: 100,
+        sealedAt: 1000,
+        sealedFunnelType: "paid_event",
+        contributionState: "SEALED",
+    };
+    const sealB = {
+        sealedTarget: 200,
+        sealedAt: 2000,
+        sealedFunnelType: "paid_event",
+        contributionState: "SEALED",
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    // Stub learnedAds so the function reaches the seal commit block.
+    const stubAd = makeAd("ad_1", "urgency", "creative_X", 0.02);
+
+    // Run A: empty bucket. consult → allowed. commit sealA.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [stubAd],
+        ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_X")]]),
+        existingByAdId: new Map(),
+        sealedAdocsById: new Map([["ad_1", sealA]]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterA = docStore.get(adPath);
+    assert.equal(afterA?.sealedTarget, 100,
+        `T053 fenced (run A): stored sealedTarget should be 100; got ${afterA?.sealedTarget}`);
+
+    // Fenced: do NOT restore the bucket. B's in-lease re-read sees
+    // A's committed seal.
+    // Run B: existingByAdId[B]={} (caller's pre-lease view, still
+    // stale-empty). But the in-lease re-read sees A's seal.
+    // decideSealedTransition refuses → no commit for sealB.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [stubAd],
+        ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_X")]]),
+        existingByAdId: new Map(),
+        sealedAdocsById: new Map([["ad_1", sealB]]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterB = docStore.get(adPath);
+    const storedTarget = afterB?.sealedTarget;
+
+    // The fenced case: A's seal survives; B's different target is
+    // refused. This is the post-fix expected behaviour AND the
+    // pre-fix correct behaviour for the SEQUENTIAL case (caller's
+    // pre-lease read sees A's commit, consult refuses via the
+    // existing Test B branch). The test pins BOTH the pre-fix
+    // sequential correctness and the post-fix fenced correctness
+    // — the round-17 fix must not regress this.
+    assert.equal(storedTarget, 100,
+        `T053 fenced: first sealed target must survive sequential runs; stored should be 100 (A's seal), got ${storedTarget}. ` +
+        `Pre-fix: B's pre-lease read saw A's seal, consult refused, no commit. Post-fix: B's in-lease re-read saw A's seal, consult refused, no commit.`);
+
+    console.log(`     runA→sealTarget=100 committed; runB in-lease re-read sees sealA, refuses; stored=${storedTarget}`);
+}
+
+// ─── Round-18 — T053 failed-read ABORT discriminator ────────────
+//
+// Round 17 closed the race window for the case where the in-lease
+// re-read SUCCEEDS. Round 18 closes the related hole where the
+// re-read FAILS — the previous fix fell back to `existingByAdId`
+// (the pre-lease read), which reproduces the race the round-17 fix
+// just closed, only in the case where something has already gone
+// wrong. FR-070 governs: a failed chunk read MUST abort the
+// learning write for that chunk rather than be read as "no prior
+// contribution". Round 18 implements that for the in-lease
+// re-read.
+
+// ─── Test 12 (round-18 — failed-chunk seal): fresh-read chunk failure must skip the seal write ───
+
+async function test12_failedChunk_sealAborted() {
+    docStore.clear();
+
+    const adPath = docKey([ACCT_PATH, "adPerformance", "ad_1"]);
+
+    const sealA = {
+        sealedTarget: 100,
+        sealedAt: 1000,
+        sealedFunnelType: "paid_event",
+        contributionState: "SEALED",
+    };
+    const sealB = {
+        // DIFFERENT target — A's seal is the truth on disk; B's
+        // chunk read fails, and the round-18 fix must NOT let
+        // B's pre-lease verdict overwrite A's seal.
+        sealedTarget: 200,
+        sealedAt: 2000,
+        sealedFunnelType: "paid_event",
+        contributionState: "SEALED",
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    const stubAd = makeAd("ad_1", "urgency", "creative_X", 0.02);
+
+    // Run A: bucket empty. Consult allows sealA. Commit sealA.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [stubAd],
+        ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_X")]]),
+        existingByAdId: new Map(),
+        sealedAdocsById: new Map([["ad_1", sealA]]),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterA = docStore.get(adPath);
+    assert.equal(afterA?.sealedTarget, 100,
+        `T053 failed-chunk (run A): stored sealedTarget should be 100 (A's seal); got ${afterA?.sealedTarget}`);
+
+    // Run B: pre-lease view is stale-empty (the bounded read
+    // happened before A's commit). The pre-lease per-ad consult
+    // populates `sealedAdocsById[B] = { ad_1: sealB }`.
+    //
+    // Now simulate the in-lease re-read failing. The chunk
+    // containing ad_1 throws — `readExistingAdDocs` reports
+    // ad_1 in `failedIds`.
+    //
+    // Pre-fix: the catch block falls through; `freshByAdId`
+    // retains the pre-lease data for ad_1; the seal commit
+    // writes sealB over A's seal. BUG REPRODUCED.
+    // Post-fix: ad_1 is in `failedIds`; it is removed from
+    // `freshByAdId` AND from `learnedAds`; the seal commit
+    // skips it. A's seal survives.
+    setFailChunks([{ ids: ["ad_1"] }]);
+    try {
+        await applyLearningWrites({
+            db: stubFirestore(),
+            adAccountRef: makeAdAccountRef(),
+            learnedAds: [stubAd],
+            ledgerAdDocsByAdId: new Map([["ad_1", makeLedger("ad_1", "creative_X")]]),
+            existingByAdId: new Map(),
+            sealedAdocsById: new Map([["ad_1", sealB]]),
+            nowMs: Date.now(),
+            errors: [],
+        });
+    } finally {
+        clearFailChunks();
+    }
+
+    const afterB = docStore.get(adPath);
+    const storedTarget = afterB?.sealedTarget;
+
+    assert.equal(storedTarget, 100,
+        `T053 failed-chunk seal: first sealed target must survive (round-18 fix); stored should be 100 (A's seal), got ${storedTarget}. ` +
+        `Pre-fix: the in-lease re-read failed; the function fell back to the pre-lease verdict; sealB overwrote A's seal. ` +
+        `Post-fix: ad_1 in failedIds → seal commit skipped; A's seal survives. ` +
+        `Per FR-070, a failed chunk read aborts the learning write for that chunk — it does NOT fall back to older data.`);
+
+    console.log(`     runA→sealTarget=100 committed; runB in-lease chunk read fails for ad_1; stored after B=${storedTarget} (FIX=100, BUG=200)`);
+}
+
+// ─── Test 13 (round-18 — failed-chunk ledger): fresh-read chunk failure must skip the contribution ───
+
+async function test13_failedChunk_ledgerAborted() {
+    docStore.clear();
+    docStore.set(
+        docKey([ACCT_PATH, "hookPerformance", "urgency"]),
+        emptyHookAaggregate("urgency"),
+    );
+
+    const hookPath = docKey([ACCT_PATH, "hookPerformance", "urgency"]);
+    const adPath = docKey([ACCT_PATH, "adPerformance", "ad_1"]);
+
+    const ad = makeAd("ad_1", "urgency", "creative_X", 0.02);
+    const ledgerEntry = makeLedger("ad_1", "creative_X");
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLearningWrites } = require("../../learning/applyLearningWrites.js");
+
+    // Run A: empty bucket. decideContribution(add) → keep ad_1.
+    // Additive pass writes {count: 1}. The operational merge
+    // (simulated) writes the ledger entry on ad_1.
+    await applyLearningWrites({
+        db: stubFirestore(),
+        adAccountRef: makeAdAccountRef(),
+        learnedAds: [ad],
+        ledgerAdDocsByAdId: new Map([["ad_1", ledgerEntry]]),
+        existingByAdId: new Map(),
+        nowMs: Date.now(),
+        errors: [],
+    });
+
+    const afterA = docStore.get(hookPath);
+    const countA = afterA?.byObjective?.conversion?.count ?? -1;
+    assert.equal(countA, 1,
+        `T053 failed-chunk ledger (run A): stored count should be 1 (A's contribution); got ${countA}`);
+
+    // Simulate A's operational merge: write the ledger entry
+    // onto the ad_1 doc.
+    docStore.set(adPath, { ledger: ledgerEntry.ledger });
+
+    // Run B: pre-lease view is stale-empty. The in-lease re-read
+    // chunk for ad_1 FAILS. `freshFailedReads` contains ad_1.
+    //
+    // Pre-fix: the catch block falls through; `freshByAdId`
+    // retains the pre-lease data (no ledger recorded); the
+    // ledger consult returns `add`; `learnedAds` keeps ad_1;
+    // the additive pass reads {count: 1} (live aggregate) and
+    // adds B's row → {count: 2}. DOUBLE COUNT.
+    // Post-fix: ad_1 in `failedIds` → removed from
+    // `learnedAds` → ledger consult does not run for ad_1 →
+    // additive pass skips it → count stays at 1.
+    setFailChunks([{ ids: ["ad_1"] }]);
+    try {
+        await applyLearningWrites({
+            db: stubFirestore(),
+            adAccountRef: makeAdAccountRef(),
+            learnedAds: [ad],
+            ledgerAdDocsByAdId: new Map([["ad_1", ledgerEntry]]),
+            existingByAdId: new Map(),
+            nowMs: Date.now(),
+            errors: [],
+        });
+    } finally {
+        clearFailChunks();
+    }
+
+    const afterB = docStore.get(hookPath);
+    const countB = afterB?.byObjective?.conversion?.count ?? -1;
+
+    assert.equal(countB, 1,
+        `T053 failed-chunk ledger: aggregate count must be 1 after both runs (round-18 fix); got ${countB}. ` +
+        `Pre-fix: the in-lease re-read failed for ad_1; the function fell back to the pre-lease read; ` +
+        `the ledger consult saw recorded=undefined (stale); decideContribution returned 'add'; ` +
+        `the additive pass incremented the aggregate → {count: 2}. Double count. ` +
+        `Post-fix: ad_1 in failedIds → ledger consult skipped → ad_1 removed from learnedAds → aggregate stays at 1. ` +
+        `Per FR-070, a failed chunk read aborts the learning write for that chunk.`);
+
+    console.log(`     runA→count=1; runB in-lease chunk read fails for ad_1; stored after B=${countB} (FIX=1, BUG=2)`);
+}
+
 // ─── Runner ───────────────────────────────────────────────────
 
 declare const test: (name: string, fn: () => Promise<void> | void) => Promise<void>;
+
+
 
 const PASSED = 0;
 const FAILED = 1;
@@ -817,6 +1401,11 @@ async function main() {
     await test("BATCH 26 visual withdrawal: pattern P1→P2 withdraws OLD visual, adds NEW visual", test6_visualPatternWithdrawal);
     await test("BATCH 26 hook-only change: visual count preserved (no over-withdraw)", test7_visualStaysWhenHookChanges);
     await test("BATCH 26 commit failure: ran=false, errors[] populated, no commit landed", test8_commitFailureReturnsNotRan);
+    await test("T053 unfenced: seal target overwrites across two runs (round-17 fix)", test9_unfenced_sealOverwrites);
+    await test("T053 ledger unfenced: aggregate double-counts across two runs (round-17 fix)", test10_unfenced_ledgerDoubleCounts);
+    await test("T053 fenced positive case: sequential — first seal survives, second refused", test11_fenced_sealRefusesSecondWriter);
+    await test("T053 failed-chunk seal: in-lease re-read failure must skip the seal write (round-18 fix)", test12_failedChunk_sealAborted);
+    await test("T053 failed-chunk ledger: in-lease re-read failure must skip the contribution (round-18 fix)", test13_failedChunk_ledgerAborted);
 }
 
 main()

@@ -88,6 +88,12 @@ import {
     type AdForLearning,
 } from "../learningAggregates.js";
 import {
+    decideSealedTransition,
+    type SealTransitionVerdict,
+    resolveSealedContext,
+    type WorkspaceFunnelType,
+} from "../learning/sealedContext.js";
+import {
     acquireLearningLease,
     releaseLearningLease,
     stillHeld,
@@ -101,6 +107,7 @@ import {
 } from "../learning/decideAdWriteActions.js";
 import type { ContributionLedgerEntry } from "../learning/types.js";
 import { applyLearningWrites } from "../learning/applyLearningWrites.js";
+import type { AdSealFields } from "../learning/sealedContext.js";
 import {
     decidePerAdActionsForWorker,
     resolveCreativeKeyByAdId,
@@ -231,6 +238,78 @@ export interface AdDoc {
     diagnosisAr: string | null;
     evaluatedAt: number;
     schemaVersion: 1;
+    /**
+     * FR-085 — the ad's own configured `status` from Meta
+     * (`metaGraph.ts:83`, typed at `:145`). Operational data:
+     * persisted for every sync so the eligibility rule FR-077(b)
+     * can read it. Under-detects parent-level pauses by design —
+     * `effective_status` is deferred (FR-085's accepted cost).
+     */
+    adStatus?: string | null;
+    /**
+     * FR-001 — the cost target this ad was sealed against. One-way:
+     * once a non-null value is written (FR-005b's PROVISIONAL → SEALED
+     * transition), it cannot be replaced by a different value
+     * (FR-005c's code guard). Null when the ad is PROVISIONAL — the
+     * target was not resolvable at first sight.
+     *
+     * **NOT to be confused with the verdict engine's `target`**: that
+     * value recomputes per sync against current economics (FR-009).
+     * The sealed target is what the creative's judgement was measured
+     * against. They diverge on purpose — FR-008 separates them.
+     */
+    sealedTarget?: number | null;
+    /**
+     * FR-004 — the funnel type in force when the ad was sealed.
+     * Mirrors the workspace funnel type's bucket key
+     * (`paid_event` | `paid_product` | `free_webinar` |
+     * `lead_magnet_call`). Always `null` while the row is PROVISIONAL.
+     */
+    sealedFunnelType?: import("../learning/sealedContext.js").WorkspaceFunnelType | null;
+    /**
+     * FR-005d — the moment of sealing, in epoch ms. Set on the
+     * PROVISIONAL → SEALED transition; never modified thereafter.
+     * Late-sealing rows (FR-012a) inherit their creative's earliest
+     * `sealedAt` through the aggregate-side derivation, not their own.
+     */
+    sealedAt?: number | null;
+    /**
+     * Batch 3 (FR-002 / FR-079) — the raw unbounded efficiency
+     * figure for THIS ROW's contribution to the creative. Stored at
+     * contribution time; never revised (FR-079 write-once; the
+     * creative's figure is locked at first eligibility). Distinct
+     * from `ledger.efficiencyValue` (`types.ts:77`), which is the
+     * same number at the same moment but lives on the contribution
+     * ledger entry — three different fields (`efficiencyRaw` here,
+     * `ledger.efficiencyValue`, `ledger.efficiencyContributed`),
+     * each carrying a different facet of FR-005e / FR-079.
+     *
+     * Bounded separately at the aggregate layer (FR-038's 3.0
+     * cap) — the per-row figure is unbounded so a freak row
+     * cannot dominate the creative's aggregate mean.
+     */
+    efficiencyRaw?: number | null;
+    /**
+     * FR-005a — the per-row contribution state machine:
+     *   - absent or null: never evaluated / no target ever resolvable.
+     *   - `PROVISIONAL`: no target was resolvable at first sight. The
+     *     row contributes usage / click-through / cost-per-thousand
+     *     evidence normally.
+     *   - `SEALED`: a target was resolvable; the row carries the
+     *     sealed fields above and contributes in full.
+     *
+     * One-way. PROVISIONAL → SEALED happens at the first evaluation
+     * at which a target is resolvable (FR-005b); the reverse is
+     * FORBIDDEN (FR-005c).
+     *
+     * Optional AND null-tolerant so that a worker that knows the row
+     * is still PROVISIONAL can write `contributionState: "PROVISIONAL"`
+     * explicitly (the merge semantics then record the state for
+     * clarity) or omit it entirely. The merge never clears this
+     * field because the worker's `decideSealedTransition` always
+     * supplies the appropriate value when contributing.
+     */
+    contributionState?: "PROVISIONAL" | "SEALED" | null;
     /**
      * T025: contribution ledger entry. Embedded on the ad row per
      * data-model.md §2. Records exactly what this row contributed in
@@ -733,7 +812,6 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // breakdown accumulates from there. Resolves to "unknown" when
     // the doc is absent (FR-032 — receives no same-funnel weighting,
     // still counts toward headline totals).
-    type WorkspaceFunnelType = "paid_event" | "paid_product" | "free_webinar" | "lead_magnet_call" | "unknown";
     let workspaceFunnelType: WorkspaceFunnelType = "unknown";
     try {
         const settingsRef = getDb()
@@ -787,6 +865,24 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     } catch (e: unknown) {
         errors.push(`load funnel settings failed: ${(e as Error).message}`);
     }
+
+    // Phase 4 / Batch 2 (T028) — compute the per-sync sealed context once,
+    // before the per-ad loop. `null` means the target is not resolvable
+    // this sync — every contributing row stays PROVISIONAL on the sealed
+    // axis (FR-005b). The verdict engine continues to compute against the
+    // same `derived` payload via `getEffectiveTarget ?? Infinity`; the
+    // seal path is now null-aware (no fallback) per FR-005 (no
+    // placeholder, no Infinity).
+    //
+    // The same workspaceFunnelType and derived that load once at the top
+    // of this scope feed both. No additional Firestore reads — the read
+    // that loaded `funnelSettings.derived` above is the only one needed,
+    // and it sits inside the per-account lease window.
+    const perSyncSealedContext = resolveSealedContext(
+        funnelSettings?.derived ?? null,
+        workspaceFunnelType,
+        nowMs,
+    );
 
     // Phase 14 — Layer 4b (T044, wired in a later step): batch-load
     // matched-generation metadata for all matched ads so the learning
@@ -993,6 +1089,17 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // re-introduce the unbounded scan under the new one.
     const existingByAdId = new Map<string, Partial<AdDoc>>();
     const failedLedgerReads = new Set<string>();
+    // Round-16 — T053. Map<adId, AdSealFields> captured per row by
+    // the per-ad loop below when `decideSealedTransition` returns
+    // `allowed: true`. This is the only place seal fields land now
+    // — not in `decision.adDoc` (round-15 fix removed them from the
+    // operational merge) but in this local map. It is forwarded to
+    // `applyLearningWrites` (line 1717+) which commits them inside
+    // the lease-held critical section. The lease itself is the
+    // serialisation barrier. Declared at the function scope (NOT
+    // inside the bounded-read try block) so the per-ad loop can
+    // reach it after the catch.
+    const sealedAdocsById = new Map<string, AdSealFields>();
     try {
         const adIdRefs = ads.map((ad) =>
             adAccountRef.collection("adPerformance").doc(ad.id),
@@ -1119,6 +1226,68 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         const target = funnelSettings
             ? getEffectiveTarget(funnelSettings.derived) ?? Infinity
             : Infinity;
+
+        // Phase 4 / Batch 2 (T028, T029) — the FR-005c guard. Reads the
+        // existing ad row's sealed fields (when present) and the new
+        // per-sync resolved sealed context, and returns the four sealed
+        // fields the worker must include in the `baseDoc` write. The
+        // guard tests the TRANSITION, not the flag — see the
+        // `decideSealedTransition` doc block for both halves of FR-005c.
+        //
+        // Operational fields (spend, conversions, etc.) always flow —
+        // the merge write semantics leave the prior sealed values intact
+        // when the new sealed fields are omitted (FR-070 field-level
+        // discrimination).
+        const existingFunnelType: WorkspaceFunnelType | null
+            = (existingData?.sealedFunnelType as WorkspaceFunnelType | null | undefined) ?? null;
+        // Round-15 fix: gate the seal consult on `!ledgerReadFailed`.
+        // When the bounded read failed we deliberately set
+        // `existingData = undefined` (line 1171), but the consult
+        // below treats that as "no prior state" and lets
+        // `decideSealedTransition` accept a fresh seal. The merged
+        // write then writes the new seal fields on top of
+        // whatever the doc actually had at the time of the failed
+        // read — including a previously-sealed row whose seal we
+        // cannot trust the failed read to have observed. Skipping
+        // the consult AND clearing `sealFields` below preserves
+        // the persisted seal across a transient failure.
+        const sealVerdict: SealTransitionVerdict = !ledgerReadFailed
+            ? decideSealedTransition(
+                existingData === undefined
+                    ? undefined
+                    : {
+                        sealedTarget: existingData.sealedTarget ?? null,
+                        sealedAt: existingData.sealedAt ?? null,
+                        sealedFunnelType: existingFunnelType,
+                    },
+                perSyncSealedContext,
+            )
+            : { allowed: false, reason: "sealed-target-already-set-and-differs" };
+        const sealFields = sealVerdict.allowed ? sealVerdict.fields : {};
+        // Round-16 — T053. Capture the seal fields locally when the
+        //   consult permitted the transition. The per-acquire map
+        //   `sealedAdocsById` is the only path the new fields take
+        //   to Firestore. The operational merge at line 1439 (was:
+        //   1378) writes `decision.adDoc` WITHOUT the seal; this map
+        //   is forwarded to `applyLearningWrites` (line 1717+) which
+        //   commits the seal inside the lease-held chunked commit.
+        //   The two paths cannot both write the seal because the
+        //   bounded read cache has the seal committed by the first
+        //   path before the second path reads; the second writer's
+        //   `decideSealedTransition` consult sees the persisted seal
+        //   and refuses. The lease itself serialises acquire.
+        if (sealVerdict.allowed) {
+            sealedAdocsById.set(ad.id, sealVerdict.fields);
+        }
+        if (!sealVerdict.allowed) {
+            // One line per refusal, deduplicated by adId within the
+            // sync. FR-051c enumerated-reason discipline.
+            errors.push(
+                `seal_refused  adId=${ad.id} reason=${sealVerdict.reason} ` +
+                `existing=${existingData?.sealedTarget ?? "null"} ` +
+                `attempted=${perSyncSealedContext?.sealedTarget ?? "null"}`,
+            );
+        }
         // adSetCpa: undefined if no conversions (the engine treats this as
         // "no data" and falls through to leave-it per the K5 matrix).
         const adSetCpa3d = adSetConv3d > 0 ? adSetSpend3d / adSetConv3d : undefined;
@@ -1216,6 +1385,56 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                     ? (ad.creative.image_url || ad.creative.thumbnail_url || undefined)
                     : undefined,
                 adName: ad.name ?? "",
+                // FR-085 — the ad's own configured `status`. The Meta
+                // fetch at `metaGraph.ts:83` requests it; here it
+                // becomes `adStatus` on the AdDoc. Under-detects
+                // parent-level pauses by design (effective_status is
+                // deferred, FR-085 accepted cost).
+                adStatus: ad.status ?? null,
+                // Round-16 — T053 LANDED. The seal fields previously joined the
+                //     operational merge at line 1378 (BEFORE the
+                //     per-account lease was acquired), opening a race
+                //     window for two concurrent `runSyncForAccount`
+                //     calls (Cloud Tasks fan-out path): both can read
+                //     existingData as PROVISIONAL, both can accept a
+                //     seal, and the last write wins even when settings
+                //     change between reads. The fix:
+                //       1. The seal fields are captured into a
+                //          `sealedAdocsById: Map<adId, AdSealFields>`
+                //          during the per-ad loop (when
+                //          `sealVerdict.allowed === true`).
+                //       2. `decision.adDoc` is built WITHOUT the seal
+                //          fields — the FR-005c-guard verdict was
+                //          already computed earlier in this loop, so
+                //          we don't need to re-decide.
+                //       3. The operational merge at line 1416/1565
+                //          lands the doc WITHOUT the seal — FR-060a's
+                //          invariant ("the operational commit precedes
+                //          the lease acquire") holds: the operational
+                //          status updates are durable regardless of
+                //          whether the lease succeeds.
+                //       4. `applyLearningWrites` receives
+                //          `sealedAdocsById` and commits the seal
+                //          fields inside its lease-held chunked
+                //          commit. A lease-refused run (the early
+                //          return at line 1621) never calls
+                //          `applyLearningWrites`, so it never writes
+                //          seal fields — the invariant "a lease-
+                //          refused run writes no seal" holds.
+                //     Two invariants preserved:
+                //     - FR-060a: operational commit precedes the
+                //       lease acquire and the seal fields leave that
+                //       commit.
+                //     - FR-005c: the seal transition is one-way. The
+                //       second writer that reads the post-first-seal
+                //       state via the bounded read hits
+                //       `decideSealedTransition` "sealed-already-set"
+                //       refusal; the second writer that fails to
+                //       acquire the lease is refused before reading
+                //       the new state. Either way, the first sealed
+                //       target survives. The discriminator test at
+                //       `__tests__/phase969/sealedTransitionRaceDiscriminator.test.ts`
+                //       pins both shapes.
                 verdict: {
                     verdict: verdictResult.verdict,
                     ruleCode: verdictResult.ruleCode,
@@ -1235,9 +1454,34 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         const decision = perAd.decision;
         const tally = perAd.tally;
 
+        // Round-19 — T053 ledger-in-lease fix. Strip the `ledger`
+        // field from `decision.adDoc` BEFORE the operational merge
+        // commits it at T1 (BEFORE `acquireLearningLease`). The
+        // ledger entry is the idempotency record: committing it
+        // outside the lease is the defect the round-18 review
+        // named. Two failure modes:
+        //   - Lease-refused run writes a ledger it never aggregates.
+        //     Next sync sees the record, noops, contribution is lost
+        //     forever (or worse: withdraws a contribution that was
+        //     never added, pulling down the angle mean for every
+        //     other creative).
+        //   - Concurrent runs both see PROVISIONAL pre-lease, both
+        //     decide to contribute, both write ledgers; B's merge
+        //     overwrites A's.
+        // The fix commits the ledger inside the lease-held chunked
+        // commit in `applyLearningWrites`, gated on the contribution
+        // being applied to the aggregate in that same commit.
+        // `ledgerAdocsByAdId.set(ad.id, decision.adDoc)` below
+        // still captures the full `decision.adDoc` (with ledger) so
+        // the in-lease commit can read it; the operational merge
+        // here writes the operational + linking fields only.
+        const adDocForOperationalMerge: Record<string, unknown> = {
+            ...(decision.adDoc as unknown as Record<string, unknown>),
+        };
+        delete adDocForOperationalMerge.ledger;
         writes.push({
             ref: adAccountRef.collection("adPerformance").doc(ad.id),
-            data: decision.adDoc as unknown as Record<string, unknown>,
+            data: adDocForOperationalMerge,
         });
 
         if (tally === "matched") {
@@ -1522,12 +1766,20 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         // here from the post-pass try block, so the lease covers the
         // entire critical section. A lease-refused run skips this block
         // entirely (no read, no compute, no commit).
-        await applyLearningWrites({
+await applyLearningWrites({
             db: getDb(),
             adAccountRef,
             learnedAds,
             ledgerAdDocsByAdId,
             existingByAdId,
+            // Round-16 — T053. The seal-transition writes ride inside
+            //   this function's lease-held critical section (see the
+            //   `sealWrites` block inside `applyLearningWrites`).
+            //   A lease-refused run returns at line 1636 BEFORE this
+            //   call, so the seal fields are not committed in the
+            //   refused case — the invariant "a lease-refused run
+            //   writes no seal" holds.
+            sealedAdocsById,
             nowMs,
             errors,
         });

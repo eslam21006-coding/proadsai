@@ -48,6 +48,34 @@ export interface PatternSummary {
      * populates).
      */
     creativeCount?: number;
+    /**
+     * Batch 5 (FR-037) — distinct creatives in this bucket that
+     * have contributed an EFFICIENCY FIGURE (not just any
+     * contribution). Optional on read; the gate reads
+     * `efficiencyContributingCount ?? 0` so absent means "no
+     * efficiency evidence yet" — closes the gate rather than
+     * opening it. The production plumbing from `adPerformance` →
+     * `generations.efficiencyContributed` (the per-record flag
+     * populated by `normalizeAndFilter`) is documented as a
+     * separate producer concern; this field exists on the type
+     * and is populated end-to-end in the test fixture so the
+     * `passesFRO37EfficiencyGate(s)` call at the ranking site fires
+     * correctly. The cross-collection read is out of scope for
+     * Batch 5 — a future job can back-fill `efficiencyContributed`
+     * from `adPerformance` without changing this consumer.
+     *
+     * The Count is DERIVED from `efficiencyContributingKeys.length`
+     * in `toSummary` so the two cannot disagree — the same
+     * boundary Batch 4 closed on the hook/visual aggregate with
+     * `contributedCreativeKeys` (the count came from a Set that
+     * was stripped on write and rebuilt empty on read; Batch 5
+     * inherits the discipline and persists the array here too).
+     * If a future job back-fills `efficiencyContributed` from
+     * `adPerformance` it writes the keys array; the count is a
+     * derived field, not a separate write target.
+     */
+    efficiencyContributingKeys?: string[];
+    efficiencyContributingCount?: number;
     deployCount: number;
     spendBackedCount: number;
     usedCount: number;
@@ -244,6 +272,16 @@ interface NRec {
      * entry, undercounting `creativeCount` for them.
      */
     adId: string;
+    /**
+     * Batch 5 (FR-037) — whether THIS `generations` row's underlying
+     * `adPerformance` record contributed an efficiency figure
+     * (per FR-077's eligibility). The `generations` doc carries
+     * this as a flag written by the producer that joins with
+     * `adPerformance` (out of scope for Batch 5's wiring).
+     * `add()` adds the row's per-creative hash to
+     * `Bucket.efficiencyContributingHashes` only when this is true.
+     */
+    efficiencyContributed?: boolean;
 }
 
 interface QualityReport {
@@ -411,6 +449,15 @@ interface Bucket {
      * preserving the pre-fix behaviour for that historical subset.
      */
     creativeHashes: Set<string>;
+    /**
+     * Batch 5 (FR-037) — distinct per-creative hashes for creatives
+     * that contributed an EFFICIENCY FIGURE. `toSummary` populates
+     * `PatternSummary.efficiencyContributingCount` from this set's
+     * size; absent means "no efficiency evidence yet" for this
+     * bucket. Optional on read for the same reason as `creativeHashes`
+     * (records written before this field existed).
+     */
+    efficiencyContributingHashes?: Set<string>;
 }
 
 function newBucket(): Bucket {
@@ -418,6 +465,7 @@ function newBucket(): Bucket {
         n: 0, deploy: 0, spendBacked: 0, used: 0, fav: 0, pos: 0, neg: 0, conv: 0, negTags: 0,
         spend: 0, impr: 0, clicks: 0, niches: new Set(), offers: new Set(), stages: new Set(), langs: new Set(), ratios: new Set(),
         creativeHashes: new Set(),
+        efficiencyContributingHashes: new Set(),
     };
 }
 
@@ -436,6 +484,15 @@ function add(b: Bucket, r: NRec): void {
     // NRecs with the same `creativeHash` and asserts the bucket's
     // creativeCount is 1, not 2.
     b.creativeHashes.add(r.creativeHash ?? `__legacy_${r.userId}_${b.n}_${r.adId}`);
+    // Batch 5 (FR-037) — only record this creative's hash in the
+    // efficiency-contributing set when the producer flagged it. The
+    // hash dedup mirrors `creativeHashes` above (same fallback for
+    // legacy rows).
+    if (r.efficiencyContributed === true) {
+        b.efficiencyContributingHashes!.add(
+            r.creativeHash ?? `__legacy_${r.userId}_${b.n}_${r.adId}`,
+        );
+    }
 }
 
 function toSummary(b: Bucket, fam: SummaryFamily, key: string, scope: SummaryScope, sv: string): PatternSummary {
@@ -461,6 +518,27 @@ function toSummary(b: Bucket, fam: SummaryFamily, key: string, scope: SummarySco
         // for the full analysis. The fix is the Set-dedup here, not
         // the row-counting invariant `b.n` would suggest.
         creativeCount: b.creativeHashes.size,
+        // Batch 5 (FR-037) — distinct creatives in this bucket that
+        // contributed an efficiency figure. Optional on read for the
+        // same reason as `creativeCount` (records written before this
+        // field existed). The gate reads `?? 0` so absent means "no
+        // efficiency evidence yet" and closes the gate.
+        //
+        // PERSISTED AS AN ARRAY, count derived from its length (the
+        // Count-confusion fix from Batch 28's review, applied to the
+        // summary side). The previous shape wrote only the integer
+        // count; the in-memory `efficiencyContributingHashes` Set
+        // could not be persisted, so a re-aggregation from cold
+        // `generations` data could only see the Set if
+        // `normalizeAndFilter` joined with `adPerformance` (out of
+        // scope for Batch 5's wiring). Writing the array puts the
+        // keys on the persisted document — a future job that joins
+        // with `adPerformance` has a target to populate; the count
+        // derived from `keys.length` cannot drift from the keys.
+        // Round-tripping the summary through Firestore preserves
+        // both fields together (the discriminator test asserts this).
+        efficiencyContributingKeys: [...(b.efficiencyContributingHashes ?? [])],
+        efficiencyContributingCount: (b.efficiencyContributingHashes ?? new Set<string>()).size,
         deployCount: b.deploy, spendBackedCount: b.spendBacked,
         usedCount: b.used, favoriteCount: b.fav, positiveCount: b.pos,
         negativeCount: b.neg, conversionCount: b.conv,
@@ -507,9 +585,19 @@ function aggregate(records: NRec[]): PatternSummary[] {
 // callers do not import from `__bucketForTests`; the underscore
 // prefix signals test-only and the export lives at the module scope
 // rather than any barrel re-export.
+//
+// BATCH 5 — `toSummary` is also private. The behavioural test in
+// `__tests__/phase969/patternSummariesEfficiencyKeys.test.ts`
+// exercises the round-trip persistence of
+// `PatternSummary.efficiencyContributingKeys` (the field that closes
+// the Bug-4 defect the user named) through this seam. Adding
+// `toSummary` to the seam keeps the test independent of the worker
+// orchestration (`runIncrementalRollup` etc.) — the discriminator
+// observes the writer directly, not the chain.
 export const __bucketForTests = {
     newBucket,
     add,
+    toSummary,
 } as const;
 
 

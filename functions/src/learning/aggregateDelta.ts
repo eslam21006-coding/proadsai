@@ -41,6 +41,7 @@ import type {
 } from "../learningAggregates.js";
 import type { AdForLearning } from "../learningAggregates.js";
 import { EMPTY_BY_FUNNEL_TYPE, resolveFunnelTypeBucketKey } from "../learningAggregates.js";
+import { clampEfficiencyForAggregate } from "./efficiencyAggregate.js";
 
 // ─── Hook aggregator — additive deltas ─────────────────────────
 
@@ -108,6 +109,38 @@ export function applyHookAggregatesDelta(
                 agg.contributedCreatives.add(creativeKey);
                 agg.creativeCount = (agg.creativeCount ?? 0) + 1;
             }
+            // Batch 4 (FR-037): FIRST efficiency-figure contribution
+            // from this creative to this angle. Per FR-079 the figure
+            // is locked per creative, so it does not matter which row's
+            // value we read — they all carry the same number. The
+            // average update uses the bounded value (FR-038's 3.0
+            // cap applied on the way in) so a single freak row
+            // cannot dominate the angle.
+            if (!agg.efficiencyContributingCreatives.has(creativeKey)) {
+                const figureRow = angleRows.find(
+                    (ad) => typeof ad.efficiencyFigure === "number",
+                );
+                if (figureRow && figureRow.efficiencyFigure !== undefined
+                    && figureRow.efficiencyFigure !== null) {
+                    agg.efficiencyContributingCreatives.add(creativeKey);
+                    const priorCount = agg.efficiencyContributingCreatives.size - 1;
+                    const priorAvg = agg.efficiencyValueAvg ?? 0;
+                    const clamped = clampEfficiencyForAggregate(
+                        figureRow.efficiencyFigure,
+                    );
+                    agg.efficiencyValueAvg =
+                        priorCount <= 0
+                            ? clamped
+                            : (priorAvg * priorCount + clamped) / (priorCount + 1);
+                    agg.efficiencyContributingCount =
+                        agg.efficiencyContributingCreatives.size;
+                }
+            }
+            // Batch 5 (FR-030) — fire the funnel-type efficiency
+            // increment ONCE per creative that contributed an
+            // efficiency figure. Mirrors the aggregate-level
+            // increment and follows the same first-time gate.
+            incrementEfficiencyByFunnelType(agg, angleRows[0]);
             // FR-020: counts never decrease. All eligible rows of the
             // creative contribute their values to the angle's sums.
             for (const ad of angleRows) {
@@ -123,13 +156,23 @@ export function applyHookAggregatesDelta(
     // written out as `contributedCreativeKeys` and read back by
     // `cloneHook`. `creativeCount` is DERIVED from the set's size rather
     // than incremented independently, so the two can never disagree.
+    //
+    // Batch 4 (FR-037): same lifecycle for the efficiency parallel.
+    // Both Sets are stripped before return; both counts are derived
+    // from their respective persisted arrays' sizes.
     const out = new Map<string, HookPerformanceAggregate>();
     for (const [angleKey, agg] of byAngleKey) {
-        const { contributedCreatives, ...rest } = agg;
+        const { contributedCreatives, efficiencyContributingCreatives, ...rest } = agg;
         out.set(angleKey, {
             ...rest,
             contributedCreativeKeys: [...contributedCreatives],
             creativeCount: contributedCreatives.size,
+            efficiencyContributingKeys: [...efficiencyContributingCreatives],
+            efficiencyContributingCount: efficiencyContributingCreatives.size,
+            // Batch 4 (FR-037) — the bounded average survives the
+            // round-trip. `...rest` already includes it because the
+            // working type carries it (see `cloneHook`).
+            efficiencyValueAvg: agg.efficiencyValueAvg,
         });
     }
     return out;
@@ -233,6 +276,33 @@ export function applyVisualAggregatesDelta(
             const existing_agg = byPatternKey.get(patternKey);
             const agg = existing_agg ?? emptyVisual(patternKey);
             agg.contributedCreatives.add(creativeKey);
+            // Batch 4 (FR-037): FIRST efficiency-figure contribution
+            // from this creative to this pattern. Per FR-079 the
+            // figure is locked per creative, so any row's value is
+            // valid. The bounded average prevents one freak creative
+            // from dominating the angle (FR-038's 3.0 cap applied
+            // here).
+            if (!agg.efficiencyContributingCreatives.has(creativeKey)) {
+                if (typeof ad.efficiencyFigure === "number") {
+                    agg.efficiencyContributingCreatives.add(creativeKey);
+                    const priorCount = agg.efficiencyContributingCreatives.size - 1;
+                    const priorAvg = agg.efficiencyValueAvg ?? 0;
+                    const clamped = clampEfficiencyForAggregate(ad.efficiencyFigure);
+                    agg.efficiencyValueAvg = priorCount <= 0
+                        ? clamped
+                        : (priorAvg * priorCount + clamped) / (priorCount + 1);
+                    agg.efficiencyContributingCount =
+                        agg.efficiencyContributingCreatives.size;
+                    // Batch 5 (FR-030) — visual parallel. Fired inside
+                    // the same first-time gate so one creative
+                    // contributing two rows to this pattern increments
+                    // the funnel's `efficiencyCount` once, not twice
+                    // (CodeRabbit Round 14). The hook aggregator's
+                    // parallel sits at lines 142-143 for the same
+                    // reason.
+                    incrementEfficiencyByFunnelType(agg, ad);
+                }
+            }
             applyAdToVisual(agg, ad);
             agg.lastUpdated = syncAt;
             byPatternKey.set(patternKey, agg);
@@ -244,13 +314,21 @@ export function applyVisualAggregatesDelta(
     // equivalent was lost before Batch 28). Written out as
     // `contributedCreativeKeys`, read back by `cloneVisual`, with
     // `creativeCount` DERIVED from the set's size.
+    //
+    // Batch 4 (FR-037): same for `efficiencyContributingCount`.
     const out = new Map<string, VisualPerformanceAggregate>();
     for (const [patternKey, agg] of byPatternKey) {
-        const { contributedCreatives, ...rest } = agg;
+        const { contributedCreatives, efficiencyContributingCreatives, ...rest } = agg;
         out.set(patternKey, {
             ...rest,
             contributedCreativeKeys: [...contributedCreatives],
             creativeCount: contributedCreatives.size,
+            efficiencyContributingKeys: [...efficiencyContributingCreatives],
+            efficiencyContributingCount: efficiencyContributingCreatives.size,
+            // Batch 4 (FR-037) — the bounded average survives the
+            // round-trip. `...rest` already includes it because the
+            // working type carries it (see `cloneVisual`).
+            efficiencyValueAvg: agg.efficiencyValueAvg,
         });
     }
     return out;
@@ -422,11 +500,59 @@ export function applyHookAggregateWithdrawal(
     const withdrawnKey = ad.creativeKey ?? ad.adId;
     clone.contributedCreatives.delete(withdrawnKey);
 
-    const { contributedCreatives, ...rest } = clone;
+    // Batch 4 (FR-037) — parallel efficiency-side withdrawal.
+    // **Use the return value of `delete` as the guard.** `Set.delete`
+    // returns `false` when the key is absent (a no-op), so the
+    // arithmetic only runs when the key was actually present.
+    // Without this guard a withdrawal for a creative that never
+    // contributed an efficiency figure would recompute the average
+    // against a fabricated count (`size + 1` after a no-op delete)
+    // and produce a wrong number from an operation that looks like
+    // it did nothing. The guard makes the no-op truly a no-op.
+    //
+    // The arithmetic on the `true` branch is Batch 28's FR-021 fix:
+    // use the row's own recorded value (`ad.efficiencyFigure ?? 0`),
+    // not the mean, so the inverse of the addition is exact. With
+    // `count <= 1` (last contribution leaving) the average resets to
+    // 0 rather than dividing by zero — the same rule the existing
+    // `avgLinkCtr` decrement follows.
+    //
+    // CodeRabbit (Round 14): the same membership guard must gate the
+    // funnel-type efficiency decrement (Batch 5 / FR-030). The bucket
+    // is per-funnel-type and shared across all contributors; without
+    // this gate a non-contributor withdrawal would over-decrement the
+    // count by reading a positive `efficiencyCount` left by another
+    // creative. The visual aggregator at
+    // `applyLearningWrites.ts:~237` carries the same correction.
+    const wasEfficiencyContributor = clone.efficiencyContributingCreatives.delete(withdrawnKey);
+    if (wasEfficiencyContributor) {
+        decrementEfficiencyByFunnelType(clone, ad);
+        const priorCount = clone.efficiencyContributingCreatives.size + 1;
+        const priorAvg = clone.efficiencyValueAvg ?? 0;
+        // CodeRabbit (Round 14): use the SAME clamped value the
+        // addition path stored (FR-038's 3.0 bound), not the raw
+        // row-recorded value. Otherwise a freak row whose addition
+        // contributed a clamped 3.0 over-withdraws on the way out by
+        // the raw figure (>3.0), and the round-trip drifts. The
+        // visual aggregator's parallel at
+        // `applyLearningWrites.ts:~213` and `~215` carries the same
+        // correction.
+        const withdrawnFigure = typeof ad.efficiencyFigure === "number"
+            ? clampEfficiencyForAggregate(ad.efficiencyFigure)
+            : 0;
+        clone.efficiencyValueAvg = priorCount <= 1
+            ? 0
+            : (priorAvg * priorCount - withdrawnFigure) / (priorCount - 1);
+        clone.efficiencyContributingCount = clone.efficiencyContributingCreatives.size;
+    }
+
+    const { contributedCreatives, efficiencyContributingCreatives, ...rest } = clone;
     return {
         ...rest,
         contributedCreativeKeys: [...contributedCreatives],
         creativeCount: contributedCreatives.size,
+        efficiencyContributingKeys: [...efficiencyContributingCreatives],
+        efficiencyContributingCount: efficiencyContributingCreatives.size,
     };
 }
 
@@ -511,6 +637,14 @@ function cloneHook(a: HookPerformanceAggregate): HookWorkingAggregate {
         creativeCount: a.creativeCount ?? 0,
         sampleSize: a.sampleSize,
         lastUpdated: a.lastUpdated,
+        // Batch 4 (FR-037) — hydrate the bounded average from the
+        // persisted field. Required for the working copy so the
+        // withdrawal and additive passes can read AND mutate it.
+        // Without this the public → working → public round-trip
+        // loses the average, which is the same boundary Batch 28
+        // closed for the other fields.
+        efficiencyValueAvg: a.efficiencyValueAvg,
+        efficiencyContributingCount: a.efficiencyContributingCount ?? 0,
         byObjective: {
             conversion: { ...a.byObjective.conversion },
             other: { ...a.byObjective.other },
@@ -537,6 +671,12 @@ function cloneHook(a: HookPerformanceAggregate): HookWorkingAggregate {
         // The array is the state; `creativeCount` is derived from it on
         // the way out (see the strip step in applyHookAggregatesDelta).
         contributedCreatives: new Set(a.contributedCreativeKeys ?? []),
+        // Batch 4 (FR-037) — parallel efficiency set, hydrated from the
+        // persisted `efficiencyContributingKeys` array. Same lifecycle
+        // (read, mutate, strip on write). The withdrawal's correctness
+        // depends on this Set's `delete` returning the right thing
+        // (see `applyHookAggregateWithdrawal`).
+        efficiencyContributingCreatives: new Set(a.efficiencyContributingKeys ?? []),
     };
     return result;
 }
@@ -548,6 +688,15 @@ function cloneHook(a: HookPerformanceAggregate): HookWorkingAggregate {
  */
 interface HookWorkingAggregate extends HookPerformanceAggregate {
     contributedCreatives: Set<string>;
+    /**
+     * Batch 4 (FR-037) — parallel to `contributedCreatives` but for
+     * creatives that have CONTRIBUTED AN EFFICIENCY FIGURE (not just
+     * any contribution). Withdrawal uses the return value of
+     * `delete` as the guard (see `applyHookAggregateWithdrawal`),
+     * because the average's correctness depends on the key actually
+     * having been present. Stripped on write alongside the original.
+     */
+    efficiencyContributingCreatives: Set<string>;
 }
 
 /** Batch 30 — the visual counterpart. Same contract, same lifecycle:
@@ -558,6 +707,8 @@ interface HookWorkingAggregate extends HookPerformanceAggregate {
  */
 interface VisualWorkingAggregate extends VisualPerformanceAggregate {
     contributedCreatives: Set<string>;
+    /** Batch 4 (FR-037) — see HookWorkingAggregate's parallel. */
+    efficiencyContributingCreatives: Set<string>;
 }
 
 function cloneVisual(a: VisualPerformanceAggregate): VisualWorkingAggregate {
@@ -571,7 +722,12 @@ function cloneVisual(a: VisualPerformanceAggregate): VisualWorkingAggregate {
         // `creativeCount` is new in Phase 969 on both aggregates and no
         // production record carries either field.
         contributedCreatives: new Set(a.contributedCreativeKeys ?? []),
+        // Batch 4 (FR-037) — parallel efficiency set. Same lifecycle.
+        efficiencyContributingCreatives: new Set(a.efficiencyContributingKeys ?? []),
         creativeCount: a.creativeCount ?? 0,
+        // Batch 4 (FR-037) — see cloneHook's parallel.
+        efficiencyValueAvg: a.efficiencyValueAvg,
+        efficiencyContributingCount: a.efficiencyContributingCount ?? 0,
         sampleSize: a.sampleSize,
         lastUpdated: a.lastUpdated,
         byObjective: {
@@ -600,9 +756,14 @@ function emptyHook(angleKey: string): HookWorkingAggregate {
         schemaVersion: 1,
         creativeCount: 0,
         contributedCreativeKeys: [],
+        // Batch 4 (FR-037) — parallel efficiency-side defaults.
+        efficiencyContributingKeys: [],
+        efficiencyContributingCount: 0,
+        efficiencyValueAvg: 0,
         sampleSize: 0,
         lastUpdated: 0,
         contributedCreatives: new Set(),
+        efficiencyContributingCreatives: new Set(),
         byObjective: {
             conversion: { avgLinkCtr: 0, count: 0, bestVerdictCount: 0, worstVerdictCount: 0 },
             other: { avgLinkCtr: 0, count: 0 },
@@ -628,8 +789,13 @@ function emptyVisual(patternKey: string): VisualWorkingAggregate {
         patternKey,
         schemaVersion: 1,
         contributedCreatives: new Set(),
+        // Batch 4 (FR-037) — parallel efficiency-side defaults.
+        efficiencyContributingCreatives: new Set(),
         creativeCount: 0,
         contributedCreativeKeys: [],
+        efficiencyContributingKeys: [],
+        efficiencyContributingCount: 0,
+        efficiencyValueAvg: 0,
         sampleSize: 0,
         lastUpdated: 0,
         byObjective: {
@@ -684,7 +850,23 @@ function incrementByFunnelType(agg: ByFunnelTypeAgg, ad: AdForLearning): void {
         ? cloneByFunnelType(agg.byFunnelType)
         : cloneByFunnelType(EMPTY_BY_FUNNEL_TYPE);
     const bucket = existing[key];
-    existing[key] = { count: bucket.count + 1 };
+    existing[key] = { count: bucket.count + 1, efficiencyCount: bucket.efficiencyCount };
+    agg.byFunnelType = existing;
+}
+
+function incrementEfficiencyByFunnelType(agg: ByFunnelTypeAgg, ad: AdForLearning): void {
+    // Batch 5 (FR-030) — fire ONLY when this row contributed an
+    // efficiency figure (the parallel gate to the FR-037
+    // efficiency-contribution increment at the aggregate level).
+    // Mirrors the existing incrementByFunnelType so the
+    // add/withdraw symmetry invariant applies in both directions.
+    if (typeof ad.efficiencyFigure !== "number") return;
+    const key = resolveFunnelTypeBucketKey(ad.funnelType);
+    const existing: ByFunnelTypeBreakdown = agg.byFunnelType
+        ? cloneByFunnelType(agg.byFunnelType)
+        : cloneByFunnelType(EMPTY_BY_FUNNEL_TYPE);
+    const bucket = existing[key];
+    existing[key] = { count: bucket.count, efficiencyCount: (bucket.efficiencyCount ?? 0) + 1 };
     agg.byFunnelType = existing;
 }
 
@@ -694,5 +876,19 @@ function decrementByFunnelType(agg: ByFunnelTypeAgg, ad: AdForLearning): void {
     if (!existing) return;
     const bucket = existing[key];
     if (bucket.count <= 0) return;
-    existing[key] = { count: bucket.count - 1 };
+    existing[key] = { count: bucket.count - 1, efficiencyCount: bucket.efficiencyCount };
+}
+
+export function decrementEfficiencyByFunnelType(agg: ByFunnelTypeAgg, ad: AdForLearning): void {
+    // Batch 5 (FR-030) — parallel to incrementEfficiencyByFunnelType.
+    // `delete`'s return value guards the absent-key case (the same
+    // correction the user named for the aggregate-level withdrawal):
+    // an absent key is a no-op, so the bucket count is unchanged.
+    const key = resolveFunnelTypeBucketKey(ad.funnelType);
+    const existing = agg.byFunnelType;
+    if (!existing) return;
+    const bucket = existing[key];
+    const current = bucket.efficiencyCount ?? 0;
+    if (current <= 0) return;
+    existing[key] = { count: bucket.count, efficiencyCount: current - 1 };
 }

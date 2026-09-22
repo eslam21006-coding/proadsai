@@ -99,6 +99,24 @@ export interface PerAdVaryingInputs {
      * `decideAdWrite` previously received.
      */
     adName: string;
+    /**
+     * FR-085 — the ad's own configured `status` from Meta. The
+     * worker reads `ad.status` and passes it through here. The
+     * discriminator always writes it (operational field), so it
+     * lands on `AdDoc.adStatus` for both successful and failed-read
+     * ads.
+     */
+    adStatus?: string | null;
+    /**
+     * Round-16 — T053 REMOVED `sealFields` from the varying inputs.
+     * The seal transition now lives inside the lease-held critical
+     * section in `applyLearningWrites`; the per-ad loop in
+     * `metaSync/shared.ts` captures the verdict into
+     * `sealedAdocsById: Map<adId, AdSealFields>` and passes that
+     * map alongside the aggregates. The operational commit at
+     * `metaSync/shared.ts:1416/1565` no longer writes the seal
+     * fields, which is the race-window fix.
+     */
 }
 
 // ─── Outputs ────────────────────────────────────────────────────
@@ -153,6 +171,7 @@ export function decideAdWriteActions(
         thumbnailUrl: varying.thumbnailUrl,
         verdict: varying.verdict,
         keepMetadataUnavailable: ctx.keepMetadataUnavailable,
+        adStatus: varying.adStatus ?? null,
     });
 
     // Tally: independent of FR-070. Counts the resolved linkage so
