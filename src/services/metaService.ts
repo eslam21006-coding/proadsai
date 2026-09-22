@@ -17,6 +17,17 @@ export interface DashboardSyncResult {
     ok: boolean;
     busy: boolean;
     lastMetaSyncAt: number | null;
+    // fix-sync-infra — the inline (active workspace) sync result, kept
+    // separate from the overall `ok`. The orchestrator returns
+    // `ok: false` whenever the Cloud Tasks fan-out fails — even if the
+    // inline sync for the active workspace succeeded — so the banner
+    // was showing "Sync failed" for presses that actually refreshed
+    // the dashboard. The dashboard now reads `inlineStatus` (and
+    // `inlineStatus === 'failed'` is the only path to the failed
+    // banner). Fan-out errors surface as a secondary, less-alarming
+    // signal (see `fanOutErrors`).
+    inlineStatus?: "ok" | "partial" | "failed" | null;
+    fanOutErrors?: string[];
     counts?: {
         campaigns?: number;
         adSets?: number;

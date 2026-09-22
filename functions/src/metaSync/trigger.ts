@@ -91,6 +91,17 @@ export const triggerMetaSync = onCall(
             return {
                 ok: result.ok,
                 lastMetaSyncAt: result.lastMetaSyncAt,
+                // fix-sync-infra — surface the inline (active workspace)
+                // sync result and the fan-out errors as separate fields
+                // so the dashboard banner can show success when the
+                // inline sync succeeded even if the Cloud Tasks fan-out
+                // failed (pre-fix: `result.ok` was false whenever the
+                // fan-out failed, which produced a misleading
+                // "Sync failed" banner for an actually-successful press).
+                inlineStatus: result.workspace.inline
+                    ? result.workspace.inline.status
+                    : null,
+                fanOutErrors: result.workspace.errors,
                 legacy: {
                     adsSynced: result.legacy.adsSynced,
                     accountsSynced: result.legacy.accountsSynced,

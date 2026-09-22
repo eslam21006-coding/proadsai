@@ -13101,10 +13101,30 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       const anyLegacyLimited = (result.legacyRateLimited?.length ?? 0) > 0;
                       const anyQueuedLimited = (result.workspaceRateLimited?.length ?? 0) > 0;
                       const anyQueued = (result.workspaceQueued ?? 0) > 0;
+                      // fix-sync-infra — drive the banner off the
+                      // INLINE (active workspace) status, not the overall
+                      // `result.ok`. The orchestrator returned `ok: false`
+                      // whenever the Cloud Tasks fan-out failed even if
+                      // the inline sync succeeded — every workspace
+                      // fan-out hit NOT_FOUND until Fix 1 landed, so every
+                      // press showed "Sync failed" for an actually-refreshed
+                      // dashboard. The banner now keys on
+                      // `inlineStatus === 'failed'`; fan-out errors are a
+                      // secondary, less-alarming signal (logged for the
+                      // on-call engineer, surfaced to the user only when
+                      // the inline also failed).
+                      const inlineFailed = result.inlineStatus === 'failed';
+                      const anyFanOutErrors = (result.fanOutErrors?.length ?? 0) > 0;
                       let resultKey: 'sync.result.failed' | 'sync.result.partial' | 'sync.result.more_coming' | 'sync.result.done' = 'sync.result.done';
-                      if (!result.ok) {
+                      if (inlineFailed) {
                         resultKey = 'sync.result.failed';
                       } else if (anyLegacyLimited || anyQueuedLimited) {
+                        resultKey = 'sync.result.partial';
+                      } else if (anyFanOutErrors) {
+                        // fix-sync-infra — fan-out failed but the
+                        // inline succeeded; show "partial" so the
+                        // operator gets a visible signal but the
+                        // headline isn't the alarmist "failed".
                         resultKey = 'sync.result.partial';
                       } else if (anyQueued) {
                         resultKey = 'sync.result.more_coming';
