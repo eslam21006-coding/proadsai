@@ -3,6 +3,194 @@
 Three jobs from the open-work audit, executed from
 `D:\proads-worktrees\cleanup-dead-code`. No product behaviour change.
 
+---
+
+## Verification — Batch 3 production invocation counts
+
+Batch 3 (commit `27b2fdd`) was reverted in commit `e25e882` after a
+post-review concern that 22 production callables being deleted in
+one deploy could not be fully validated by grep — a cached bundle
+in a user's browser, a webhook, a partner integration, or a
+scheduled job configured outside the repo would all be invisible
+to it. The five miscategorisations in the audit (e.g. `billingLogger.ts`
+with 31 live call sites) made the case stronger: grep is necessary
+but not sufficient.
+
+**Method.** Cloud Monitoring v3 REST API,
+`metric.type="cloudfunctions.googleapis.com/function/execution_count"`,
+project `proadsai-saas`, view `FULL`, window 2026-06-25 to
+2026-09-23 (90 days). The `timeSeries:query` endpoint rejected the
+field names despite a valid body (Google's v3 proto field names
+differ from what the body would suggest); `timeSeries.list` with
+the metric-type filter and a 90-day interval returned 200 OK and a
+full series dump. Helper script `C:\temp\opencode\invoke_count.py`
+(or `list-all-fns.py`) used `gcloud auth print-access-token` for the
+OAuth bearer. Each function name was matched to its series by the
+`resource.labels.function_name` label.
+
+All 21 deletion candidates are **DEPLOYED** (state=ACTIVE per
+`gcloud functions describe --gen2 --region=europe-west1`). The
+metric returns `(no series)` for every one — meaning zero invocations
+across the full window AND zero (failed/errored) entries. If a
+function had been invoked and errored out, the metric would still
+record 1.
+
+### Priority checks (sidebar/page-mapped callables)
+
+| Callable | Invocations / 90d | First invocation | Last invocation | Verdict |
+|---|---:|---|---|---|
+| `disconnectMetaAccount` | 0 | — | — | DEPLOYED, never called |
+| `restoreWorkspace` | 0 | — | — | DEPLOYED, never called |
+| `createTeamMember` | 0 | — | — | DEPLOYED, never called (replaced by `createTeamInvite` at 6 invocations/90d) |
+
+### Full deletion list
+
+| Callable | Invocations / 90d | Notes |
+|---|---:|---|
+| `serverGetVerdict` | 0 | |
+| `serverTrackRecommendationEvent` | 0 | |
+| `serverGetRecommendationEvents` | 0 | |
+| `patternSummariesIncremental` | 0 | Scheduled `scheduledPatternRollup` covers path (280 invocations/90d) |
+| `patternSummariesReconcile` | 0 | Scheduled `scheduledPatternReconcile` covers path (70 invocations/90d) |
+| `generateCreative` | 0 | Superseded by `serverGenerateFinalAd` (1271 + 146 = 1417 invocations/90d) |
+| `createTopupCheckout` | 0 | Replaced by `createStripeTopUpSession` |
+| `backfillStripeCustomerIds` | 0 | One-shot backfill; its own header explicitly says "DELETE this function and redeploy" after one run |
+| `createTeamMember` | 0 | Legacy redirect; live path is `createTeamInvite` (6 invocations/90d) |
+| `restoreWorkspace` | 0 | No UI button on `WorkspaceSettingsModal` |
+| `disconnectMetaAccount` | 0 | Live path is `metaDisconnect` (24 invocations/90d) |
+| `getSubscription` | 0 | DEPRECATED; live path is `createStripePortalSession` |
+| `cancelSubscription` | 0 | DEPRECATED; live path is Stripe portal |
+| `reactivateSubscription` | 0 | DEPRECATED |
+| `getInvoices` | 0 | DEPRECATED; live path is Stripe portal |
+| `retryInvoice` | 0 | DEPRECATED |
+| `createSetupIntent` | 0 | DEPRECATED |
+| `updatePaymentMethod` | 0 | DEPRECATED |
+| `changePlan` | 0 | DEPRECATED |
+| `generateVariants` | 0 | No client caller |
+| `evaluateVariants` | 0 | No client caller |
+
+### Live function cross-check (used to confirm the metric is collecting)
+
+Functions with >0 invocations in the same window (kept untouched, listed
+to prove the metric isn't broken): saveProject (6033), getMetaConnection
+(1681), serverGenerateFinalAd (1271 + 146), deductCreditsServer (1175),
+claimTeamInvite (915), serverGenerateConcepts (694), getFunnelSettings
+(634 + 1), getUserProjects (612 + 29), getHookAnglePerformance (400 + 89),
+serverGenerateTOV (400 + 4), scheduledPatternRollup (280), metaPushCreative
+(109), saveFunnelSettings (89 + 3), scheduledPatternReconcile (70),
+**purgeExpiredWorkspaces** us-central1 (69), **metaLegacySync** (63),
+getWhatsWorkingDashboard (62 + 10), metaSelectAccount (58 + 2),
+metaSyncPerformance (57 + 36 + 3 + 1), generateSizeVariant (55 + 54),
+linkMetaAccountToWorkspace (47 + 7), metaDailySync (43 + 20 + 7),
+connectMetaAccount (39), stripeWebhook (38), createWorkspace (37 + 6),
+triggerVaultExtraction (37), metaSelectPage (36),
+metaSyncAccountWorker (36 + 30), competitorResearch (35 + 1),
+triggerMetaSync (31 + 4), **metaDisconnect** (24), metaOAuthCallback
+(20 + 7), refundCreditsServer (14), getInviteDetails (12),
+getTeamInvites (10), awardMilestoneServer (8), createTeamInvite (6),
+serverGenerateCaption (6), deleteWorkspace (4 + 3), metaRefreshTokens
+(4), removeTeamMember (4), updateWorkspace (4 + 2), ghlpaymentwebhook
+(2), monthlyCreditsReset (2), serverGenerateCarouselAngles (2),
+metaDataDeletion (1 + 1).
+
+Note: `purgeExpiredWorkspaces` (us-central1) and `metaLegacySync` show
+up live here — the audit's "revive or delete" / "REMOVE after Batch 04"
+flags were wrong (these are wired and active). Kept in this branch.
+
+### Split result
+
+| Bucket | Count | Treatment |
+|---|---:|---|
+| **Confirmed dead** (zero invocations / 90d) | 21 | Re-applied in commit `9fe1dc5`. These deploy. |
+| **Held** (any invocations, or any function I could not get a count for) | 0 | None — empty bucket. The audit-listed audit corrections (`purgeExpiredWorkspaces`, `metaLegacySync`, `applyRetentionDiscount`, `billingLogger.ts`, `learning/efficiencyFigure.ts`) were verified live and kept out of Batch 3 entirely (no reverts needed for them). |
+
+All 21 deletion candidates are confirmed dead. The original report
+mentioned "22 deployed functions" — that was an off-by-one (the
+report double-counted `restoreWorkspace`); the actual list is 21
+distinct callable names.
+
+### Deploy prompt
+
+`firebase deploy --only functions` asks for confirmation before
+deleting functions it no longer finds in the source. The prompt is
+roughly:
+
+```
+i  functions: The following functions are found in your project but do not exist
+   in your local source code:
+    - backfillStripeCustomerIds
+    - cancelSubscription
+    - changePlan
+    - createSetupIntent
+    - createTeamMember
+    - createTopupCheckout
+    - evaluateVariants
+    - generateCreative
+    - generateVariants
+    - getInvoices
+    - getSubscription
+    - reactivateSubscription
+    - retryInvoice
+    - serverGetRecommendationEvents
+    - serverGetVerdict
+    - serverTrackRecommendationEvent
+    - updatePaymentMethod
+    - patternSummariesIncremental
+    - patternSummariesReconcile
+    - restoreWorkspace
+    - disconnectMetaAccount
+   Would you like to proceed with deletion? (y/N)
+```
+
+The flag `--force` skips the prompt. **Recommendation: do not use it.**
+The owner should see this list before typing `y`, especially given
+the audit was wrong five out of twenty-seven times. The list above
+is what `firebase deploy` will show; if any of those names is
+incorrect or if any has a name collision with a partner integration
+in production that grep missed, this is the moment to stop.
+
+### Test arithmetic (final)
+
+| Layer | Pre-cleanup baseline | After Batch 3 (revert) | After Batch 3 (re-applied) | Δ vs baseline |
+|---|---:|---:|---:|---:|
+| Frontend vitest | 163 | 163 | 163 | 0 |
+| Functions ok-N lines | 424 | 424 | 424 | 0 |
+| Functions summary-line sum | 2700 | 2700 | **2695** | **−5** (T-MC2, T-MC4, T-MC7, T-MC11, T-MC12 in `metaConnection.test.ts`) |
+
+Test cases removed with which modules:
+
+- **T-MC2, T-MC4, T-MC7, T-MC11, T-MC12** in
+  `functions/src/__tests__/metaConnection.test.ts` (5 cases) —
+  all exercised `disconnectMetaAccountImpl`. Removed because the
+  impl is genuinely unused at 0 invocations/90d. If invocations
+  appear in production in the future, those five tests come back
+  with the impl.
+
+Connect/disconnect coverage halves from 12 to 7 cases. The
+remaining 7 cover the `connectMetaAccount` path, including the
+soft-delete gate (T-MC1, T-MC3) and the same-account re-selection
+preservation logic (T-MC5, T-MC6, T-MC8, T-MC9, T-MC10). The
+disconnect-side gates were the T-MC2 / T-MC4 / T-MC7 cases; their
+removal matches the production reality of zero invocations.
+
+### Re-application commit
+
+Commit `9fe1dc5` re-applies the deletions from `27b2fdd` with the
+verification context baked into the commit message. Diff vs the
+reverted state (`e25e882`): 39 insertions(+), 1933 deletions(-) across
+5 files (`functions/src/__tests__/metaConnection.test.ts`,
+`functions/src/index.ts`, `functions/src/metaConnection.ts`,
+`functions/src/recommendationTracking.ts`,
+`functions/src/variantEngine.ts`).
+
+Equivalent to the original Batch 3. The audit corrections from the
+prior section (`billingLogger.ts`, `learning/efficiencyFigure.ts`,
+`purgeExpiredWorkspaces`, `metaLegacySync`, `applyRetentionDiscount`)
+remain untouched in this branch.
+
+**Not yet deployed.** The owner decides whether to run
+`firebase deploy --only functions` after seeing the prompt above.
+
 ## Job 1 — Delete dead exports and unreachable callables
 
 ### Verification method
