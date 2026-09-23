@@ -1,17 +1,23 @@
 // functions/src/__tests__/metaConnection.test.ts — direct-call tests for
-// the connect/disconnect transaction gates. Run: cd functions && npm run
+// the connect transaction gate. Run: cd functions && npm run
 // build && node lib/__tests__/metaConnection.test.js
 //
 // Strategy: mirror the in-memory Firestore stub pattern from
 // metaCallerScope.test.ts so the suite is hermetic (no emulator, no live
 // project). Tests focus on the soft-delete gate that the round-10 review
 // surfaced — a soft-deleted workspace must be rejected by
-// `connectMetaAccount` and `disconnectMetaAccount` BEFORE any writes
-// land, mirroring the existing check in `linkMetaAccountToWorkspaceImpl`.
+// `connectMetaAccount` BEFORE any writes land, mirroring the existing
+// check in `linkMetaAccountToWorkspaceImpl`.
 //
-// The Impl functions are extracted from the onCall wrappers so the tests
-// can call them directly with a fake `scope` and skip the auth/initialise
+// The Impl function is extracted from the onCall wrapper so the tests
+// can call it directly with a fake `scope` and skip the auth/initialise
 // surface that the firebase-functions/v2 onCall infrastructure brings.
+//
+// (Removed alongside the dead `disconnectMetaAccount` callable:
+// T-MC2, T-MC4, T-MC7, T-MC11, T-MC12 — all exercised the now-deleted
+// `disconnectMetaAccountImpl`. Production counts in the 90-day window
+// (proadsai-saas / cloudfunctions.googleapis.com/function/execution_count)
+// were zero across all five.)
 
 import assert from "node:assert/strict";
 
@@ -227,7 +233,6 @@ firestoreClient._resetFirestoreClientForTests();
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
     connectMetaAccountImpl,
-    disconnectMetaAccountImpl,
 } = require("../metaConnection.js");
 
 async function main() {
@@ -256,41 +261,6 @@ async function main() {
         assert.equal(privAfter, privBefore, "T-MC1: private connection doc untouched");
     });
 
-    // ─── T-MC2: disconnect on soft-deleted workspace ──────────────────
-    await run("T-MC2: disconnectMetaAccount on soft-deleted workspace → not-found, no writes", async () => {
-        resetStub();
-        setupOwnerScope();
-        setupWorkspace({ id: "ws-soft", metaAdAccountId: "act_WS_A", deletedAt: Date.now() });
-        bucket("users/owner-1/workspaces/ws-soft/private").set("metaConnection", {
-            metaConnected: true,
-            accountId: "act_WS_A",
-            accountName: "Workspace A account",
-            legacyToken: "iv:tag:ciphertext",
-            tokenSource: "legacy_aes_gcm",
-            needsReauth: false,
-            createdAt: Date.now() - 1000,
-            updatedAt: Date.now() - 1000,
-        });
-
-        const privBefore = JSON.stringify(
-            bucket("users/owner-1/workspaces/ws-soft/private").get("metaConnection"),
-        );
-
-        await expectHttpsError(
-            () => disconnectMetaAccountImpl(ownerScope(), { workspaceId: "ws-soft" }),
-            "not-found",
-            "Workspace not found or already deleted",
-        );
-
-        const privAfter = JSON.stringify(
-            bucket("users/owner-1/workspaces/ws-soft/private").get("metaConnection"),
-        );
-        assert.equal(
-            privAfter, privBefore,
-            "T-MC2: private connection doc untouched on soft-deleted disconnect",
-        );
-    });
-
     // ─── T-MC3: connect on missing workspace ──────────────────────────
     await run("T-MC3: connectMetaAccount on missing workspace → not-found", async () => {
         resetStub();
@@ -301,17 +271,6 @@ async function main() {
                 accountId: "act_WS_A",
                 accountName: "Workspace A account",
             }),
-            "not-found",
-            "Workspace not found.",
-        );
-    });
-
-    // ─── T-MC4: disconnect on missing workspace ───────────────────────
-    await run("T-MC4: disconnectMetaAccount on missing workspace → not-found", async () => {
-        resetStub();
-        setupOwnerScope();
-        await expectHttpsError(
-            () => disconnectMetaAccountImpl(ownerScope(), { workspaceId: "ws-missing" }),
             "not-found",
             "Workspace not found.",
         );
@@ -371,42 +330,6 @@ async function main() {
         assert.equal(ws.metaPageId, "page-A", "T-MC6: SET Page preserved on same-account re-link");
         assert.equal(ws.metaPageName, "Page A");
         assert.equal(ws.metaPageClearedAt, null, "T-MC6: metaPageClearedAt NOT restamped");
-    });
-
-    // ─── T-MC7: disconnect happy path ─────────────────────────────────
-    await run("T-MC7: disconnectMetaAccount active workspace → clears both docs", async () => {
-        resetStub();
-        setupOwnerScope();
-        setupWorkspace({ id: "ws-1", metaAdAccountId: "act_WS_A", deletedAt: null });
-        bucket("users/owner-1/workspaces/ws-1/private").set("metaConnection", {
-            metaConnected: true,
-            accountId: "act_WS_A",
-            legacyToken: "iv:tag:ciphertext",
-            createdAt: Date.now() - 1000,
-            updatedAt: Date.now() - 1000,
-        });
-
-        const before = Date.now();
-        const result = await disconnectMetaAccountImpl(ownerScope(), { workspaceId: "ws-1" });
-        const after = Date.now();
-
-        assert.equal(result.ok, true);
-        assert.equal(result.disconnectedByUid, "owner-1");
-
-        const ws = bucket("users/owner-1/workspaces").get("ws-1") as DocData;
-        assert.equal(ws.metaAdAccountId, null);
-        assert.equal(ws.metaPageId, null);
-        assert.equal(ws.metaPageName, null);
-        assert.ok(
-            typeof ws.metaPageClearedAt === "number"
-              && ws.metaPageClearedAt >= before
-              && ws.metaPageClearedAt <= after,
-            "T-MC7: metaPageClearedAt stamped on disconnect",
-        );
-        const priv = bucket("users/owner-1/workspaces/ws-1/private").get("metaConnection") as DocData;
-        assert.equal(priv.metaConnected, false);
-        assert.equal(priv.legacyToken, null);
-        assert.equal(priv.encryptedToken, null);
     });
 
     // ─── T-MC8: same-account re-selection without accountName → preserve stored name ───
@@ -520,96 +443,6 @@ async function main() {
         assert.equal(
             priv.accountName, "New Account",
             "T-MC10: explicit accountName wins in private doc",
-        );
-    });
-
-    // ─── T-MC11: reconnect a DIFFERENT account after disconnect → no stale name ───
-    await run("T-MC11: disconnect then connect a different account without accountName → both name fields empty", async () => {
-        // CR-MAJOR (CodeRabbit round 12, P2): `disconnectMetaAccountImpl`
-        // clears the workspace link and the tokens but leaves
-        // `accountId` / `accountName` on the private connection doc.
-        // The round-11 name-preservation fallback read that doc
-        // unconditionally, so connect A → disconnect → connect B
-        // (without accountName) resurrected A's name and labelled
-        // account B with it. The fallback is now gated on the stored
-        // `accountId` still matching the incoming account.
-        resetStub();
-        setupOwnerScope();
-        setupWorkspace({ id: "ws-1", metaAdAccountId: null, deletedAt: null });
-
-        // 1. Connect account A WITH a name.
-        await connectMetaAccountImpl(ownerScope(), {
-            workspaceId: "ws-1",
-            accountId: "act_WS_A",
-            accountName: "Account A",
-        });
-        assert.equal(
-            (bucket("users/owner-1/workspaces/ws-1/private").get("metaConnection") as DocData).accountName,
-            "Account A",
-            "T-MC11 precondition: account A name stored on the private doc",
-        );
-
-        // 2. Disconnect — leaves the stale name on the private doc.
-        await disconnectMetaAccountImpl(ownerScope(), { workspaceId: "ws-1" });
-        const privAfterDisconnect = bucket("users/owner-1/workspaces/ws-1/private").get("metaConnection") as DocData;
-        assert.equal(
-            privAfterDisconnect.accountName, "Account A",
-            "T-MC11 precondition: disconnect leaves the private-doc accountName intact",
-        );
-
-        // 3. Connect a DIFFERENT account WITHOUT accountName.
-        await connectMetaAccountImpl(ownerScope(), {
-            workspaceId: "ws-1",
-            accountId: "act_WS_B",
-        });
-
-        const ws = bucket("users/owner-1/workspaces").get("ws-1") as DocData;
-        assert.equal(ws.metaAdAccountId, "act_WS_B", "T-MC11: workspace linked to account B");
-        assert.equal(
-            ws.metaAdAccountName, "",
-            "T-MC11: metaAdAccountName must NOT inherit account A's stale name",
-        );
-        const priv = bucket("users/owner-1/workspaces/ws-1/private").get("metaConnection") as DocData;
-        assert.equal(priv.accountId, "act_WS_B", "T-MC11: private doc records account B");
-        assert.equal(
-            priv.accountName, "",
-            "T-MC11: private connection accountName must NOT inherit account A's stale name",
-        );
-    });
-
-    // ─── T-MC12: reconnect the SAME account after disconnect → name preserved ───
-    await run("T-MC12: disconnect then reconnect the same account without accountName → stored name preserved", async () => {
-        // Positive control for T-MC11: the round-12 gate must reject
-        // only names belonging to a DIFFERENT account. Reconnecting the
-        // same account still recovers the stored name from the private
-        // doc, which is the behaviour T-MC8 protects across the
-        // disconnect boundary (the workspace doc's own name is cleared
-        // by disconnect, so the private doc is the only source left).
-        resetStub();
-        setupOwnerScope();
-        setupWorkspace({ id: "ws-1", metaAdAccountId: null, deletedAt: null });
-
-        await connectMetaAccountImpl(ownerScope(), {
-            workspaceId: "ws-1",
-            accountId: "act_WS_A",
-            accountName: "Account A",
-        });
-        await disconnectMetaAccountImpl(ownerScope(), { workspaceId: "ws-1" });
-        await connectMetaAccountImpl(ownerScope(), {
-            workspaceId: "ws-1",
-            accountId: "act_WS_A",
-        });
-
-        const ws = bucket("users/owner-1/workspaces").get("ws-1") as DocData;
-        assert.equal(ws.metaAdAccountId, "act_WS_A", "T-MC12: workspace re-linked to account A");
-        assert.equal(
-            ws.metaAdAccountName, "Account A",
-            "T-MC12: same-account reconnect recovers the stored name",
-        );
-        const priv = bucket("users/owner-1/workspaces/ws-1/private").get("metaConnection") as DocData;
-        assert.equal(
-            priv.accountName, "Account A",
-            "T-MC12: private connection accountName preserved on same-account reconnect",
         );
     });
 
