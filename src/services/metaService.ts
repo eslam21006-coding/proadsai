@@ -282,18 +282,30 @@ class MetaService {
                 } | null;
             };
         } catch (err) {
-            // fix-sync-banner (round 2) — deadline-exceeded is a
-            // signal, not a failure. The server is still running;
-            // the client gave up. Let the caller decide the
-            // toast surface (sidebar's handleSyncMeta renders
-            // `sync.result.still_running`). Other errors keep the
-            // previous swallow: a transient network reset on the
-            // sidebar path used to silently land on the same
-            // hard-fail toast; the new path is identical, just
-            // not the deadline-exceeded branch.
+            // fix-sync-banner (round 2) — rethrow both signals the
+            // caller knows how to render, swallow only the residual
+            // generic errors. The two rethrow codes are:
+            //   - `deadline-exceeded` — client gave up before the
+            //     server returned; the server is likely still
+            //     running and the data will land a minute later.
+            //     Caller renders `sync.result.still_running`.
+            //   - `failed-precondition` — orchestrator's in-flight
+            //     lease rejected a second concurrent press for the
+            //     same account. Caller renders `sync.result.busy`
+            //     (a state, not a failure). Without rethrow here,
+            //     the caller sees `{ success: false, adsSynced: 0 }`,
+            //     the helper classifies that as `sync.result.failed`,
+            //     and the busy catch branch in `handleSyncMeta`
+            //     becomes dead code — a real bug surfaced by
+            //     CodeRabbit on PR #75.
+            // Any other error (network reset, auth, unavailable) is
+            // not retried; the previous round-1 swallow stays.
             const code = (err as { code?: unknown } | null)?.code;
             const codeStr = typeof code === 'string' ? code : '';
-            if (codeStr === 'functions/deadline-exceeded' || codeStr === 'deadline-exceeded') {
+            if (
+                codeStr === 'functions/deadline-exceeded' || codeStr === 'deadline-exceeded' ||
+                codeStr === 'functions/failed-precondition' || codeStr === 'failed-precondition'
+            ) {
                 throw err;
             }
             console.error('Failed to sync performance:', err);

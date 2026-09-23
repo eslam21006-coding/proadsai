@@ -160,6 +160,64 @@ describe("fix-sync-banner (round 2): client-side httpsCallable timeout", () => {
         expect(result.success).toBe(false);
         expect(result.adsSynced).toBe(0);
     });
+
+    it("05 (PR #75 review): metaService.syncPerformance rethrows on failed-precondition so the busy catch branch in handleSyncMeta is reachable", async () => {
+        // PR #75 review (CodeRabbit + Codex parallel finding).
+        // The round-1 helper's catch only rethrew deadline-exceeded;
+        // a busy-lease collision from the server's
+        // `functions/failed-precondition` was swallowed into
+        // `{ success: false, adsSynced: 0 }` and the busy toast
+        // branch in App.tsx:4289 became dead code. Without this
+        // rethrow, a second concurrent press renders "Sync failed"
+        // (the old hard-fail toast) instead of the busy state.
+        const busyError = Object.assign(
+            new Error("A Meta sync is already running for this account."),
+            {
+                code: "functions/failed-precondition",
+                details: undefined,
+                message: "failed-precondition: A Meta sync is already running for this account.",
+            },
+        );
+        httpsCallableMock.mockImplementationOnce(() =>
+            vi.fn().mockRejectedValue(busyError),
+        );
+        const { metaService } = await import("../services/metaService");
+        let caught: unknown = null;
+        try {
+            await metaService.syncPerformance(null);
+        } catch (err) {
+            caught = err;
+        }
+        expect(caught).not.toBeNull();
+        expect((caught as { code?: string })?.code).toBe(
+            "functions/failed-precondition",
+        );
+    });
+
+    it("06 (PR #75 review): metaService.syncPerformance rethrows the unprefixed 'deadline-exceeded' code as well", async () => {
+        // Symmetric to test 03 — the SDK prefixes some error codes
+        // with `functions/` and leaves others bare. The rethrow
+        // contract must accept both shapes; without this assertion,
+        // a future refactor that drops the unprefixed branch would
+        // silently re-introduce the round-1 swallow bug for some
+        // SDK versions.
+        const unprefixedError = Object.assign(new Error("DEADLINE_EXCEEDED"), {
+            code: "deadline-exceeded",
+            message: "DEADLINE_EXCEEDED: ...",
+        });
+        httpsCallableMock.mockImplementationOnce(() =>
+            vi.fn().mockRejectedValue(unprefixedError),
+        );
+        const { metaService } = await import("../services/metaService");
+        let caught: unknown = null;
+        try {
+            await metaService.syncPerformance(null);
+        } catch (err) {
+            caught = err;
+        }
+        expect(caught).not.toBeNull();
+        expect((caught as { code?: string })?.code).toBe("deadline-exceeded");
+    });
 });
 
 describe("fix-sync-banner (round 2): i18n parity for sync.result.still_running", () => {

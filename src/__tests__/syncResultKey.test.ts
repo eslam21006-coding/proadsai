@@ -58,27 +58,37 @@ describe("computeSyncResultKey — three-outcome spec", () => {
         })).toBe("sync.result.partial");
     });
 
-    it("07: failure — ok === false → failed", () => {
+    it("07: failure — inline.status === 'failed' alone is sufficient (the only failure trigger)", () => {
+        // PR #75 review (Codex): the round-1 helper's
+        // `ok === false` early-return regressed post-Fix-3
+        // behaviour, where `ok === false` + `inlineStatus === 'ok'`
+        // + `fanOutErrors > 0` was classified `partial`. The
+        // helper no longer keys on the aggregate `ok` flag; the
+        // inline status alone drives the failure classification.
+        // A press where the inline workspace itself reported
+        // failure is a hard failure regardless of fan-out.
         expect(computeSyncResultKey({
             ok: false,
-            inlineStatus: "ok",
+            inlineStatus: "failed",
         })).toBe("sync.result.failed");
     });
 
-    it("08: failure — inline.status === 'failed' → failed", () => {
+    it("08: failure — ok === true, inline.status === 'failed' → failed", () => {
         expect(computeSyncResultKey({
             ok: true,
             inlineStatus: "failed",
         })).toBe("sync.result.failed");
     });
 
-    it("09: failure — ok false wins over inline partial", () => {
-        // Even if the inline surface looks partial, an overall
-        // false ok is a hard failure.
+    it("09: inline.status === 'partial' wins over ok === false → partial", () => {
+        // PR #75 review (Codex). The helper keys on the inline
+        // status; `ok === false` is delegated to the per-signal
+        // branches. With inline === 'partial' the partial branch
+        // matches before any ok-flag short-circuit could fire.
         expect(computeSyncResultKey({
             ok: false,
             inlineStatus: "partial",
-        })).toBe("sync.result.failed");
+        })).toBe("sync.result.partial");
     });
 
     it("10: rate-limit precedence over queued — partial wins, not more_coming", () => {
@@ -101,16 +111,58 @@ describe("computeSyncResultKey — three-outcome spec", () => {
         })).toBe("sync.result.more_coming");
     });
 
-    it("12: missing fields default to success", () => {
+    it("12: missing fields default to success (the sidebar's legacy shape)", () => {
         // The sidebar only passes the legacy response shape
         // (success + rateLimited + workspaceInline). Anything
         // missing should still produce a sane result.
+        // PR #75 review (Codex): the round-1 helper's
+        // `ok === false` early-return regressed this case. The
+        // new helper keys on `inlineStatus === 'failed'` only;
+        // an `ok === false` with no inline failure surfaces as
+        // the residual signal-driven result (here, `done`).
         expect(computeSyncResultKey({ ok: true })).toBe(
             "sync.result.done",
         );
         expect(computeSyncResultKey({ ok: false })).toBe(
-            "sync.result.failed",
+            "sync.result.done",
         );
+    });
+
+    it("16 (NEW, PR #75): regression — ok=false + inline.status=ok + fanOutErrors > 0 → partial (NOT failed)", () => {
+        // PR #75 review (Codex). Post-Fix-3 inline logic at
+        // App.tsx:13116-13120 explicitly classified this as
+        // `partial`. The round-1 helper regressed it because the
+        // `ok === false` early-return fired before the fan-out
+        // signal branch. Locking it in here.
+        expect(computeSyncResultKey({
+            ok: false,
+            inlineStatus: "ok",
+            fanOutErrors: ["enqueue failed for ws/acct: NOT_FOUND"],
+        })).toBe("sync.result.partial");
+    });
+
+    it("17 (NEW, PR #75): regression — ok=false + inline.status=ok + legacy rate limited → partial", () => {
+        // Same case via the legacy signal channel — CodeRabbit
+        // parallel finding. Round-1 short-circuit regressed this
+        // too.
+        expect(computeSyncResultKey({
+            ok: false,
+            inlineStatus: "ok",
+            legacyRateLimited: ["act_781389063661831"],
+        })).toBe("sync.result.partial");
+    });
+
+    it("18 (NEW, PR #75): regression — ok=false + inline.status=failed → failed (the only ok-flag path)", () => {
+        // When the inline itself failed, both the aggregate ok
+        // AND inlineStatus agree. The helper classifies as
+        // `failed`. This is the ONLY path to `failed` from a
+        // `ok === false` input; without `inlineStatus === 'failed'`,
+        // fan-out / rate-limit signals take precedence.
+        expect(computeSyncResultKey({
+            ok: false,
+            inlineStatus: "failed",
+            fanOutErrors: ["some workspace enqueue failed"],
+        })).toBe("sync.result.failed");
     });
 
     it("13: empty arrays are not rate limits", () => {

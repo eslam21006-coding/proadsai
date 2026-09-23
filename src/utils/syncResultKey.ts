@@ -57,20 +57,26 @@ export interface SyncOutcomeInput {
  * The unknown fields default safely to "success".
  */
 export function computeSyncResultKey(input: SyncOutcomeInput): SyncResultKey {
-    // Failure 1 of 2: the orchestrator's overall ok flag is false.
-    // (Pre-fix Fix 3 already keyed on `inlineFailed`; this catches
-    // the additional case the prompt names — `ok: false` ought to
-    // be a failure regardless of inline state.)
-    if (input.ok === false) return "sync.result.failed";
-    // Failure 2 of 2: the inline workspace sync itself reported
-    // failure. The orchestrator exposes this via `inlineStatus`.
+    // Failure: the inline workspace sync itself reported failure.
+    // The orchestrator exposes this via `inlineStatus`. We do NOT
+    // short-circuit on `ok === false` alone — post-Fix-3 inline
+    // logic (commit 04a90aa, `App.tsx:13116-13120`) classifies
+    // `ok === false` + `fanOutErrors > 0` + `inlineStatus === 'ok'`
+    // as `partial`, not `failed`. The round-1 helper originally
+    // added an `ok === false` early-return that regressed this
+    // case; CodeRabbit surfaced it on PR #75 and it was removed.
+    // The aggregate `ok` flag is delegated to the per-signal
+    // branches below.
     if (input.inlineStatus === "failed") return "sync.result.failed";
 
     // Partial: the inline ran (so it is NOT a failure), but
     //   (a) a different account hit Meta's rate limit
     //       (legacyRateLimited / workspaceRateLimited), OR
     //   (b) a workspace fan-out task errored for a non-rate-limit
-    //       reason (fanOutErrors), OR
+    //       reason (fanOutErrors) — this is the case where
+    //       `ok === false` but `inlineStatus === 'ok'`; the
+    //       fix-sync-infra inline logic classified this as
+    //       `partial`, and the round-1 helper must agree, OR
     //   (c) the inline sync itself reported 'partial' status
     //       (e.g. fetchAdInsights 403ed, ads still updated but a
     //       portion had no fresh insights to merge).

@@ -193,6 +193,6 @@ Per-file delta (this batch):
 | `src/__tests__/syncTimeout.test.tsx` | +6 |
 | **Total round-2 delta** | **+6** |
 
-Headline total: round-1 baseline 151 + round-1's own `syncResultKey.test.ts` +15 + round-2's `syncTimeout.test.tsx` +6 = **157** (matches the runner's `Tests 157 passed (157)`).
+Headline total: pre-round-1 baseline **136** (per the round-1 report §4.2) + round-1's `syncResultKey.test.ts` +15 + round-2's `syncTimeout.test.tsx` +6 = **157** (matches the runner's `Tests 157 passed (157)`). The round-1 report's §4.2 line is the ground truth for the pre-round-1 baseline.
 
 Per-file delta arithmetic: +6 (syncTimeout) = headline delta +6. ✓ Total arithmetic: 157 = runner total. ✓ Prose narrative numbers match the runner output.
