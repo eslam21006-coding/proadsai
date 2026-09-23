@@ -213,11 +213,51 @@ class MetaService {
         }
     }
 
-    async syncPerformance(workspaceId?: string | null): Promise<{ success: boolean; adsSynced: number }> {
+    // fix-sync-banner — the sidebar's `handleSyncMeta` reads
+    // `rateLimited` and `workspaceInline.status` from this return so
+    // it can carry out the same three-outcome mapping the dashboard
+    // does. The server already exposes both — keeping them out of
+    // the type here was a relic of the original `success +
+    // adsSynced` two-value contract.
+    async syncPerformance(workspaceId?: string | null): Promise<{
+        success: boolean;
+        adsSynced: number;
+        rateLimited?: string[];
+        workspaceInline?: {
+            workspaceId: string;
+            accountId: string;
+            counts: {
+                campaigns: number;
+                adSets: number;
+                ads: number;
+                matched: number;
+                unmatched: number;
+                ambiguous: number;
+            };
+            status: "ok" | "partial" | "failed";
+        } | null;
+    }> {
         try {
             const fn = httpsCallable(functions, 'metaSyncPerformance');
             const result = await fn({ workspaceId: workspaceId || null });
-            return result.data as { success: boolean; adsSynced: number };
+            return result.data as {
+                success: boolean;
+                adsSynced: number;
+                rateLimited?: string[];
+                workspaceInline?: {
+                    workspaceId: string;
+                    accountId: string;
+                    counts: {
+                        campaigns: number;
+                        adSets: number;
+                        ads: number;
+                        matched: number;
+                        unmatched: number;
+                        ambiguous: number;
+                    };
+                    status: "ok" | "partial" | "failed";
+                } | null;
+            };
         } catch (err) {
             console.error('Failed to sync performance:', err);
             return { success: false, adsSynced: 0 };
