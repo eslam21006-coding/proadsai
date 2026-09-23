@@ -111,20 +111,28 @@ describe("computeSyncResultKey — three-outcome spec", () => {
         })).toBe("sync.result.more_coming");
     });
 
-    it("12: missing fields default to success (the sidebar's legacy shape)", () => {
+    it("12: missing fields default to success; residual ok=false with no signals fails (PR #75 follow-up)", () => {
         // The sidebar only passes the legacy response shape
         // (success + rateLimited + workspaceInline). Anything
         // missing should still produce a sane result.
-        // PR #75 review (Codex): the round-1 helper's
-        // `ok === false` early-return regressed this case. The
-        // new helper keys on `inlineStatus === 'failed'` only;
-        // an `ok === false` with no inline failure surfaces as
-        // the residual signal-driven result (here, `done`).
+        //
+        // PR #75 follow-up review (CodeRabbit): `ok: false` with
+        // no inline-status / partial signals must classify as
+        // `failed`, not `done`. The round-1 helper had a
+        // short-circuit on `ok === false` at the top; the first
+        // fix removed it entirely and surfaced a regression where
+        // `metaService.syncPerformance`'s round-1 swallow path
+        // (network reset, unavailable, etc.) returns
+        // `{ success: false, adsSynced: 0 }`, the helper
+        // classified as `done`, and the sidebar's `handleSyncMeta`
+        // rendered "Synced 0 ads" — misleading. The new helper
+        // restores the failure classification AFTER the partial
+        // signals so partial cases still take precedence.
         expect(computeSyncResultKey({ ok: true })).toBe(
             "sync.result.done",
         );
         expect(computeSyncResultKey({ ok: false })).toBe(
-            "sync.result.done",
+            "sync.result.failed",
         );
     });
 
@@ -156,12 +164,32 @@ describe("computeSyncResultKey — three-outcome spec", () => {
         // When the inline itself failed, both the aggregate ok
         // AND inlineStatus agree. The helper classifies as
         // `failed`. This is the ONLY path to `failed` from a
-        // `ok === false` input; without `inlineStatus === 'failed'`,
-        // fan-out / rate-limit signals take precedence.
+        // `ok === false` input via the inline status; the residual
+        // `ok === false` after partial signals is the second path
+        // (test 19).
         expect(computeSyncResultKey({
             ok: false,
             inlineStatus: "failed",
             fanOutErrors: ["some workspace enqueue failed"],
+        })).toBe("sync.result.failed");
+    });
+
+    it("19 (NEW, PR #75 follow-up): residual ok=false with no partial signals → failed", () => {
+        // PR #75 follow-up review (CodeRabbit): the round-1
+        // helper had a short-circuit on `ok === false` at the
+        // top; the first fix removed it entirely and surfaced a
+        // regression where `metaService.syncPerformance`'s
+        // round-1 swallow path (network reset, unavailable)
+        // returns `{ success: false, adsSynced: 0 }`, the helper
+        // classified as `done`, and the sidebar's `handleSyncMeta`
+        // rendered "Synced 0 ads". The new helper restores the
+        // failure classification AFTER the partial-signals branch
+        // so partial cases still take precedence.
+        expect(computeSyncResultKey({
+            ok: false,
+            inlineStatus: "ok",
+            // no legacyRateLimited, no workspaceRateLimited,
+            // no fanOutErrors, no workspaceQueued
         })).toBe("sync.result.failed");
     });
 
