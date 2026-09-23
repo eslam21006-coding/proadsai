@@ -77,7 +77,7 @@ import { AlreadyRunningError } from "./metaSync/lease.js";
 // Phase 14 — RAG + Meta Reporting Feedback Loop (Layer 1 callables).
 export { saveFunnelSettings, getFunnelSettings, dismissAdvisory } from "./funnelSettings.js";
 // Phase 14 — Layer 2 (Meta connection + sync).
-export { connectMetaAccount } from "./metaConnection.js";
+export { connectMetaAccount, disconnectMetaAccount } from "./metaConnection.js";
 export { triggerMetaSync } from "./metaSync/trigger.js";
 export { metaDailySync } from "./metaSync/dispatcher.js";
 export { metaSyncAccountWorker } from "./metaSync/worker.js";
@@ -192,6 +192,69 @@ const ACTION_FEATURE_MAP: Record<string, string> = {
     generateSizeVariant: "visualPolishes",
     editRegion: "regionEditing",
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2. THE AI GENERATOR (Don't lose this!)
+// ═══════════════════════════════════════════════════════════════════════════
+export const generateCreative = onCall({
+    region: "europe-west1",
+    secrets: [geminiApiKey],
+    timeoutSeconds: 300,
+    memory: "2GiB",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const callerId = request.auth.uid;
+    const { action, modelName, prompt, imageBase64, jsonSchema, mimeType } = request.data;
+    const cost = COSTS[action] || 1;
+
+    // ═══ ENTITLEMENT: Resolve team member → owner credit pool ═══
+    const { creditOwnerUid, teamRole } = await resolveCreditOwner(callerId);
+    if (teamRole === 'viewer') {
+        throw new HttpsError("permission-denied", "Viewers cannot perform credit-consuming actions.");
+    }
+
+    try {
+        // Transaction: Deduct Credits from correct account (owner for team members)
+        await admin.firestore().runTransaction(async (transaction) => {
+            const userRef = admin.firestore().collection("users").doc(creditOwnerUid);
+            const userDoc = await transaction.get(userRef);
+            if (!userDoc.exists) throw new HttpsError("not-found", "User not found.");
+
+            const currentCredits = userDoc.data()?.credits || 0;
+            if (currentCredits < cost) throw new HttpsError("resource-exhausted", "Insufficient credits.");
+
+            transaction.update(userRef, {
+                credits: currentCredits - cost,
+                lastActivity: admin.firestore.FieldValue.serverTimestamp()
+            });
+        });
+
+        // Call Gemini
+        const genAI = new GoogleGenerativeAI(geminiApiKey.value());
+        const model = genAI.getGenerativeModel({ model: modelName });
+        let result;
+
+        if (imageBase64) {
+            result = await model.generateContent([
+                prompt, { inlineData: { mimeType: mimeType || "image/png", data: imageBase64 } }
+            ]);
+        } else if (jsonSchema) {
+            const structuredModel = genAI.getGenerativeModel({
+                model: modelName, generationConfig: { responseMimeType: "application/json", responseSchema: jsonSchema }
+            });
+            result = await structuredModel.generateContent(prompt);
+        } else {
+            result = await model.generateContent(prompt);
+        }
+
+        return { success: true, data: result.response.text(), costDeducted: cost };
+    } catch (error: any) {
+        console.error("AI Error:", error);
+        throw new HttpsError("internal", "AI Failed: " + error.message);
+    }
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Shared helpers for Route 3 hybrid (GHL native trigger → Firebase → GHL inbound)
@@ -1198,6 +1261,176 @@ const _deprecatedCreateStripePortalSession = onCall({
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 8. ONE-TIME BACKFILL: Add stripeCustomerId to existing users
+// ═══════════════════════════════════════════════════════════════════════════
+// DEPRECATED: Stripe backfill — no longer needed.
+// Run this ONCE after deploying by visiting:
+//   https://europe-west1-proadsai-saas.cloudfunctions.net/backfillStripeCustomerIds
+//
+// It goes through every user in Firestore who has an email but no stripeCustomerId,
+// looks them up in Stripe by email, and saves the ID.
+//
+// After running it once, you can DELETE this function and redeploy.
+// ═══════════════════════════════════════════════════════════════════════════
+export const backfillStripeCustomerIds = onRequest({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    timeoutSeconds: 300,
+}, async (req, res) => {
+    const stripe = new Stripe(stripeSecretKey.value());
+
+    const usersSnap = await admin.firestore().collection("users").get();
+    let updated = 0;
+    let skipped = 0;
+    let notFound = 0;
+    const results: string[] = [];
+
+    for (const userDoc of usersSnap.docs) {
+        const data = userDoc.data();
+
+        // Skip if already has stripeCustomerId
+        if (data.stripeCustomerId) {
+            skipped++;
+            continue;
+        }
+
+        // Skip if no email
+        const email = data.email;
+        if (!email) {
+            skipped++;
+            continue;
+        }
+
+        // Look up in Stripe
+        try {
+            const customers = await stripe.customers.list({
+                email: email.toLowerCase().trim(),
+                limit: 1,
+            });
+
+            if (customers.data.length > 0) {
+                const stripeId = customers.data[0].id;
+                await userDoc.ref.update({ stripeCustomerId: stripeId });
+                updated++;
+                results.push(`✅ ${email} → ${stripeId}`);
+            } else {
+                notFound++;
+                results.push(`❌ ${email} → not found in Stripe`);
+            }
+        } catch (err: any) {
+            results.push(`⚠️ ${email} → error: ${err.message}`);
+        }
+    }
+
+    const summary = `Backfill complete: ${updated} updated, ${skipped} skipped, ${notFound} not found in Stripe.`;
+    console.log(summary);
+    res.status(200).send(`<pre>${summary}\n\n${results.join('\n')}</pre>`);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 9. IN-APP TOPUP: Stripe Checkout Sessions
+// ═══════════════════════════════════════════════════════════════════════════
+// Creates a Stripe Checkout Session for credit top-ups.
+// User clicks "Buy 100 credits" → this function creates a session →
+// user is redirected to Stripe's hosted page → pays → webhook adds credits.
+//
+// If user has a saved payment method, Stripe pre-fills it (one-click).
+//
+// SETUP:
+// 1. Create 3 products in Stripe Dashboard with these metadata keys:
+//    - Product "100 Credits" → Price: $7 → metadata: { topup_credits: "100" }
+//    - Product "300 Credits" → Price: $17 → metadata: { topup_credits: "300" }
+//    - Product "800 Credits" → Price: $39 → metadata: { topup_credits: "800" }
+// 2. Copy each Price ID (price_XXXX) and put them in TOPUP_PRICES below
+// 3. Set up Stripe webhook (see section 10 below)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const TOPUP_PRICES: Record<string, { priceId: string; credits: number }> = {
+    'topup_100': { priceId: 'price_1T4zi74MIh5WD4bvGqCI8GR3', credits: 100 },
+    'topup_300': { priceId: 'price_1T4zhl4MIh5WD4bvR5PgBYRH', credits: 300 },
+    'topup_800': { priceId: 'price_1T4zgC4MIh5WD4bvYtG2UB4K', credits: 800 },
+};
+
+// DEPRECATED: replaced by createStripeTopUpSession
+export const createTopupCheckout = onCall({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Login required.");
+    }
+
+    const uid = request.auth.uid;
+    const packId = request.data?.packId; // 'topup_100', 'topup_300', 'topup_800'
+
+    const pack = TOPUP_PRICES[packId];
+    if (!pack) {
+        throw new HttpsError("invalid-argument", `Invalid pack: ${packId}`);
+    }
+
+    // Get user doc for stripeCustomerId and email
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
+    const userData = userDoc.data();
+    if (!userData) {
+        throw new HttpsError("not-found", "User not found.");
+    }
+
+    const stripe = new Stripe(stripeSecretKey.value());
+    const email = userData.email || request.auth.token?.email;
+    let customerId = userData.stripeCustomerId;
+
+    // Auto-create or find Stripe customer
+    if (!customerId) {
+        // Try to find existing
+        const existing = await stripe.customers.list({ email: email?.toLowerCase().trim(), limit: 1 });
+        if (existing.data.length > 0) {
+            customerId = existing.data[0].id;
+        } else {
+            // Create new Stripe customer
+            const newCustomer = await stripe.customers.create({
+                email: email?.toLowerCase().trim(),
+                metadata: { firebaseUid: uid },
+            });
+            customerId = newCustomer.id;
+        }
+        // Save to Firestore
+        await admin.firestore().collection("users").doc(uid).update({ stripeCustomerId: customerId });
+    }
+
+    try {
+        const session = await stripe.checkout.sessions.create({
+            customer: customerId,
+            mode: 'payment',
+            payment_method_types: ['card'],
+            line_items: [{
+                price: pack.priceId,
+                quantity: 1,
+            }],
+            metadata: {
+                firebaseUid: uid,
+                packId: packId,
+                credits: String(pack.credits),
+            },
+            success_url: 'https://app.proadsai.com?topup=success&credits=' + pack.credits,
+            cancel_url: 'https://app.proadsai.com?topup=cancelled',
+            // Allow saved payment methods for returning customers
+            payment_method_options: {
+                card: {
+                    setup_future_usage: 'on_session',
+                },
+            },
+        });
+
+        console.log(`Checkout session created: ${session.id} for ${email} (${packId})`);
+        return { url: session.url };
+    } catch (error: any) {
+        console.error("Checkout session error:", error.message);
+        throw new HttpsError("internal", "Failed to create checkout: " + error.message);
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 10. STRIPE WEBHOOK: Handle completed checkouts
 // ═══════════════════════════════════════════════════════════════════════════
 // This receives events from Stripe when a checkout session completes.
@@ -1672,6 +1905,186 @@ async function resolveStripeCustomerId(uid: string, stripe: Stripe): Promise<str
     throw new HttpsError("not-found", "No Stripe customer found. If you subscribed recently, please contact support.");
 }
 
+// DEPRECATED: preserved for reference only — getSubscription
+export const getSubscription = onCall({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const stripe = new Stripe(stripeSecretKey.value());
+    const customerId = await resolveStripeCustomerId(request.auth.uid, stripe);
+
+    // Get subscriptions (active, past_due, or canceling)
+    const subscriptions = await stripe.subscriptions.list({
+        customer: customerId,
+        limit: 1,
+        expand: ['data.default_payment_method'],
+    });
+
+    if (subscriptions.data.length === 0) {
+        return { status: 'none', plan: 'none' };
+    }
+
+    const sub = subscriptions.data[0] as any;
+    const pm = sub.default_payment_method as Stripe.PaymentMethod | null;
+
+    return {
+        subscriptionId: sub.id,
+        status: sub.status,
+        cancelAtPeriodEnd: sub.cancel_at_period_end,
+        currentPeriodEnd: sub.current_period_end,
+        currentPeriodStart: sub.current_period_start,
+        priceId: sub.items?.data?.[0]?.price?.id || '',
+        amount: ((sub.items?.data?.[0]?.price?.unit_amount || 0) as number) / 100,
+        interval: sub.items?.data?.[0]?.price?.recurring?.interval || 'month',
+        paymentMethod: pm?.card ? {
+            brand: pm.card.brand,
+            last4: pm.card.last4,
+            expMonth: pm.card.exp_month,
+            expYear: pm.card.exp_year,
+        } : null,
+    };
+});
+
+// DEPRECATED: preserved for reference only — cancelSubscription
+export const cancelSubscription = onCall({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const { reason, feedback } = request.data || {};
+    const uid = request.auth.uid;
+
+    const stripe = new Stripe(stripeSecretKey.value());
+    const customerId = await resolveStripeCustomerId(uid, stripe);
+
+    // Find active subscription
+    const subscriptions = await stripe.subscriptions.list({
+        customer: customerId,
+        status: 'active',
+        limit: 1,
+    });
+
+    if (subscriptions.data.length === 0) {
+        throw new HttpsError("not-found", "No active subscription found.");
+    }
+
+    const sub = subscriptions.data[0];
+
+    // 1. Tell Stripe to cancel at period end
+    const updated = await stripe.subscriptions.update(sub.id, {
+        cancel_at_period_end: true,
+    }) as any;
+
+    // 2. Get user data for GHL
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
+    const userData = userDoc.data() || {};
+
+    // 3. Save cancellation data to Firestore
+    await admin.firestore().collection("users").doc(uid).update({
+        cancelAtPeriodEnd: true,
+        billingStatus: 'cancelling',
+        cancelAt: admin.firestore.Timestamp.fromDate(new Date(updated.current_period_end * 1000)),
+        cancellationReason: reason || '',
+        cancellationFeedback: feedback || '',
+        cancellationDate: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // 5. Notify GHL so CRM automations fire (emails, tags, pipeline)
+    const ghlUrl = process.env.GHL_CANCEL_WEBHOOK_URL || '';
+    if (ghlUrl) {
+        try {
+            await fetch(ghlUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: userData.email || '',
+                    contact_id: userData.ghlContactId || '',
+                    action: 'cancellation_requested',
+                    reason: reason || '',
+                    feedback: feedback || '',
+                    plan: userData.plan || '',
+                    cancelAt: updated.current_period_end,
+                }),
+            });
+            console.log(`📧 GHL notified of cancellation for ${userData.email}`);
+        } catch (ghlErr: any) {
+            // Non-critical — don't fail the cancellation if GHL is down
+            console.warn(`⚠️ GHL notification failed (non-critical): ${ghlErr.message}`);
+        }
+    }
+
+    console.log(`❌ Cancellation scheduled: ${userData.email} → ends ${new Date(updated.current_period_end * 1000).toISOString()}`);
+
+    await writeBillingState(uid, admin.firestore());
+
+    return {
+        success: true,
+        cancelAt: updated.current_period_end,
+        currentPeriodEnd: updated.current_period_end,
+    };
+});
+
+// DEPRECATED: preserved for reference only — reactivateSubscription
+export const reactivateSubscription = onCall({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const uid = request.auth.uid;
+
+    const callerDoc = await admin.firestore().collection("users").doc(uid).get();
+    const callerData = callerDoc.data();
+    if (callerData?.isTeamMember) {
+        throw new HttpsError("failed-precondition", "Team members cannot manage billing.");
+    }
+
+    if (!callerData?.cancelAtPeriodEnd && callerData?.billingStatus !== 'cancelling') {
+        throw new HttpsError("failed-precondition", "No pending cancellation to reactivate.");
+    }
+
+    const stripe = new Stripe(stripeSecretKey.value());
+    const customerId = await resolveStripeCustomerId(uid, stripe);
+
+    const subscriptions = await stripe.subscriptions.list({
+        customer: customerId,
+        limit: 1,
+    });
+
+    if (subscriptions.data.length === 0) {
+        throw new HttpsError("not-found", "No subscription found.");
+    }
+
+    const sub = subscriptions.data[0];
+
+    // Remove the scheduled cancellation
+    await stripe.subscriptions.update(sub.id, {
+        cancel_at_period_end: false,
+    });
+
+    await admin.firestore().collection("users").doc(uid).update({
+        billingStatus: 'active',
+        cancelAtPeriodEnd: false,
+        cancelledAt: admin.firestore.FieldValue.delete(),
+        cancellationReason: admin.firestore.FieldValue.delete(),
+        cancellationFeedback: admin.firestore.FieldValue.delete(),
+        cancellationDate: admin.firestore.FieldValue.delete(),
+        billingIssueAt: admin.firestore.FieldValue.delete(),
+        billingIssueType: admin.firestore.FieldValue.delete(),
+        gracePeriodEndsAt: admin.firestore.FieldValue.delete(),
+    });
+
+    console.log(`✅ Reactivated subscription for uid=${uid}`);
+    await writeBillingState(uid, admin.firestore());
+    return { success: true };
+});
+
 // DEPRECATED: preserved for reference only — applyRetentionDiscount
 export const applyRetentionDiscount = onCall({
     region: "europe-west1",
@@ -1734,11 +2147,203 @@ export const applyRetentionDiscount = onCall({
     return { success: true, couponApplied: couponId };
 });
 
-// (Removed: getInvoices, retryInvoice, createSetupIntent, updatePaymentMethod,
-// changePlan — see docs/investigations/dead-exports-unreachable-callables.md.
-// All five were marked "DEPRECATED: preserved for reference only" and had zero
-// callers in src/. Stripe Customer Portal (createStripePortalSession) and the
-// webhook now surface all of these flows.
+// DEPRECATED: preserved for reference only — getInvoices
+export const getInvoices = onCall({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const stripe = new Stripe(stripeSecretKey.value());
+    const customerId = await resolveStripeCustomerId(request.auth.uid, stripe);
+
+    const invoices = await stripe.invoices.list({
+        customer: customerId,
+        limit: 12,
+    });
+
+    return {
+        invoices: invoices.data.map((inv) => ({
+            id: inv.id,
+            number: inv.number,
+            status: inv.status,                      // 'paid', 'open', 'void', 'draft', 'uncollectible'
+            amount: (inv.amount_due || 0) / 100,
+            currency: inv.currency?.toUpperCase() || 'USD',
+            date: inv.created,                       // Unix timestamp
+            periodStart: inv.period_start,
+            periodEnd: inv.period_end,
+            pdfUrl: inv.invoice_pdf || null,          // Direct PDF download
+            hostedUrl: inv.hosted_invoice_url || null, // Stripe-hosted payment page (for open invoices)
+        })),
+    };
+});
+
+// DEPRECATED: preserved for reference only — retryInvoice
+export const retryInvoice = onCall({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const { invoiceId } = request.data || {};
+    if (!invoiceId) throw new HttpsError("invalid-argument", "Missing invoiceId.");
+
+    const stripe = new Stripe(stripeSecretKey.value());
+
+    // Verify this invoice belongs to the user
+    const customerId = await resolveStripeCustomerId(request.auth.uid, stripe);
+    const invoice = await stripe.invoices.retrieve(invoiceId);
+
+    if (invoice.customer !== customerId) {
+        throw new HttpsError("permission-denied", "This invoice does not belong to your account.");
+    }
+
+    if (invoice.status !== 'open') {
+        throw new HttpsError("failed-precondition", `Invoice is ${invoice.status}, not payable.`);
+    }
+
+    try {
+        const paid = await stripe.invoices.pay(invoiceId);
+        console.log(`✅ Invoice ${invoiceId} paid successfully for uid=${request.auth.uid}`);
+        return { success: true, status: paid.status };
+    } catch (err: any) {
+        console.error(`Payment retry failed for ${invoiceId}:`, err.message);
+        throw new HttpsError("internal", "Payment failed: " + (err.message || "Card declined."));
+    }
+});
+
+// DEPRECATED: preserved for reference only — createSetupIntent
+export const createSetupIntent = onCall({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const stripe = new Stripe(stripeSecretKey.value());
+    const customerId = await resolveStripeCustomerId(request.auth.uid, stripe);
+
+    const setupIntent = await stripe.setupIntents.create({
+        customer: customerId,
+        payment_method_types: ['card'],
+    });
+
+    console.log(`🔧 SetupIntent created for uid=${request.auth.uid}: ${setupIntent.id}`);
+    return { clientSecret: setupIntent.client_secret };
+});
+
+// DEPRECATED: preserved for reference only — updatePaymentMethod
+export const updatePaymentMethod = onCall({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const { paymentMethodId } = request.data || {};
+    if (!paymentMethodId) throw new HttpsError("invalid-argument", "Missing paymentMethodId.");
+
+    const uid = request.auth.uid;
+    const stripe = new Stripe(stripeSecretKey.value());
+    const customerId = await resolveStripeCustomerId(uid, stripe);
+
+    // Set as default payment method on the customer
+    await stripe.customers.update(customerId, {
+        invoice_settings: { default_payment_method: paymentMethodId },
+    });
+
+    // Also set on the subscription
+    const subscriptions = await stripe.subscriptions.list({
+        customer: customerId,
+        limit: 1,
+    });
+
+    if (subscriptions.data.length > 0) {
+        await stripe.subscriptions.update(subscriptions.data[0].id, {
+            default_payment_method: paymentMethodId,
+        });
+    }
+
+    // Get new card details to save to Firestore
+    const pm = await stripe.paymentMethods.retrieve(paymentMethodId);
+    await admin.firestore().collection("users").doc(uid).update({
+        paymentMethodLast4: pm.card?.last4 || '',
+        paymentMethodBrand: pm.card?.brand || '',
+        paymentMethodExpiry: `${pm.card?.exp_month}/${pm.card?.exp_year}`,
+    });
+
+    console.log(`💳 Payment method updated for uid=${uid}: ${pm.card?.brand} ****${pm.card?.last4}`);
+    return {
+        success: true,
+        brand: pm.card?.brand,
+        last4: pm.card?.last4,
+        expMonth: pm.card?.exp_month,
+        expYear: pm.card?.exp_year,
+    };
+});
+
+// DEPRECATED: preserved for reference only — changePlan
+export const changePlan = onCall({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const { newPriceId } = request.data || {};
+    if (!newPriceId) throw new HttpsError("invalid-argument", "Missing newPriceId.");
+
+    const uid = request.auth.uid;
+    const stripe = new Stripe(stripeSecretKey.value());
+    const customerId = await resolveStripeCustomerId(uid, stripe);
+
+    const subscriptions = await stripe.subscriptions.list({
+        customer: customerId,
+        status: 'active',
+        limit: 1,
+    });
+
+    if (subscriptions.data.length === 0) {
+        throw new HttpsError("not-found", "No active subscription found.");
+    }
+
+    const sub = subscriptions.data[0] as any;
+    const currentItemId = sub.items?.data?.[0]?.id;
+
+    if (!currentItemId) {
+        throw new HttpsError("internal", "Subscription has no items.");
+    }
+
+    // Update the subscription with the new price (immediate proration)
+    const updated = await stripe.subscriptions.update(sub.id, {
+        items: [{
+            id: currentItemId,
+            price: newPriceId,
+        }],
+        proration_behavior: 'create_prorations',
+        // Also remove any pending cancellation if they're upgrading
+        cancel_at_period_end: false,
+    });
+
+    // The Stripe webhook (customer.subscription.updated) will update Firestore
+    // with the new plan and credits, so we don't need to do it here.
+    // But let's clear cancellation flags just in case.
+    await admin.firestore().collection("users").doc(uid).update({
+        cancelAtPeriodEnd: false,
+    });
+
+    console.log(`🔄 Plan changed for uid=${uid}: ${newPriceId}`);
+    return {
+        success: true,
+        newPriceId,
+        status: updated.status,
+    };
+});
+// ═══════════════════════════════════════════════════════════════════════════
+// @END LEGACY STRIPE BILLING
+// ═══════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════
 // STRIPE BILLING
@@ -2358,6 +2963,106 @@ export const getTeamInvites = onCall({
     });
 
     return { success: true, invites };
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TEAM MANAGEMENT: Legacy createTeamMember (redirects to invite flow)
+// ═══════════════════════════════════════════════════════════════════════════
+export const createTeamMember = onCall({
+    region: "europe-west1",
+    cors: true,
+    secrets: [ghlTeamInviteUrl],
+}, async (request: CallableRequest) => {
+    // Legacy compat: redirect to invite flow
+    // Frontend may still call this — treat it as createTeamInvite
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be logged in.");
+    const { name, email, role } = request.data;
+    const ownerUid = request.auth.uid;
+    if (!name || !email || !role) throw new HttpsError("invalid-argument", "Name, email, and role are required.");
+    if (!["editor", "viewer"].includes(role)) throw new HttpsError("invalid-argument", "Role must be editor or viewer.");
+
+    // Delegate to the same logic
+    const normalizedEmail = email.toLowerCase().trim();
+    const authSvc = admin.auth();
+    const ownerDoc = await admin.firestore().collection("users").doc(ownerUid).get();
+    const ownerData = ownerDoc.data();
+    if (!ownerData) throw new HttpsError("not-found", "Owner account not found.");
+    const ownerPlan = ownerData.plan || "none";
+    const maxMembers = PLAN_TEAM_LIMITS[ownerPlan] ?? 0;
+    if (maxMembers === 0) throw new HttpsError("permission-denied", "Your plan does not support team members.");
+    const ownerRecord = await authSvc.getUser(ownerUid);
+    if (ownerRecord.email?.toLowerCase() === normalizedEmail) throw new HttpsError("invalid-argument", "You cannot invite yourself.");
+    if (maxMembers !== -1) {
+        const reserved = await countReservedSeats(ownerUid);
+        const proposedSize = reserved + 2; // owner + existing + new invite (owner-inclusive per FR-005)
+        if (proposedSize > maxMembers) {
+            const currentSize = reserved + 1;
+            throw new HttpsError("resource-exhausted", `Your ${ownerPlan} plan allows ${maxMembers} seat(s) (owner + team). You're at ${currentSize}/${maxMembers}. Upgrade for more.`);
+        }
+    }
+
+    // Check already active on this team
+    const existingMember = await admin.firestore().collection("users").doc(ownerUid).collection("team")
+        .where("email", "==", normalizedEmail).get();
+    if (!existingMember.empty) throw new HttpsError("already-exists", "This person is already on your team.");
+
+    // Check already active on another team (one-team-per-user model)
+    const existingMembership = await admin.firestore().collection("teamMemberships").doc(normalizedEmail).get();
+    if (existingMembership.exists) {
+        const mData = existingMembership.data();
+        if (mData && mData.ownerUid !== ownerUid) {
+            throw new HttpsError("already-exists", "This person is already a member of another team.");
+        }
+    }
+
+    // Create invite
+    const existingInvites = await admin.firestore().collection("team_invites")
+        .where("ownerId", "==", ownerUid)
+        .where("inviteeEmailNormalized", "==", normalizedEmail)
+        .where("status", "in", OPEN_INVITE_STATUSES)
+        .get();
+
+    const now = Date.now();
+    const expiresAt = now + INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+    let inviteId: string;
+    let inviteRef: admin.firestore.DocumentReference;
+
+    if (!existingInvites.empty) {
+        inviteRef = existingInvites.docs[0].ref;
+        inviteId = existingInvites.docs[0].id;
+        await inviteRef.update({ inviteeName: name, role, teamPlan: ownerPlan, updatedAt: now, expiresAt, status: 'pending' });
+    } else {
+        inviteRef = admin.firestore().collection("team_invites").doc();
+        inviteId = inviteRef.id;
+        await inviteRef.set({
+            inviteId, ownerId: ownerUid, ownerEmail: ownerRecord.email || '', ownerName: ownerRecord.displayName || '',
+            inviteeEmail: email.trim(), inviteeEmailNormalized: normalizedEmail, inviteeName: name,
+            role, teamPlan: ownerPlan, status: 'pending', createdAt: now, updatedAt: now,
+            sentAt: null, acceptedAt: null, revokedAt: null, expiresAt,
+            deliveryAttemptCount: 0, lastDeliveryError: null, ghlDeliveryStatus: null, claimedByUserId: null,
+        });
+    }
+
+    let isNewUser = false;
+    try { await authSvc.getUserByEmail(normalizedEmail); } catch { isNewUser = true; }
+
+    const inviteData = (await inviteRef.get()).data() as TeamInvite;
+    const delivery = await sendGhlInviteWebhook(inviteData, isNewUser, ghlTeamInviteUrl.value());
+    await inviteRef.update({
+        status: delivery.success ? 'sent' : 'failed',
+        sentAt: delivery.success ? now : null,
+        updatedAt: now,
+        deliveryAttemptCount: admin.firestore.FieldValue.increment(1),
+        lastDeliveryError: delivery.error || null,
+        ghlDeliveryStatus: delivery.success ? 'delivered' : 'failed',
+    });
+
+    return {
+        success: true, inviteId, isNewUser: isNewUser,
+        deliverySuccess: delivery.success,
+        deliveryError: delivery.error || null,
+        message: delivery.success ? `Invite sent to ${normalizedEmail}!` : 'Invite created but email failed. Resend later.',
+    };
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3693,6 +4398,41 @@ function createVisualRoutingCaller(geminiKey: string, openaiKey: string) {
 
 import { runIncrementalRollup, runFullReconciliation, type JobStatus } from "./patternSummaries.js";
 
+/** Manual/admin: incremental rollup for last N hours. Returns full JobStatus. */
+export const patternSummariesIncremental = onCall({
+    region: "europe-west1",
+    timeoutSeconds: 120,
+    memory: "512MiB",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+    const hoursBack = (request.data as any)?.hoursBack || 24;
+    try {
+        const status = await runIncrementalRollup(hoursBack);
+        return status;
+    } catch (err: any) {
+        console.error("Pattern summaries incremental error:", err);
+        throw new HttpsError("internal", `Incremental rollup failed: ${err.message || 'Unknown error'}`);
+    }
+});
+
+/** Manual/admin: full reconciliation from scratch. Returns full JobStatus. */
+export const patternSummariesReconcile = onCall({
+    region: "europe-west1",
+    timeoutSeconds: 300,
+    memory: "1GiB",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+    try {
+        const status = await runFullReconciliation();
+        return status;
+    } catch (err: any) {
+        console.error("Pattern summaries reconciliation error:", err);
+        throw new HttpsError("internal", `Full reconciliation failed: ${err.message || 'Unknown error'}`);
+    }
+});
+
 /** Scheduled: incremental rollup every 6 hours. Job status persisted automatically. */
 export const scheduledPatternRollup = onSchedule({
     schedule: '0 */6 * * *',
@@ -3740,7 +4480,7 @@ export const scheduledPatternReconcile = onSchedule({
 // RANKING ENGINE — Ticket 2
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { getRankings, type RankingInput } from "./rankingEngine.js";
+import { getRankings, getVerdictForCandidate, type RankingInput } from "./rankingEngine.js";
 
 /** Get full ranking recommendations for a generation context. */
 export const serverGetRankings = onCall({
@@ -3759,6 +4499,70 @@ export const serverGetRankings = onCall({
     } catch (err: any) {
         console.error("Ranking engine error:", err);
         throw new HttpsError("internal", `Ranking failed: ${err.message || 'Unknown error'}`);
+    }
+});
+
+/** Quick verdict for a single candidate. */
+export const serverGetVerdict = onCall({
+    region: "europe-west1",
+    timeoutSeconds: 15,
+    memory: "256MiB",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+    const { family, key, niche, context } = request.data as any;
+    if (!family || !key) throw new HttpsError("invalid-argument", "family and key are required.");
+    try {
+        const result = await getVerdictForCandidate(request.auth.uid, family, key, niche, context || undefined);
+        return result || { verdict: 'neutral', reason: 'No data available' };
+    } catch (err: any) {
+        console.error("Verdict lookup error:", err);
+        throw new HttpsError("internal", `Verdict lookup failed: ${err.message || 'Unknown error'}`);
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RECOMMENDATION TRACKING — Ticket 5
+// ═══════════════════════════════════════════════════════════════════════════
+
+import { trackRecommendationEvent, getRecommendationEvents, validateTrackInput, validateReadInput } from "./recommendationTracking.js";
+
+/** Track a recommendation event (shown / accepted / overridden). */
+export const serverTrackRecommendationEvent = onCall({
+    region: "europe-west1",
+    timeoutSeconds: 10,
+    memory: "256MiB",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+    const input = request.data as any;
+    const validation = validateTrackInput(input);
+    if (!validation.valid) throw new HttpsError("invalid-argument", validation.error || "Invalid input.");
+    try {
+        const result = await trackRecommendationEvent(request.auth.uid, input);
+        return { success: true, ...result };
+    } catch (err: any) {
+        console.error("Track recommendation event error:", err);
+        throw new HttpsError("internal", `Tracking failed: ${err.message || 'Unknown error'}`);
+    }
+});
+
+/** Read recommendation events for audit/debug. */
+export const serverGetRecommendationEvents = onCall({
+    region: "europe-west1",
+    timeoutSeconds: 15,
+    memory: "256MiB",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+    const readValidation = validateReadInput(request.data);
+    if (!readValidation.valid) throw new HttpsError("invalid-argument", readValidation.error || "Invalid read input.");
+    try {
+        const events = await getRecommendationEvents(request.auth.uid, readValidation.parsed);
+        return { success: true, events, count: events.length };
+    } catch (err: any) {
+        console.error("Get recommendation events error:", err);
+        throw new HttpsError("internal", `Read failed: ${err.message || 'Unknown error'}`);
     }
 });
 
@@ -4922,6 +5726,70 @@ export const serverGenerateVisualPolishes = onCall({
         // step does not pre-deduct credits (deduction happens later, on polishImage apply).
         await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateVisualPolishes", inputs });
         throw new HttpsError("internal", "Polish generation failed: " + error.message);
+    }
+});
+
+// ─── VARIANT EXPLORATION ENGINE ──────────────────────────────────────────
+// Generate structured variant sets for A/B testing
+export const generateVariants = onCall({
+    region: "europe-west1",
+    cors: true,
+    timeoutSeconds: 30,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const { hookAngle, hookType, creativeModes, aspectRatio, cta, niche, variantCount, primaryDimension, secondaryDimension } = request.data;
+
+    if (!primaryDimension) throw new HttpsError("invalid-argument", "primaryDimension is required.");
+
+    try {
+        const { generateVariantSet, storeVariantSet } = await import("./variantEngine.js");
+
+        const variantSet = await generateVariantSet({
+            userId: request.auth.uid,
+            hookAngle: hookAngle || 'pain_point',
+            hookType: hookType || 'curiosity_gap',
+            creativeModes: creativeModes || ['standard_hero'],
+            aspectRatio: aspectRatio || '1:1',
+            cta: cta || '',
+            niche: niche || '',
+            variantCount: variantCount || 4,
+            primaryDimension,
+            secondaryDimension: secondaryDimension || undefined,
+        });
+
+        await storeVariantSet(variantSet);
+
+        return { success: true, variantSet };
+    } catch (error: any) {
+        console.error("Variant generation error:", error);
+        throw new HttpsError("internal", "Failed to generate variants: " + error.message);
+    }
+});
+
+// Evaluate variant set performance and identify winner
+export const evaluateVariants = onCall({
+    region: "europe-west1",
+    cors: true,
+    timeoutSeconds: 30,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const { setId } = request.data;
+    if (!setId) throw new HttpsError("invalid-argument", "setId is required.");
+
+    try {
+        const { evaluateVariantSet } = await import("./variantEngine.js");
+        const result = await evaluateVariantSet(setId);
+
+        if (!result) {
+            return { success: true, status: 'insufficient_data', message: 'Not enough performance data yet.' };
+        }
+
+        return { success: true, ...result };
+    } catch (error: any) {
+        console.error("Variant evaluation error:", error);
+        throw new HttpsError("internal", "Failed to evaluate variants: " + error.message);
     }
 });
 
@@ -6243,12 +7111,54 @@ export const deleteWorkspace = onCall({
     return { ok: true, pendingReassign: false };
 });
 
-// (Removed: restoreWorkspace callable. The frontend never invokes it —
-// WorkspaceSettingsModal does not surface a restore button. The companion
-// src/services/workspaceService.ts wrapper was removed in the type-only
-// exports batch. The cascadeRevertOnRestore helper stays: it is called from
-// any future restore path (see cascadeReassignOnDelete above for the
-// matching delete-side cascade).)
+export const restoreWorkspace = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    // ISSUE-D T019: same guard as deleteWorkspace. restoreWorkspace is
+    // not reachable from a team member's UI but takes the guard for
+    // consistency at negligible cost — research.md D4 noted it.
+    await assertNotTeamMember(uid, "restore");
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
+
+    const wsSnap = await admin.firestore().collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
+    const wsData = wsSnap.data()!;
+
+    const isSoftDeleted = wsData.deletedAt != null;
+    const restorePending = wsData.pendingRestore === true;
+
+    // Neither soft-deleted nor mid-restore → nothing to do.
+    if (!isSoftDeleted && !restorePending) {
+        throw new HttpsError("failed-precondition", "This workspace is not deleted and does not need restoration.");
+    }
+
+    // First attempt: clear deletedAt + set pendingRestore BEFORE the cascade runs.
+    // Retry attempt: pendingRestore is already true — fall through to re-run the cascade.
+    if (isSoftDeleted) {
+        const thirtyDaysMs = 30 * 24 * 3600 * 1000;
+        if (Date.now() - wsData.deletedAt > thirtyDaysMs) {
+            throw new HttpsError("failed-precondition", "This workspace was deleted more than 30 days ago and cannot be restored.");
+        }
+        await wsSnap.ref.update({
+            deletedAt: admin.firestore.FieldValue.delete(),
+            pendingRestore: true,
+        });
+    }
+
+    try {
+        await cascadeRevertOnRestore(uid, workspaceId);
+    } catch (err) {
+        console.error(`🔥 Cascade restore failed for workspace ${workspaceId}:`, err);
+        // pendingRestore stays true so a retry will re-enter this handler.
+        throw new HttpsError("internal", "Workspace restore partially failed. Please retry.");
+    }
+
+    return { ok: true, pendingRestore: false };
+});
 
 // ─── linkMetaAccountToWorkspace (contract C2) ──────────────────────────────
 //
@@ -6495,7 +7405,7 @@ export async function unlinkMetaAccountFromWorkspaceImpl(
     // unlinked workspace keeps reporting "connected". Same callable owns
     // both writes. Best-effort: a mirror failure must not fail the unlink
     // (the workspace-doc link is the source of truth). Tokens/perf data are
-    // intentionally retained — full teardown is `metaDisconnect`'s job.
+    // intentionally retained — full teardown is `disconnectMetaAccount`'s job.
     await admin.firestore()
         .doc(`users/${scope.ownerUid}/workspaces/${workspaceId}/private/metaConnection`)
         .set({ metaConnected: false, updatedAt: Date.now() }, { merge: true })
