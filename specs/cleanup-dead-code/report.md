@@ -191,6 +191,170 @@ remain untouched in this branch.
 **Not yet deployed.** The owner decides whether to run
 `firebase deploy --only functions` after seeing the prompt above.
 
+---
+
+## CI failure diagnosis — `actions/checkout@v4` SSL cert
+
+### What failed
+
+PR #76 (cleanup-dead-code) failed check `build-and-test` at run
+35916817864. Failure duration: 37 seconds. Failing step:
+`Run actions/checkout@v4`.
+
+**Failing log, verbatim** (`gh run view 35916817864 --log-failed`):
+
+```
+build-and-test	Run actions/checkout@v4	2026-09-23T20:34:09.2573900Z ##[error]fatal: unable to access 'https://github.com/eslam21006-coding/proadsai/': server certificate verification failed. CAfile: none CRLfile: none
+build-and-test	Run actions/checkout@v4	2026-09-23T20:34:09.2588664Z The process '/usr/bin/git' failed with exit code 128
+build-and-test	Run actions/checkout@v4	2026-09-23T20:34:25.3128405Z ##[error]fatal: unable to access 'https://github.com/eslam21006-coding/proadsai/': server certificate verification failed. CAfile: none CRLfile: none
+build-and-test	Run actions/checkout@v4	2026-09-23T20:34:40.3619304Z ##[error]fatal: unable to access 'https://github.com/eslam21006-coding/proadsai/': server certificate verification failed. CAfile: none CRLfile: none
+build-and-test	Run actions/checkout@v4	2026-09-23T20:34:40.3663788Z ##[error]The process '/usr/bin/git' failed with exit code 128
+```
+
+The `actions/checkout@v4` step failed three times in a row (with the
+usual 15s / 16s GitHub Actions retry backoff). Every subsequent step
+(Setup Node.js, npm ci x2, build frontend, lint, build functions, run
+functions tests) was **skipped**, never ran.
+
+### Diagnosis
+
+This is **not a code failure introduced by this branch.** Three
+independent confirmations:
+
+1. **Failed step is `actions/checkout@v4`** — the standard
+   `actions/checkout@v4` GitHub Action, which clones the repo via
+   `git fetch`. It runs before any of our code is touched.
+2. **Failure is `fatal: unable to access ... server certificate
+   verification failed. CAfile: none CRLfile: none`** — a TLS
+   handshake failure inside the runner. The runner's CA bundle
+   could not validate GitHub's certificate on that attempt. This
+   is a known transient issue with `ubuntu-latest` GitHub Actions
+   runners when the runner image's CA bundle has fallen behind.
+3. **`main`'s five most recent runs all green.** Last successful
+   main run was 35897609597 at 2026-09-23T17:43:54Z (~3h before
+   the failed cleanup-dead-code run). The five green runs include
+   `fix: raise sync callable timeout` and the docs(audit) merge —
+   the most recent commits pushed to main. If `main` is green and
+   the failing job is the runner's checkout, the failure is
+   environmental, not branch-specific.
+
+Lint was a possibility flagged by the brief — the repo carries
+1,695 pre-existing lint problems. The CI workflow addresses this:
+the lint step is named `Lint frontend (advisory — does not fail
+the pipeline)` and uses `npm run lint || true`, so it cannot fail
+the job. Lint is **not** the cause here.
+
+The other possibilities from the brief (deleted module still
+imported, `.gitattributes` line-ending change, stale `lib/` from
+local build) did not get a chance to be the cause: the checkout
+itself died before any later step ran. None of them are
+plausible-this-branch failures either:
+
+- The batch-3 re-applied deletions were verified by a clean local
+  `npm run build` (functions tsc + shx) right before the rerun
+  attempt; that build emits no warnings.
+- The `.gitattributes` addition is a `text=auto` flag with two
+  `-text` overrides for tracked binaries; CI's checkout is
+  `clean: true`, `lfs: false`, `submodules: false` per the action
+  log, so it doesn't run any tool that depends on line endings.
+- A test referencing a deleted callable would only surface in
+  `Run functions tests`, but that step never executed.
+
+### What fixed it
+
+`gh run rerun 35916817864`. Re-running the same workflow on the
+same SHA re-uses the existing PR commit and just spins a fresh
+runner. The rerun completed at 2026-09-23T20:43:21Z, 5m42s after
+start (vs 37s for the failed original), with **all 9 steps
+`success`**: Set up job → checkout → Setup Node.js → npm ci
+(frontend) → npm ci (functions) → build frontend → lint →
+build functions → run functions tests.
+
+```
+$ gh run view 35916817864 --json jobs,conclusion
+{"conclusion":"success","jobs":[{"name":"build-and-test",
+"conclusion":"success","steps":[
+  {"name":"Set up job","conclusion":"success"},
+  {"name":"Run actions/checkout@v4","conclusion":"success"},
+  {"name":"Setup Node.js","conclusion":"success"},
+  {"name":"Install frontend dependencies","conclusion":"success"},
+  {"name":"Install functions dependencies","conclusion":"success"},
+  {"name":"Build frontend","conclusion":"success"},
+  {"name":"Lint frontend (advisory — does not fail the pipeline)","conclusion":"success"},
+  {"name":"Build functions","conclusion":"success"},
+  {"name":"Run functions tests","conclusion":"success"},
+  ...
+]}]}
+```
+
+Final PR check status (`gh pr checks`):
+
+```
+CodeRabbit       pass   Review completed
+build-and-test   pass   5m42s   https://github.com/eslam21006-coding/proadsai/actions/runs/35916817864/job/107371743391
+```
+
+### CI workflow reference
+
+`cat .github/workflows/*.yml` (the file CI runs from):
+
+```yaml
+name: CI
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4   # node-version: 24, cache: npm
+      - run: npm ci                    # frontend deps
+      - run: npm ci                    # functions deps (working-directory: functions)
+      - run: npm run build             # frontend build
+      - run: npm run lint || true     # lint, advisory
+      - run: npm run build             # functions build
+      - run: npm test                  # functions tests
+```
+
+Note: this workflow does **not** run `npm run build` on the frontend
+*separately* before `npm run build` again inside functions — there is
+a single `npm run build` at the repo root (frontend's `tsc -b &&
+vite build`) and another inside `functions/`. The rerun exercised
+both. Lint runs at the repo root (frontend + sc11Guard), not in
+`functions/`.
+
+### Local verification (post-rerun)
+
+Reproducing CI's commands locally after the rerun, with exit codes:
+
+```
+$ npm run build               → FE-BUILD EXIT:0
+$ npm run test                → FE-TEST EXIT:0
+                                (vitest, 163/163 passed, 11/11 files)
+$ cd functions && npm run build → FN-BUILD EXIT:0
+$ npm test                    → FN-TEST EXIT:0
+                                ok-N: 424 | result-passed sum: 2695
+```
+
+Test counts unchanged from prior section (2695 in functions = 2700
+baseline − 5 removed metaConnection cases; 163/163 in vitest).
+
+### Code change for this fix
+
+**None.** The branch HEAD at the time of the failed CI run was
+`3a79324` (the report commit from the previous session). No code
+was changed to address the CI failure — the cause was a transient
+runner TLS issue, not a regression in the cleanup. The rerun used
+the same commit.
+
+The only commit on this branch after the rerun is this report
+update (`specs/cleanup-dead-code/report.md`), which adds the CI
+diagnostics section you're reading now.
+
 ## Job 1 — Delete dead exports and unreachable callables
 
 ### Verification method
