@@ -292,6 +292,17 @@ function SyncResultBanner({ result }: { result: DashboardResultPayload }): React
             iconClass = "fa-circle-pause";
             containerClass = "bg-amber-900/20 border-amber-500/30 text-amber-200";
             break;
+        // fix-sync-banner (round 2) — distinct surface from `failed`.
+        // The client's `httpsCallable` 540 000 ms ceiling tripped
+        // before the server returned; the server may still be
+        // running. Same amber band as `busy` (state, not failure),
+        // different icon (clock) to distinguish "wait, retry soon"
+        // from "still going, no action needed".
+        case "sync.result.still_running":
+            message = t("sync.result.still_running");
+            iconClass = "fa-clock";
+            containerClass = "bg-amber-900/20 border-amber-500/30 text-amber-200";
+            break;
         case "sync.result.failed":
         default:
             message = t("sync.result.failed");
@@ -543,19 +554,23 @@ function RecentVerdictsList({ items }: { items: RecentVerdict[] }): React.ReactE
 // ─── Main dashboard ──────────────────────────────────────────
 
 // PHASE 970 (bug 2026-09-03) — the dashboard's SYNC NOW result key
-// surfaces one of five localised banner strings. The five values
-// are a closed set (the dashboard never invents a new resultKey);
-// the parent's `onSyncNow` callback writes the field, the
-// dashboard reads it. The `busy` key is a distinct value from
-// `failed` — a second concurrent press hits the in-flight lease
-// and is reported as a state, not a failure.
-// (Source: specs/970-sync-unification/reports/bug-2026-09-03-dashboard-no-feedback.md)
+// surfaces one of the localised banner strings. The values are a
+// closed set (the dashboard never invents a new resultKey); the
+// parent's `onSyncNow` callback writes the field, the dashboard
+// reads it. The `busy` key is a distinct value from `failed` — a
+// second concurrent press hits the in-flight lease and is reported
+// as a state, not a failure. fix-sync-banner (round 2) — added
+// `still_running` for the client-side timeout branch; same shape
+// as `busy` (state, not failure) but a different surface message.
+// (Source: specs/970-sync-unification/reports/bug-2026-09-03-dashboard-no-feedback.md,
+//  specs/fix-sync-banner/investigation-and-fix.md §7.)
 export type DashboardResultKey =
     | "sync.result.done"
     | "sync.result.partial"
     | "sync.result.more_coming"
     | "sync.result.failed"
-    | "sync.result.busy";
+    | "sync.result.busy"
+    | "sync.result.still_running";
 
 export interface WhatsWorkingDashboardProps {
     workspaceId: string;

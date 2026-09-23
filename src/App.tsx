@@ -13,6 +13,7 @@ import { isValidHookPayload, validateCanonicalHooks, normalizeHooksToCanonical, 
 import { parseHookVariations, parseHookVariation } from './utils/hookVariationParser';
 import { buildInlineEditedBlock } from './utils/inlineHookEdit';
 import { isEmptySnapshot } from './utils/isEmptySnapshot';
+import { computeSyncResultKey, type SyncResultKey } from './utils/syncResultKey';
 import { useAppStore } from './store';
 import FeedbackButtons from './components/FeedbackButtons';
 import FavoritesPanel from './components/FavoritesPanel';
@@ -4205,27 +4206,98 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
 
   // Phase 14 batch 01 — UI wiring. Triggers a Meta performance sync for the
   // currently active workspace.
+  // fix-sync-banner — sidebar "Sync Now" handler. The previous
+  // version had two problems covered by this rewrite:
+  //   (a) It showed a hard "Sync failed" toast for ANY non-success
+  //       return, including a busy-lease collision (the
+  //       `failed-precondition` error code the orchestrator throws
+  //       when a second press races the first). A busy press is a
+  //       state, not a failure, and the rest of the app already
+  //       treats it that way (`sync.result.busy`).
+  //   (b) It only branched on `result.success: boolean` — every
+  //       partial sync (rate limit, queued workspace) was rendered
+  //       identical to "failed". The dashboard's `onSyncNow` has the
+  //       full four-outcome mapping; the sidebar must catch up.
+  // The handler now derives a `resultKey` using the same three
+  // outcomes used by the dashboard's banner (Failure / Partial /
+  // Success), so a sidebar press can no longer produce a "Sync
+  // failed" toast for an actually-completed or rate-limited press.
   const handleSyncMeta = useCallback(async () => {
     setMetaSyncing(true);
     showToast(lang === 'ar' ? 'جاري مزامنة الإعلانات…' : 'Syncing ad performance…', 'info');
     try {
       const result = await metaService.syncPerformance(canUseWorkspaces ? activeWorkspaceId : null);
-      if (result.success) {
+      // Top-level result shape returned by `metaSyncPerformance`:
+      //   { success, adsSynced, accountsSynced, rateLimited,
+      //     errors, workspaceQueued, workspaceInline? : {status, ...} }
+      // The three-outcome mapping on the sidebar press (delegates to
+      // the shared helper so this cannot drift from the dashboard):
+      //   1. Success  — `success === true` and the inline did not
+      //                 return 'partial'. The dashboard renders
+      //                 "Ads updated"; the sidebar mirrors it with
+      //                 the count.
+      //   2. Partial  — `success === true` but the inline workspace
+      //                 hit Meta's rate limit (workspaceInline.status
+      //                 === 'partial') OR a legacy account was rate
+      //                 limited. Show the neutral "Some accounts
+      //                 were busy" toast.
+      //   3. Failure  — `ok === false`. Show the failure toast.
+      const resultKey: SyncResultKey = computeSyncResultKey({
+        ok: result.success,
+        inlineStatus: result.workspaceInline?.status ?? null,
+        legacyRateLimited: result.rateLimited ?? null,
+        // metaSyncPerformance does not expose `workspaceRateLimited`,
+        // `fanOutErrors`, or `workspaceQueued`; the helper leaves
+        // those null and they map to "done" rather than "partial" —
+        // which is the right call here, because the sidebar cannot
+        // observe those signals.
+      });
+      if (resultKey === 'sync.result.failed') {
+        showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
+      } else if (resultKey === 'sync.result.partial') {
+        showToast(t('sync.result.partial'), 'success');
+        await refreshMetaConnection();
+        await refreshMetaConnection();
+        invalidateHookAngleIconsCache();
+      } else {
+        // success or more_coming — clean toast with the count.
         showToast(lang === 'ar' ? `تمت مزامنة ${result.adsSynced} إعلان` : `Synced ${result.adsSynced} ads`, 'success');
         await refreshMetaConnection();
         await refreshMetaConnection();
-        // Phase 14 batch 04 — invalidate the hook-angle cache so
-        // the next dashboard mount re-fetches fresh icons + bestAngles.
         invalidateHookAngleIconsCache();
+      }
+    } catch (err: any) {
+      // fix-sync-banner — distinct path. A second concurrent press
+      // arrives from the orchestrator's in-flight lease as
+      // `failed-precondition`. The user is present, the press is
+      // alive, this is a state — the same dashboard `onSyncNow`
+      // already uses `sync.result.busy` for it. Match the dashboard
+      // here so the sidebar toast agrees.
+      //
+      // fix-sync-banner (round 2) — second distinct path.
+      // `metaService.syncPerformance` rethrows `deadline-exceeded`
+      // so this catch can route it. The Firebase Functions SDK's
+      // 70 000 ms default abort was the cause of the "Sync failed"
+      // banner on syncs whose server run was healthy and complete
+      // (investigation report §7). The client timeout is now
+      // 540 000 ms; if it still trips, it is a real signal — the
+      // server is taking longer than the wall-clock cap and may
+      // still be running. Tell the user that, do not show the
+      // hard "Sync failed" toast.
+      const code = err?.code ?? '';
+      const isBusy = code === 'functions/failed-precondition' || code === 'failed-precondition';
+      const isStillRunning = code === 'functions/deadline-exceeded' || code === 'deadline-exceeded';
+      if (isStillRunning) {
+        showToast(t('sync.result.still_running'), 'info');
+      } else if (isBusy) {
+        showToast(t('sync.result.busy'), 'info');
       } else {
         showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
       }
-    } catch {
-      showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
     } finally {
       setMetaSyncing(false);
     }
-  }, [canUseWorkspaces, activeWorkspaceId, lang, showToast, refreshMetaConnection]);
+  }, [canUseWorkspaces, activeWorkspaceId, lang, showToast, refreshMetaConnection, t]);
 
   // Phase 14 batch 01 — UI wiring. The active workspace (non-deleted),
   // or null when the user is on a non-Scale plan / no workspace is set.
@@ -13081,54 +13153,38 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     showToast(lang === 'ar' ? 'جاري مزامنة الإعلانات…' : 'Syncing ad performance…', 'info');
                     try {
                       const result = await metaService.triggerWorkspaceSync(activeWorkspaceId);
-                      // PHASE 970 (BATCH 5) — wire the result strings
-                      // (sync.result.{done,partial,more_coming,failed})
-                      // to the toast. The mapping matches investigation
-                      // report §8.6:
-                      //   - failed   → result.ok === false
-                      //   - partial  → at least one account was
-                      //               rate-limited (legacy or workspace
-                      //               fan-out)
-                      //   - more_coming → at least one workspace task
-                      //               was queued
-                      //   - done     → everything OK
+                      // fix-sync-banner — banner resultKey from the
+                      // three-outcome spec. Pure function so the
+                      // sidebar's `handleSyncMeta` and the dashboard's
+                      // `onSyncNow` cannot drift apart (they have
+                      // in the past — pre-fix, the sidebar showed
+                      // hard "Sync failed" for any non-success return,
+                      // including partial / busy). The mapping
+                      // (utils/syncResultKey.ts):
+                      //   - Failed   → `ok === false` OR
+                      //                 `inlineStatus === 'failed'`.
+                      //   - Partial  → the inline ran (so this is not
+                      //                 a failure) but a legacy or
+                      //                 workspace account hit a rate
+                      //                 limit, or a workspace fan-out
+                      //                 task errored.
+                      //   - Success  → otherwise. "more_coming" is a
+                      //                 success-with-tail variant when
+                      //                 at least one workspace fan-out
+                      //                 task was queued.
                       // partial and more_coming can both apply
-                      // simultaneously (some throttled, some queued);
-                      // partial takes precedence because the user
-                      // pressed once and some ads failed — the "more
-                      // coming" tail is less useful than the "partial"
-                      // headline.
-                      const anyLegacyLimited = (result.legacyRateLimited?.length ?? 0) > 0;
-                      const anyQueuedLimited = (result.workspaceRateLimited?.length ?? 0) > 0;
-                      const anyQueued = (result.workspaceQueued ?? 0) > 0;
-                      // fix-sync-infra — drive the banner off the
-                      // INLINE (active workspace) status, not the overall
-                      // `result.ok`. The orchestrator returned `ok: false`
-                      // whenever the Cloud Tasks fan-out failed even if
-                      // the inline sync succeeded — every workspace
-                      // fan-out hit NOT_FOUND until Fix 1 landed, so every
-                      // press showed "Sync failed" for an actually-refreshed
-                      // dashboard. The banner now keys on
-                      // `inlineStatus === 'failed'`; fan-out errors are a
-                      // secondary, less-alarming signal (logged for the
-                      // on-call engineer, surfaced to the user only when
-                      // the inline also failed).
-                      const inlineFailed = result.inlineStatus === 'failed';
-                      const anyFanOutErrors = (result.fanOutErrors?.length ?? 0) > 0;
-                      let resultKey: 'sync.result.failed' | 'sync.result.partial' | 'sync.result.more_coming' | 'sync.result.done' = 'sync.result.done';
-                      if (inlineFailed) {
-                        resultKey = 'sync.result.failed';
-                      } else if (anyLegacyLimited || anyQueuedLimited) {
-                        resultKey = 'sync.result.partial';
-                      } else if (anyFanOutErrors) {
-                        // fix-sync-infra — fan-out failed but the
-                        // inline succeeded; show "partial" so the
-                        // operator gets a visible signal but the
-                        // headline isn't the alarmist "failed".
-                        resultKey = 'sync.result.partial';
-                      } else if (anyQueued) {
-                        resultKey = 'sync.result.more_coming';
-                      }
+                      // (some throttled, some queued); partial takes
+                      // precedence because the user pressed once and
+                      // some ads failed — the "more coming" tail is
+                      // less useful than the "partial" headline.
+                      const resultKey: SyncResultKey = computeSyncResultKey({
+                        ok: result.ok,
+                        inlineStatus: result.inlineStatus ?? null,
+                        legacyRateLimited: result.legacyRateLimited ?? null,
+                        workspaceRateLimited: result.workspaceRateLimited ?? null,
+                        fanOutErrors: result.fanOutErrors ?? null,
+                        workspaceQueued: result.workspaceQueued ?? null,
+                      });
                       // PHASE 970 (BATCH 5) — first-real-run evidence.
                       // The first time the Phase 14 pipeline completes
                       // in production, this is the count the on-call
@@ -13191,8 +13247,22 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       // Cloud Logging query no longer reports a false
                       // failure for what was actually a state, not a
                       // wait.
-                      const isBusy = err?.code === 'functions/failed-precondition' || err?.code === 'failed-precondition';
-                      if (isBusy) {
+                      //
+                      // fix-sync-banner (round 2) — second distinct
+                      // branch. `deadline-exceeded` means the client's
+                      // `httpsCallable` 540 000 ms ceiling tripped
+                      // before the server returned. The server may
+                      // still be running; the banner must not read as
+                      // a real failure. Match the sidebar's catch
+                      // routing so the dashboard banner and the
+                      // sidebar toast agree on the same `info`-level
+                      // "still running" surface.
+                      const code = err?.code ?? '';
+                      const isBusy = code === 'functions/failed-precondition' || code === 'failed-precondition';
+                      const isStillRunning = code === 'functions/deadline-exceeded' || code === 'deadline-exceeded';
+                      if (isStillRunning) {
+                        showToast(t('sync.result.still_running'), 'info');
+                      } else if (isBusy) {
                         showToast(t('sync.result.busy'), 'info');
                       } else {
                         showToast(t('sync.result.failed'), 'error');
@@ -13208,7 +13278,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         workspaceQueued: 0,
                         workspaceRateLimited: [],
                         needsReauth: false as const,
-                        resultKey: isBusy ? 'sync.result.busy' as const : 'sync.result.failed' as const,
+                        resultKey: isStillRunning
+                          ? 'sync.result.still_running' as const
+                          : isBusy
+                            ? 'sync.result.busy' as const
+                            : 'sync.result.failed' as const,
                       };
                     } finally {
                       setMetaSyncing(false);

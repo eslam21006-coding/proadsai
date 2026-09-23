@@ -88,6 +88,16 @@ export const triggerMetaSync = onCall(
                 `rateLimitedQueued=[${result.workspace.rateLimited.join(",")}])`,
             );
 
+            // fix-sync-banner — flatten the four fields the dashboard's
+            // `onSyncNow` reads at the top level so the four-outcome
+            // banner logic has a self-consistent contract to match.
+            // Previously `legacyRateLimited`, `workspaceRateLimited`,
+            // `workspaceQueued`, and `counts` lived only under the
+            // `legacy`/`workspace` nested objects; the dashboard
+            // read them at the top level and silently dropped every
+            // rate-limit / queued signal — a partial sync was rendered
+            // as the same "Ads updated" toast as a clean success. The
+            // nested objects stay for back-compat with any older client.
             return {
                 ok: result.ok,
                 lastMetaSyncAt: result.lastMetaSyncAt,
@@ -102,6 +112,15 @@ export const triggerMetaSync = onCall(
                     ? result.workspace.inline.status
                     : null,
                 fanOutErrors: result.workspace.errors,
+                // fix-sync-banner — flat fields the dashboard reads
+                // (legacyRateLimited, workspaceQueued,
+                // workspaceRateLimited, counts). Mirrored from the
+                // nested objects above; the dashboards's `onSyncNow`
+                // banner reads them at this depth.
+                legacyRateLimited: result.legacy.rateLimited,
+                workspaceQueued: result.workspace.queued,
+                workspaceRateLimited: result.workspace.rateLimited,
+                counts: result.workspace.inline?.counts ?? null,
                 legacy: {
                     adsSynced: result.legacy.adsSynced,
                     accountsSynced: result.legacy.accountsSynced,

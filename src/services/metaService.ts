@@ -213,12 +213,101 @@ class MetaService {
         }
     }
 
-    async syncPerformance(workspaceId?: string | null): Promise<{ success: boolean; adsSynced: number }> {
+    // fix-sync-banner — the sidebar's `handleSyncMeta` reads
+    // `rateLimited` and `workspaceInline.status` from this return so
+    // it can carry out the same three-outcome mapping the dashboard
+    // does. The server already exposes both — keeping them out of
+    // the type here was a relic of the original `success +
+    // adsSynced` two-value contract.
+    //
+    // fix-sync-banner (round 2) — client-side timeout. The
+    // Firebase Functions SDK defaults `httpsCallable` timeout to
+    // 70 000 ms (declared in
+    // `@firebase/functions/dist/esm/src/public-types.d.ts:54`).
+    // The server's `metaSyncPerformance` is configured with
+    // `timeoutSeconds: 540` (`functions/src/index.ts:3769`), and
+    // measured wall-clock syncs regularly exceed 90 s — every
+    // observed sync on 2026-09-23 exceeded the SDK default, so
+    // the browser aborted mid-flight with `deadline-exceeded`,
+    // `metaService.syncPerformance` swallowed it into
+    // `{ success: false, adsSynced: 0 }`, and the sidebar's
+    // `handleSyncMeta` rendered a hard "Sync failed" toast while
+    // the server ran to completion a minute later. Match the
+    // server's 540 s ceiling. (`geminiService.ts` already passes
+    // explicit timeouts on every callable; `metaService` was the
+    // only file in the project not doing so.)
+    //
+    // fix-sync-banner (round 2) — rethrow deadline-exceeded so
+    // `handleSyncMeta` can route it to the still-running toast
+    // instead of swallowing it into the generic "failed" path.
+    // Other errors (network reset, auth) keep the previous swallow
+    // because the sidebar has no separate UI surface for them.
+    async syncPerformance(workspaceId?: string | null): Promise<{
+        success: boolean;
+        adsSynced: number;
+        rateLimited?: string[];
+        workspaceInline?: {
+            workspaceId: string;
+            accountId: string;
+            counts: {
+                campaigns: number;
+                adSets: number;
+                ads: number;
+                matched: number;
+                unmatched: number;
+                ambiguous: number;
+            };
+            status: "ok" | "partial" | "failed";
+        } | null;
+    }> {
         try {
-            const fn = httpsCallable(functions, 'metaSyncPerformance');
+            const fn = httpsCallable(functions, 'metaSyncPerformance', { timeout: 540000 });
             const result = await fn({ workspaceId: workspaceId || null });
-            return result.data as { success: boolean; adsSynced: number };
+            return result.data as {
+                success: boolean;
+                adsSynced: number;
+                rateLimited?: string[];
+                workspaceInline?: {
+                    workspaceId: string;
+                    accountId: string;
+                    counts: {
+                        campaigns: number;
+                        adSets: number;
+                        ads: number;
+                        matched: number;
+                        unmatched: number;
+                        ambiguous: number;
+                    };
+                    status: "ok" | "partial" | "failed";
+                } | null;
+            };
         } catch (err) {
+            // fix-sync-banner (round 2) — rethrow both signals the
+            // caller knows how to render, swallow only the residual
+            // generic errors. The two rethrow codes are:
+            //   - `deadline-exceeded` — client gave up before the
+            //     server returned; the server is likely still
+            //     running and the data will land a minute later.
+            //     Caller renders `sync.result.still_running`.
+            //   - `failed-precondition` — orchestrator's in-flight
+            //     lease rejected a second concurrent press for the
+            //     same account. Caller renders `sync.result.busy`
+            //     (a state, not a failure). Without rethrow here,
+            //     the caller sees `{ success: false, adsSynced: 0 }`,
+            //     the helper classifies that as `sync.result.failed`,
+            //     and the busy catch branch in `handleSyncMeta`
+            //     becomes dead code — a real bug surfaced by
+            //     CodeRabbit on PR #75.
+            // Any other error (network reset, auth, unavailable) is
+            // not retried; the previous round-1 swallow stays.
+            const code = (err as { code?: unknown } | null)?.code;
+            const codeStr = typeof code === 'string' ? code : '';
+            if (
+                codeStr === 'functions/deadline-exceeded' || codeStr === 'deadline-exceeded' ||
+                codeStr === 'functions/failed-precondition' || codeStr === 'failed-precondition'
+            ) {
+                throw err;
+            }
             console.error('Failed to sync performance:', err);
             return { success: false, adsSynced: 0 };
         }
@@ -236,9 +325,14 @@ class MetaService {
     // orchestrator layer. The sidebar's "Sync Now" continues to use
     // `syncPerformance` / `metaSyncPerformance` — that path feeds the
     // legacy PerformanceDashboard and is intentionally untouched.
+    //
+    // fix-sync-banner (round 2) — client-side timeout. Server is
+    // `timeoutSeconds: 540` (`functions/src/metaSync/trigger.ts:36`),
+    // SDK default is 70 000 ms. Raise the client timeout to match
+    // so a long-running dashboard press does not abort mid-flight.
     async triggerWorkspaceSync(workspaceId: string): Promise<DashboardSyncResult> {
         try {
-            const fn = httpsCallable(functions, 'triggerMetaSync');
+            const fn = httpsCallable(functions, 'triggerMetaSync', { timeout: 540000 });
             const result = await fn({ workspaceId });
             return result.data as DashboardSyncResult;
         } catch (err: any) {
@@ -253,6 +347,13 @@ class MetaService {
             // "Sync failed" path. A localised collision toast is
             // queued for Batch 5 alongside the new i18n keys
             // (`sync.result.partial` etc.).
+            //
+            // fix-sync-banner (round 2) — let `deadline-exceeded`
+            // propagate to the caller unchanged. App.tsx's `onSyncNow`
+            // catch now branches on the code: busy →
+            // `sync.result.busy`; deadline-exceeded →
+            // `sync.result.still_running` (server may still be
+            // running); anything else → `sync.result.failed`.
             throw err;
         }
     }
