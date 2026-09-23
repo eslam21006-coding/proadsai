@@ -4273,8 +4273,23 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       // alive, this is a state — the same dashboard `onSyncNow`
       // already uses `sync.result.busy` for it. Match the dashboard
       // here so the sidebar toast agrees.
-      const isBusy = err?.code === 'functions/failed-precondition' || err?.code === 'failed-precondition';
-      if (isBusy) {
+      //
+      // fix-sync-banner (round 2) — second distinct path.
+      // `metaService.syncPerformance` rethrows `deadline-exceeded`
+      // so this catch can route it. The Firebase Functions SDK's
+      // 70 000 ms default abort was the cause of the "Sync failed"
+      // banner on syncs whose server run was healthy and complete
+      // (investigation report §7). The client timeout is now
+      // 540 000 ms; if it still trips, it is a real signal — the
+      // server is taking longer than the wall-clock cap and may
+      // still be running. Tell the user that, do not show the
+      // hard "Sync failed" toast.
+      const code = err?.code ?? '';
+      const isBusy = code === 'functions/failed-precondition' || code === 'failed-precondition';
+      const isStillRunning = code === 'functions/deadline-exceeded' || code === 'deadline-exceeded';
+      if (isStillRunning) {
+        showToast(t('sync.result.still_running'), 'info');
+      } else if (isBusy) {
         showToast(t('sync.result.busy'), 'info');
       } else {
         showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
@@ -13232,8 +13247,22 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       // Cloud Logging query no longer reports a false
                       // failure for what was actually a state, not a
                       // wait.
-                      const isBusy = err?.code === 'functions/failed-precondition' || err?.code === 'failed-precondition';
-                      if (isBusy) {
+                      //
+                      // fix-sync-banner (round 2) — second distinct
+                      // branch. `deadline-exceeded` means the client's
+                      // `httpsCallable` 540 000 ms ceiling tripped
+                      // before the server returned. The server may
+                      // still be running; the banner must not read as
+                      // a real failure. Match the sidebar's catch
+                      // routing so the dashboard banner and the
+                      // sidebar toast agree on the same `info`-level
+                      // "still running" surface.
+                      const code = err?.code ?? '';
+                      const isBusy = code === 'functions/failed-precondition' || code === 'failed-precondition';
+                      const isStillRunning = code === 'functions/deadline-exceeded' || code === 'deadline-exceeded';
+                      if (isStillRunning) {
+                        showToast(t('sync.result.still_running'), 'info');
+                      } else if (isBusy) {
                         showToast(t('sync.result.busy'), 'info');
                       } else {
                         showToast(t('sync.result.failed'), 'error');
@@ -13249,7 +13278,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         workspaceQueued: 0,
                         workspaceRateLimited: [],
                         needsReauth: false as const,
-                        resultKey: isBusy ? 'sync.result.busy' as const : 'sync.result.failed' as const,
+                        resultKey: isStillRunning
+                          ? 'sync.result.still_running' as const
+                          : isBusy
+                            ? 'sync.result.busy' as const
+                            : 'sync.result.failed' as const,
                       };
                     } finally {
                       setMetaSyncing(false);

@@ -127,10 +127,14 @@ Fix 3 is commit `04a90aa` ("fix: repair Cloud Tasks fan-out, reduce Graph concur
 
 The user-described "Sync failed" path most plausibly traces to:
 
-- an interleaved press between the two logged syncs that hit the busy lease (the orchestrator throws `failed-precondition`; `metaService.syncPerformance` swallows to `{success:false, adsSynced:0}` → sidebar hard-fails), OR
-- a sync whose `result.ok` was `false` (any fan-out error with `errors.length > 0` before Fix 1, but Fix 1 has repaired that — direct `ok: false` in the prompt's evidence would not produce the "failed" toast on the dashboard today; only the sidebar path would),
+~~- an interleaved press between the two logged syncs that hit the busy lease (the orchestrator throws `failed-precondition`; `metaService.syncPerformance` swallows to `{success:false, adsSynced:0}` → sidebar hard-fails), OR~~
+~~- a sync whose `result.ok` was `false` (any fan-out error with `errors.length > 0` before Fix 1, but Fix 1 has repaired that — direct `ok: false` in the prompt's evidence would not produce the "failed" toast on the dashboard today; only the sidebar path would),~~
 
-either of which the user remembers as "the toast showed Sync failed". The dashboard's behaviour was, per the code, "Ads updated" / "Could not update the ads" — the source-text the user is paraphrasing.
+~~either of which the user remembers as "the toast showed Sync failed". The dashboard's behaviour was, per the code, "Ads updated" / "Could not update the ads" — the source-text the user is paraphrasing.~~
+
+**§1.4 correction (2026-09-23, round 2):** the busy-lease and `ok: false` attributions above are wrong. The owner pressed Sync Now and saw "Sync failed"; the measured evidence — Sync 1 at 07:09:52Z, Sync 2 at 07:15:07Z — has server `result.ok === true`, `inlineStatus === "ok"` / `"partial"`, no rate limits that would trip the inline path. Neither attribution fits.
+
+The actual cause is a **client-side `httpsCallable` timeout** (see §7 below). Firebase Functions SDK defaults the timeout to 70 000 ms (declared at `node_modules/@firebase/functions/dist/esm/src/public-types.d.ts:54`), the server runs with `timeoutSeconds: 540` (`functions/src/index.ts:3769` for `metaSyncPerformance`, `functions/src/metaSync/trigger.ts:36` for `triggerMetaSync`), and **every** observed sync duration (88 s / 119 s / 143 s / 166 s from the prompt's evidence table) exceeds the SDK default. The browser aborts with `deadline-exceeded`, the catch fires the hard "Sync failed" toast, and the server — unaware the client has gone — runs to completion and writes the data correctly a minute later. Red banner, green logs, correct data. The §1.1/§1.2/§1.3 structural findings (the two-callable fork, the hard-binary sidebar, the dashboard's three-outcome mapping) remain valid; the §1.4 attribution to busy-lease or `ok: false` is replaced by §7.
 
 ---
 
@@ -349,3 +353,175 @@ Files changed: `functions/src/metaSync/trigger.ts` (flatten response), `src/App.
 - Did not deploy the new bundle. The change is committed locally on `fix-sync-banner`; deploy is the owner's call once they review (per the prompt: "Do not open a PR. Report first.").
 - Did not exercise a real sync press in the browser. The verification above is build + tests + dev-server smoke; the prompt's third check (deploy reach) is settled by the deployed-bundle hash table in §2.
 - Did not introduce any new product behaviour beyond the three-outcome mapping. `sync.result.busy`, `sync.result.partial`, etc., are pre-existing i18n keys the dashboard already used.
+
+---
+
+## §7. Round 2 — client-side timeout (the actual cause of the owner's symptom)
+
+### §7.1 The discrepancy
+
+The round-1 report (this file's §1.4) attributed the "Sync failed" banner to either a busy-lease collision on the orchestrator's in-flight lease (`failed-precondition`, which `metaService.syncPerformance` swallowed into `{success:false}` → sidebar hard-fail) or a sync whose `result.ok === false` (a fan-out error pre-Fix-1, but Fix-1 had repaired that path). Both were plausible on paper; neither fits the evidence.
+
+The prompt's measured spans from "Callable request verification passed" to the `[Batch 5]` evidence line:
+
+| Request start | Completion | Elapsed |
+|---|---|---|
+| 18:31:13 | 18:33:59 | **166 s** |
+| 07:07:29 | 07:09:52 | **143 s** |
+| 07:13:08 | 07:15:07 | **119 s** |
+| 16:26:44 | 16:28:12 | **88 s** |
+
+**Every one exceeds the 70 000 ms `httpsCallable` SDK default.** Not a single sync in the logs completed inside the default window. The two sync results the prompt cites — Sync 1 at 07:09:52Z and Sync 2 at 07:15:07Z — both have `ok: true` and `inlineStatus` of `"ok"` / `"partial"` respectively. None of those are the round-1 attributions.
+
+### §7.2 SDK source — the default is exactly 70 seconds
+
+`node_modules/@firebase/functions/dist/esm/src/public-types.d.ts:49-54`:
+
+```ts
+export interface HttpsCallableOptions {
+    /**
+     * Time in milliseconds after which to cancel if there is no response.
+     * Default is 70000.
+     */
+    timeout?: number;
+    ...
+}
+```
+
+Same file, line 117-121 — the SDK's own `deadline-exceeded` JSDoc:
+
+> Deadline expired before operation could complete. **For operations that change the state of the system, this error may be returned even if the operation has completed successfully. For example, a successful response from a server could have been delayed long enough for the deadline to expire.**
+
+That sentence describes the symptom the owner reported, exactly: client says failed, server says done.
+
+### §7.3 What the catch actually receives
+
+The two call sites diverge on the swallow:
+
+**Sidebar (`metaService.syncPerformance`) — `src/services/metaService.ts` (round 1):**
+
+```ts
+try {
+    const fn = httpsCallable(functions, 'metaSyncPerformance');
+    const result = await fn({ workspaceId: workspaceId || null });
+    return result.data as { ... };
+} catch (err) {
+    console.error('Failed to sync performance:', err);
+    return { success: false, adsSynced: 0 };
+}
+```
+
+The catch returns `{ success: false, adsSynced: 0 }`. The error object never propagates to `handleSyncMeta`. The `try` block in `handleSyncMeta` sees `result.success === false` → `resultKey === 'sync.result.failed'` → hard "Sync failed" toast (`App.tsx:4255-4256`). A `deadline-exceeded` here is indistinguishable from a real `{success:false}` return value — both render the same red toast.
+
+**Dashboard (`metaService.triggerWorkspaceSync`) — `src/services/metaService.ts:284-297` (round 1):**
+
+```ts
+try {
+    const fn = httpsCallable(functions, 'triggerMetaSync');
+    const result = await fn({ workspaceId });
+    return result.data as DashboardSyncResult;
+} catch (err: any) {
+    console.warn('triggerMetaSync failed:', err);
+    throw err;
+}
+```
+
+The catch rethrows. The dashboard's `onSyncNow` catch (`App.tsx:13223-13238`, round-1) sees the raw `FirebaseError` with `code === 'functions/deadline-exceeded'`. The round-1 catch did not distinguish it from a real failure — it fell into `else { showToast(t('sync.result.failed'), 'error') }`.
+
+So a single `deadline-exceeded` produces:
+
+| Path | What surfaces |
+|---|---|
+| Sidebar (`metaSyncPerformance`) | `metaService.syncPerformance` swallows → `success: false` → hard "Sync failed" toast. **The error object is unrecoverable.** |
+| Dashboard (`triggerMetaSync`) | `metaService.triggerWorkspaceSync` rethrows → catch sees `code: 'functions/deadline-exceeded'` → falls into the `else` branch → hard "Sync failed" toast. The error code is visible but unrecognised. |
+
+Both converge on the same red toast. The owner sees one symptom; the underlying cause is the SDK default of 70 000 ms tripping on every real-world sync that takes more than 70 seconds.
+
+### §7.4 Fix — raise the client timeout, route the deadline
+
+**Two parts.**
+
+**Part A — client timeout raised to 540 000 ms.** Server `timeoutSeconds: 540` already covers long syncs; the client must wait at least as long or the round-trip aborts. Both `httpsCallable` invocations in `src/services/metaService.ts` now pass `{ timeout: 540000 }`:
+
+- `src/services/metaService.ts:241` — `httpsCallable(functions, 'metaSyncPerformance', { timeout: 540000 })`
+- `src/services/metaService.ts:281` — `httpsCallable(functions, 'triggerMetaSync', { timeout: 540000 })`
+
+The 540 000 ms ceiling is exactly the server's. A sync that genuinely exceeds both is a real signal, not a routine round-trip — see Part B. (`geminiService.ts:13-23` already passes explicit `timeout` options on every callable — 30 000 to 300 000 ms; `metaService.ts` was the only file in the project not doing so.)
+
+**Part B — rethrow `deadline-exceeded` from `metaService.syncPerformance`.** Round-1 swallowed every error into `{success:false, adsSynced:0}`, making the error unrecoverable. Round-2 keeps the swallow for transient errors (network reset, auth, unavailable) — the sidebar has no separate UI surface for those, so the previous swallow + hard "Sync failed" toast is acceptable — and **rethrows `deadline-exceeded`** so `handleSyncMeta`'s catch can route it.
+
+```ts
+} catch (err: any) {
+    const code = err?.code ?? '';
+    if (code === 'functions/deadline-exceeded' || code === 'deadline-exceeded') {
+        throw err;
+    }
+    console.error('Failed to sync performance:', err);
+    return { success: false, adsSynced: 0 };
+}
+```
+
+**Part C — distinct surface in both catches.** A new i18n key, `sync.result.still_running`, makes the deadline branch a separate surface from `failed`. Both `handleSyncMeta` (`src/App.tsx:4269-4290`) and the dashboard's `onSyncNow` (`src/App.tsx:13238-13285`) now route:
+
+| Branch | Toast colour | i18n key |
+|---|---|---|
+| `code === 'functions/deadline-exceeded'` | `info` | `sync.result.still_running` |
+| `code === 'functions/failed-precondition'` (busy lease) | `info` | `sync.result.busy` |
+| any other error / `success: false` | `error` | `sync.result.failed` |
+
+The dashboard banner (in-modal, not toast) gets the same new `case` in `SyncResultBanner` (`src/components/WhatsWorkingDashboard.tsx`) — same amber band as `busy`, different icon (`fa-clock` instead of `fa-circle-pause`) so the user can tell "wait, retry soon" apart from "still going, no action needed".
+
+### §7.5 Verification
+
+The client cannot drive a real `metaSyncPerformance` press against the live account without logging in (the prompt explicitly notes this), so this round-2 verification is build + unit tests + dev-server smoke:
+
+**Unit tests for the timeout config** (`src/__tests__/syncTimeout.test.tsx`, 6 cases):
+
+- `01: metaService.syncPerformance passes timeout: 540000 to httpsCallable` — reads the recorded `httpsCallable` mock call and asserts `opts.timeout === 540000`. Catches any future regression that drops the option (which would reproduce the round-1 symptom).
+- `02: metaService.triggerWorkspaceSync passes timeout: 540000 to httpsCallable` — same assertion for the dashboard callable.
+- `03: metaService.syncPerformance rethrows on deadline-exceeded` — mocks `httpsCallable` to reject with a `FirebaseError`-shaped object carrying `code: 'functions/deadline-exceeded'` and asserts the new `metaService.syncPerformance` rethrows it instead of swallowing. Without this assertion, the round-1 `{success:false}` swallow could silently come back.
+- `04: metaService.syncPerformance still swallows non-timeout errors` — pins that the round-1 swallow is preserved for `functions/unavailable` and similar (a regression here would change the sidebar's behaviour for network blips in a way the prompt did not ask for).
+- `EN: sync.result.still_running resolves to a non-key string` — i18n parity gate, EN side.
+- `AR: sync.result.still_running resolves to a non-key string with Arabic script` — Arabic-script guard + non-key value (mirrors `i18n.test.tsx:107`).
+
+### §7.6 What the button shows during a long sync (UX gap)
+
+Part A raises the ceiling to 9 minutes. The button visual during that wait is unchanged from round 1:
+
+- **Dashboard button** (`src/components/WhatsWorkingDashboard.tsx:208-235`): disabled, `fa-arrows-rotate fa-spin` spinner + "Syncing..." label, no elapsed-time counter. `syncing` clears the moment the press returns — even if the press returns as "still running".
+- **Sidebar menu item** (`src/App.tsx:1597`): icon swaps to `fa-arrows-rotate fa-spin` but the label stays "Sync Now"; no elapsed-time counter.
+
+A user staring at a 3-minute spinner with no feedback is its own defect — round 2 does not address it. The smallest UX change that would tell the user something is happening:
+
+1. Render an elapsed-time counter next to the spinner (`Syncing… 1m 42s`), reading `Date.now() - pressStartedAt` every second. ~10 lines in `WhatsWorkingDashboard.tsx`, ~10 in `App.tsx:handleSyncMeta`. Cost: trivial; the `metaSyncing` state already exists.
+2. After Part A's timeout trips (a 9-minute elapsed spinner is its own alarm), the `still_running` toast reads as a natural transition: "still running, but we're done waiting on the client — go check the dashboard".
+3. Alternative: return early from the press after a 60 s wall-clock check and poll a status callable. Larger change; would require a new server callable, new i18n key, and a polling loop. Out of scope for this round.
+
+The prompt explicitly asked for the proposal, not the implementation: **proposed, not built.**
+
+### §7.7 Re-verifying round 1's banner logic
+
+The round-1 helper (`src/utils/syncResultKey.ts`) and the round-1 flattening in `functions/src/metaSync/trigger.ts:91-117` are correct and stay. The §4.3 "real `triggerMetaSync` press" verification was the round-1 gap the prompt's round-2 message is closing: the press was not driven because logging in against the live account is the owner's step, not a code step. Round-2 changes the boundary condition: with the 540 000 ms client timeout in place, a single sync press now waits the full server run, the SDK does not abort, and the helper renders whatever the server actually returned. The round-1 unit tests pin the helper against the prompt-evidence values and stay green; the new round-2 tests pin the timeout config and the deadline branch. Together they cover the data plane end-to-end.
+
+### §7.8 What round-2 did NOT do
+
+- Did not raise the timeout beyond 540 000 ms. The server is the ceiling — the client must not exceed it. A retry mechanism with backoff for genuine deadline-exceeded (where the server really is over-budget) is out of scope; the owner would need to re-press.
+- Did not implement the elapsed-time counter UX. Proposed in §7.6; not built, per the prompt.
+- Did not exercise a real sync press. Same constraint as §6 — the owner presses Sync Now, not the agent. The unit tests pin the wire-up; the press is the owner's verification step.
+
+---
+
+## §8. Files added / changed in round 2
+
+Added:
+
+- `src/__tests__/syncTimeout.test.tsx` — 6 cases: 2 timeout-option assertions, 1 rethrow-on-deadline assertion, 1 swallow-non-timeout assertion, 2 i18n parity assertions for the new key.
+
+Changed:
+
+- `src/services/metaService.ts` — both `httpsCallable` calls now pass `{ timeout: 540000 }`. `metaService.syncPerformance` rethrows `deadline-exceeded` so `handleSyncMeta` can route it.
+- `src/App.tsx` — both `handleSyncMeta` catch (sidebar) and dashboard `onSyncNow` catch (modal) now branch on `code === 'functions/deadline-exceeded'` first, rendering the new `sync.result.still_running` toast at `info` level. Dashboard's catch also returns a `resultKey: 'sync.result.still_running'` payload.
+- `src/components/WhatsWorkingDashboard.tsx` — `DashboardResultKey` union extended with `'sync.result.still_running'`; `SyncResultBanner` switch gains the new `case` (same amber style, distinct message).
+- `src/i18n.tsx` — `sync.result.still_running` added in both EN and AR blocks.
+
+The round-1 files (`src/utils/syncResultKey.ts`, `src/__tests__/syncResultKey.test.ts`, `functions/src/metaSync/trigger.ts`, `src/services/metaService.ts` round-1 changes, `src/App.tsx` round-1 changes) are untouched.

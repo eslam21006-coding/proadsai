@@ -166,6 +166,14 @@ const translations: Record<UILanguage, Record<string, string>> = {
         // press as `resultKey: 'sync.result.failed'`, producing a
         // false alarm in the rate-limit watch.
         'sync.result.busy': 'A sync is already running. Please wait a moment and try again.',
+        // fix-sync-banner (round 2) — distinct from `failed`. The
+        // client-side `httpsCallable` aborted with
+        // `deadline-exceeded`; the server may still be running and
+        // writing the data. Tell the user that — do not surface the
+        // same red "Sync failed" toast as a real server-side
+        // failure. (See investigation report §7; SDK timeout default
+        // 70 s raised to 540 s in src/services/metaService.ts.)
+        'sync.result.still_running': 'Sync is taking longer than usual — it is still running in the background.',
         'topbar.menu_meta_change_account': 'Change Account',
         'topbar.menu_meta_change_page': 'Change Page',
         'topbar.menu_meta_select_for_workspace': 'Select ad account for this workspace',
@@ -1161,6 +1169,10 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'sync.result.failed': 'تعذّر تحديث الإعلانات',
         // PHASE 970 (bug 2026-09-03) — distinct from `failed`.
         'sync.result.busy': 'المزامنة قيد التشغيل بالفعل. يرجى الانتظار لحظة والمحاولة مرة أخرى.',
+        // fix-sync-banner (round 2) — distinct from `failed`. The
+        // client-side callable timed out; the server may still be
+        // running. Mirrors the EN string above.
+        'sync.result.still_running': 'المزامنة تستغرق وقتاً أطول من المعتاد — لا تزال قيد التشغيل في الخلفية.',
         'topbar.menu_meta_change_account': 'تغيير الحساب',
         'topbar.menu_meta_change_page': 'تغيير الصفحة',
         'topbar.menu_meta_select_for_workspace': 'اختر حساب إعلاني لهذه المساحة',
