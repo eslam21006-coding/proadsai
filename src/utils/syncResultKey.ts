@@ -31,7 +31,7 @@ export type SyncResultKey =
     | "sync.result.failed"
     | "sync.result.busy";
 
-export interface SyncOutcomeInput {
+interface SyncOutcomeInput {
     ok?: boolean | undefined;
     /** Inline workspace status from the orchestrator. null when there
      *  is no active workspace's inline result (e.g. legacy-only). */

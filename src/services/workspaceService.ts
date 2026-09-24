@@ -71,12 +71,6 @@ export const workspaceService = {
       "deleteWorkspace"
     )({ workspaceId }),
 
-  restoreWorkspace: (workspaceId: string) =>
-    httpsCallable<{ workspaceId: string }, { ok: true; pendingRestore: boolean }>(
-      functions,
-      "restoreWorkspace"
-    )({ workspaceId }),
-
   linkMetaAccountToWorkspace: (req: LinkMetaAccountRequest) =>
     httpsCallable<
       LinkMetaAccountRequest,

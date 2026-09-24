@@ -132,7 +132,7 @@ export function useBillingState() {
   return { billingState, loading, error };
 }
 
-export function useCanUse(feature: string): { allowed: boolean; requiredPlan: string } {
+function useCanUse(feature: string): { allowed: boolean; requiredPlan: string } {
   const { billingState } = useBillingState();
   const plan = (billingState?.plan || "none") as UserPlan;
 

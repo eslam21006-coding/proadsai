@@ -13,7 +13,7 @@ export interface ParsedHook {
     raw: string;
 }
 
-export interface HookValidationResult {
+interface HookValidationResult {
     valid: boolean;
     reason?: string;
     count: number;
@@ -49,7 +49,7 @@ function extractBetween(text: string, startKey: string, endKey: string): string 
  * Parse canonical hook blocks from raw text.
  * Supports both HOOK_START_X and ANGLE_START_X markers.
  */
-export function parseCanonicalHooks(raw: string): ParsedHook[] {
+function parseCanonicalHooks(raw: string): ParsedHook[] {
     if (!raw || typeof raw !== 'string') return [];
     const hooks: ParsedHook[] = [];
 

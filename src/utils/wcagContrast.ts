@@ -1,6 +1,6 @@
 // src/utils/wcagContrast.ts — client-side WCAG luminance for CTA text auto-contrast
 
-export function wcagLuminance(hex: string): number {
+function wcagLuminance(hex: string): number {
     const r = parseInt(hex.slice(1, 3), 16) / 255;
     const g = parseInt(hex.slice(3, 5), 16) / 255;
     const b = parseInt(hex.slice(5, 7), 16) / 255;

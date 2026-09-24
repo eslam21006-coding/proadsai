@@ -1,0 +1,14 @@
+# .gitattributes — line-ending policy for the Pro Ads AI repo.
+#
+# `* text=auto` normalises text files to LF in the index on commit.
+# Git still keeps the working-tree line endings as-is (the auto flag only
+# normalises what's checked in), so a developer with core.autocrlf=true
+# locally doesn't see a 1,170-file diff on pull. Binaries get explicit
+# `-text` overrides — running `text` on them would corrupt them.
+
+* text=auto
+
+# Binaries — explicitly NOT text. Without these, `text=auto` could
+# misclassify a binary that happens to contain only "normal" bytes.
+functions/src/assets/*.ttf       -text
+functions/src/__tests__/__fixtures__/*.png -text

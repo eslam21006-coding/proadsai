@@ -234,7 +234,7 @@ export async function connectMetaAccountImpl(
                 // doc has no name (a first-time link), fall back to the
                 // private-doc name — but ONLY when that doc still
                 // records the same `accountId`.
-                // `disconnectMetaAccountImpl` clears the workspace link
+                // `metaDisconnect` clears the workspace link
                 // and the tokens yet leaves `accountId` / `accountName`
                 // on the private doc, so the sequence
                 //   connect A (name "A") → disconnect → connect B (no name)
@@ -334,115 +334,16 @@ export async function connectMetaAccountImpl(
     };
 }
 
-// ─── disconnectMetaAccount ────────────────────────────────────
-//
-// Phase 967 (FR-001) — owner-scoped workspace disconnect. The OAuth
-// credential stays under `metaConnections/{ownerUid}` (the connect
-// path lands it there); this callable clears the workspace-private
-// mirror and the workspace-link. The actor is recorded in the
-// console line below for audit.
-
-interface DisconnectMetaAccountRequest {
-    workspaceId: string;
-}
-
-export const disconnectMetaAccount = onCall(
-    { region: "europe-west1", cors: true },
-    async (request) => {
-        // Universal preamble (FR-001, FR-003).
-        const scope = await resolveMetaScope(request);
-        return disconnectMetaAccountImpl(scope, request.data);
-    },
-);
-
-// CR-MAJOR (CodeRabbit round 10): extract the inner handler so the
-// contract tests (T-MC2, T-MC4) can call it directly with an in-memory
-// Firestore stub + a fake `scope`. The previous onCall-only shape made
-// the soft-deleted workspace gate (FR-024) untestable in a hermetic
-// suite.
-export async function disconnectMetaAccountImpl(
-    scope: { ownerUid: string; callerUid: string; allowedWorkspaceIds: string[] | "ALL"; storedWorkspaceAccess: string[] },
-    requestData: unknown,
-): Promise<{ ok: true; disconnectedByUid: string }> {
-    const req = requestData as DisconnectMetaAccountRequest;
-    // CR-MINOR (CodeRabbit review feedback): `connectMetaAccount`
-    // rejects an empty `workspaceId` at line 88; here the same
-    // shape lets an empty string reach `loadMetaConnectionAccountId`
-    // → `wsRef.update("")` outside the try block, throwing an opaque
-    // `internal` error. Mirror the validation.
-    if (!req || typeof req.workspaceId !== "string" || req.workspaceId.length === 0) {
-        throw new HttpsError("invalid-argument", "workspaceId is required.");
-    }
-
-    // FR-004 / FR-021 — workspace authorisation first.
-    assertWorkspaceAllowed(scope, req.workspaceId);
-
-    const now = Date.now();
-    const wsRef = getDb()
-        .collection("users").doc(scope.ownerUid)
-        .collection("workspaces").doc(req.workspaceId);
-    const privateRef = privateConnectionRef(scope.ownerUid, req.workspaceId);
-
-    // CR-CRITICAL: validate the workspace exists, then clear both
-    // the private connection doc and the workspace link inside a
-    // single Firestore transaction. A non-existent workspaceId
-    // returns `not-found` BEFORE any writes. A transaction failure
-    // means neither write lands — the function cannot return
-    // `ok: true` after a partial write (CodeRabbit review
-    // feedback).
-    //
-    // Performance data and aggregates stay untouched — the
-    // adPerformance / syncSnapshots / aggregates subcollections
-    // are intentionally retained (Edge Case 15).
-    try {
-        await getDb().runTransaction(async (tx) => {
-            const wsSnap = await tx.get(wsRef);
-            if (!wsSnap.exists) {
-                throw new HttpsError("not-found", "Workspace not found.");
-            }
-            // CR-MAJOR (CodeRabbit round 10): reject soft-deleted
-            // workspaces here too. Without this, a direct
-            // `disconnectMetaAccount` call could clear the private
-            // connection doc for a workspace whose `deletedAt` is
-            // set, mutating state below a deleted marker.
-            // Mirrors the same gate in `connectMetaAccount` and
-            // the existing check in `linkMetaAccountToWorkspaceImpl`.
-            assertWorkspaceActive(wsSnap);
-            tx.set(privateRef, {
-                metaConnected: false,
-                legacyToken: null,
-                encryptedToken: null,
-                needsReauth: false,
-                updatedAt: now,
-            }, { merge: true });
-            tx.update(wsRef, {
-                metaAdAccountId: null,
-                metaAdAccountName: null,
-                metaRoleAtLinkTime: null,
-                // CR-MAJOR (CodeRabbit review feedback): FR-011 applies
-                // to "removing [an ad account] entirely" too — clear
-                // the recorded Page in the SAME write so a re-link
-                // can't inherit the previous client's Page via the
-                // workspace Page field. `metaPageClearedAt` moves
-                // the workspace to CLEARED so the legacy account-level
-                // Page cannot fill the gap.
-                metaPageId: null,
-                metaPageName: null,
-                metaPageClearedAt: now,
-            });
-        });
-    } catch (err: unknown) {
-        if (err instanceof HttpsError) throw err;
-        // CR-MINOR (CodeRabbit review feedback): the raw Firestore
-        // message can contain document paths / project IDs / index
-        // hints — keep it server-side, return a fixed message.
-        console.error("❌ disconnectMetaAccount transaction failed:", err);
-        throw new HttpsError("internal", "Failed to disconnect.");
-    }
-
-    console.log(`🔌 Workspace Meta link disconnected (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId})`);
-    return { ok: true as const, disconnectedByUid: scope.callerUid };
-}
+// (Removed: disconnectMetaAccount callable + disconnectMetaAccountImpl helper.
+// Phase 967 introduced this as a workspace-scoped teardown path, but the
+// frontend never wires a UI button for it. The Phase 967 production path
+// is `metaDisconnect` (functions/src/index.ts:3715), which clears the OAuth
+// callback's `metaConnections/{ownerUid}` doc instead of the workspace-
+// private mirror. Both were verified at zero Cloud Monitoring invocations
+// in the 90-day window (proadsai-saas / cloudfunctions.googleapis.com/
+// function/execution_count). T-MC2/T-MC4/T-MC7/T-MC11/T-MC12 in
+// functions/src/__tests__/metaConnection.test.ts exercised the soft-delete
+// gate of the now-removed impl — they were removed alongside.)
 
 // ─── Encrypted token reader (used by the worker) ──────────────
 
